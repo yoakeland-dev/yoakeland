@@ -1,23 +1,57 @@
 <script lang="ts">
-  import { marked } from "marked";
+  import { marked, type Token, type Links } from "marked";
   import DOMPurify from "dompurify";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
   let { text }: { text: string } = $props();
 
-  // Re-parsing markdown on every streamed token is wasted work — the screen
-  // only repaints ~60x/sec regardless. Coalescing to one parse per animation
-  // frame keeps a fast token stream from ever falling behind.
-  let html = $state("");
+  const PARSE_OPTS = { breaks: true, gfm: true };
+
+  // Re-parsing/re-sanitizing the *whole* message on every streamed token is
+  // wasted work that only gets worse the longer a reply runs — the same
+  // problem Vercel's Streamdown solves by splitting into block-level tokens
+  // and only re-rendering whichever one is still growing. `marked.lexer`
+  // already gives us that split (no new dependency): every earlier block is
+  // cached by its own raw text, so once a paragraph/list/code-fence closes,
+  // it's parsed and sanitized exactly once no matter how much streams in
+  // after it. Keyed by index in the template below, so Svelte only touches
+  // the one DOM node that actually changed each tick.
+  //
+  // Known ceiling: a block is cached the moment its raw text stops changing,
+  // using whatever `links` (reference-style `[x]: url` definitions) existed
+  // in the stream *at that moment* — a definition that streams in later
+  // won't retroactively fix an already-cached block that referenced it
+  // earlier. Vanishingly rare in model output; not worth the bookkeeping to
+  // detect and re-render.
+  let blocks = $state<string[]>([]);
+  const cache: { raw: string; html: string }[] = [];
   let raf = 0;
+
+  function render(t: string) {
+    const allTokens = marked.lexer(t, PARSE_OPTS);
+    const links = allTokens.links;
+    const tokens = allTokens.filter((tok) => tok.type !== "space");
+    const next: string[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      const cached = cache[i];
+      if (i < tokens.length - 1 && cached?.raw === tok.raw) {
+        next.push(cached.html);
+        continue;
+      }
+      const sub = Object.assign([tok], { links }) as Token[] & { links: Links };
+      const rendered = DOMPurify.sanitize(marked.parser(sub, PARSE_OPTS) as string);
+      next.push(rendered);
+      cache[i] = { raw: tok.raw, html: rendered };
+    }
+    cache.length = tokens.length;
+    blocks = next;
+  }
 
   $effect(() => {
     const t = text;
     cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      const parsed = marked.parse(t, { async: false, breaks: true, gfm: true }) as string;
-      html = DOMPurify.sanitize(parsed);
-    });
+    raf = requestAnimationFrame(() => render(t));
     return () => cancelAnimationFrame(raf);
   });
 
@@ -33,7 +67,11 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="markdown selectable" onclick={onClick}>{@html html}</div>
+<div class="markdown selectable" onclick={onClick}>
+  {#each blocks as blockHtml, i (i)}
+    {@html blockHtml}
+  {/each}
+</div>
 
 <style>
   .markdown {
