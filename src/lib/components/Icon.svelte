@@ -64,6 +64,9 @@
   import playerTrackNext from "@tabler/icons/outline/player-track-next.svg?raw";
   import fileText from "@tabler/icons/outline/file-text.svg?raw";
   import filePlus from "@tabler/icons/outline/file-plus.svg?raw";
+  import brain from "@tabler/icons/outline/brain.svg?raw";
+  import tool from "@tabler/icons/outline/tool.svg?raw";
+  import world from "@tabler/icons/outline/world.svg?raw";
 
   const icons = {
     plus,
@@ -127,6 +130,9 @@
     "player-track-next": playerTrackNext,
     "file-text": fileText,
     "file-plus": filePlus,
+    brain,
+    tool,
+    world,
   };
 
   let { name, size = 16 }: { name: keyof typeof icons; size?: number } = $props();

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { fade } from "svelte/transition";
   import type { ToolCallEntry } from "../types";
+  import { toolMeta, summaryFor } from "../toolMeta";
   import DiffView from "./DiffView.svelte";
   import Icon from "./Icon.svelte";
 
@@ -16,43 +18,47 @@
     error: "error",
   };
 
-  // The backend's tool set is a small fixed list (SPEC.md §5) — each gets a
-  // recognizable icon and label instead of the raw wire name.
-  const toolMeta: Record<string, { icon: "file-text" | "file-plus" | "pencil" | "terminal-2"; label: string }> = {
-    file_read: { icon: "file-text", label: "Read" },
-    file_write: { icon: "file-plus", label: "Write" },
-    file_edit: { icon: "pencil", label: "Edit" },
-    bash: { icon: "terminal-2", label: "Bash" },
-  };
   const meta = $derived(toolMeta[call.name]);
+  const summary = $derived(summaryFor(call));
+  const isBusy = $derived(call.status === "running" || call.status === "requested");
+  const isError = $derived(call.status === "error" || call.status === "denied");
 
-  // A one-line preview of what the call is doing, shown collapsed so the
-  // card is useful without opening it — the file path for file tools, the
-  // command for bash, falling back to the raw args for anything else.
-  // `call.args` comes off the wire/persisted history, so a missing or
-  // malformed value here shouldn't be able to crash the card.
-  const summary = $derived.by(() => {
-    const args = call.args ?? {};
-    if (typeof args.path === "string") return args.path;
-    if (typeof args.command === "string") return args.command;
-    return Object.keys(args).length ? JSON.stringify(args) : "";
+  // A persistent green check on a card that's just sitting there done adds
+  // nothing you didn't already know — but the *moment* it finishes is worth
+  // a beat of feedback. So: flash the tool icon over to a (muted, not
+  // green) checkmark right as the status flips to done, then fade back to
+  // the tool's own icon a moment later. Skipped for a card that was already
+  // done on mount (reloaded history) — `prevStatus` starts undefined, which
+  // never matches the "just turned done" transition below.
+  let prevStatus: ToolCallEntry["status"] | undefined = undefined;
+  let flashDone = $state(false);
+  $effect(() => {
+    const cur = call.status;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (prevStatus !== undefined && prevStatus !== "done" && cur === "done") {
+      flashDone = true;
+      timer = setTimeout(() => (flashDone = false), 500);
+    }
+    prevStatus = cur;
+    return () => clearTimeout(timer);
   });
 </script>
 
 <div class="card status-{call.status}">
   <button class="head" onclick={() => (expanded = !expanded)}>
     <span class="icon-slot">
-      <span class="tool-icon"><Icon name={meta?.icon ?? "square"} size={14} /></span>
+      {#if flashDone}
+        <span class="check-icon" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
+      {:else if isBusy}
+        <span class="spin-icon" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
+      {:else}
+        <span class="tool-icon" class:err={isError} transition:fade={{ duration: 160 }}><Icon name={meta?.icon ?? "square"} size={14} /></span>
+      {/if}
       <span class="chevron-icon" class:open={expanded}><Icon name="chevron-right" size={14} /></span>
     </span>
     <span class="name">{meta?.label ?? call.name}</span>
     {#if summary}
       <span class="summary">{summary}</span>
-    {/if}
-    {#if call.status === "error" || call.status === "denied"}
-      <span class="err-icon"><Icon name="alert-circle" size={13} /></span>
-    {:else if call.status === "running" || call.status === "requested"}
-      <span class="spin-icon"><Icon name="loader-2" size={13} /></span>
     {/if}
     <span class="status">{statusLabel[call.status]}</span>
   </button>
@@ -122,6 +128,21 @@
   .tool-icon {
     color: var(--text-dim);
   }
+  .tool-icon.err {
+    color: var(--danger);
+  }
+  .spin-icon,
+  .check-icon {
+    color: var(--text-dim);
+  }
+  .spin-icon :global(svg) {
+    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
   .chevron-icon {
     color: var(--text-dim);
     opacity: 0;
@@ -131,7 +152,11 @@
     transform: scale(0.6) rotate(90deg);
   }
   .head:hover .tool-icon,
-  .head:focus-visible .tool-icon {
+  .head:hover .spin-icon,
+  .head:hover .check-icon,
+  .head:focus-visible .tool-icon,
+  .head:focus-visible .spin-icon,
+  .head:focus-visible .check-icon {
     opacity: 0;
     transform: scale(0.6);
   }
@@ -172,24 +197,6 @@
   .status-error .status,
   .status-denied .status {
     color: var(--danger);
-  }
-  .err-icon {
-    display: inline-flex;
-    flex: none;
-    color: var(--danger);
-  }
-  .spin-icon {
-    display: inline-flex;
-    flex: none;
-    color: var(--text-dim);
-  }
-  .spin-icon :global(svg) {
-    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
   .status-done .status {
     color: var(--success);
