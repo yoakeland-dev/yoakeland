@@ -55,7 +55,6 @@
       : 0,
   );
   const takenOver = $derived(app.takenOverSessions[sessionId]);
-  const planMode = $derived(app.planModeBySession[sessionId]);
   const project = $derived(app.projectBySession[sessionId]);
   const title = $derived(
     (project ? app.sessionsByProject[project] : undefined)?.find(
@@ -155,14 +154,6 @@
         class:typing={titlePhase === "in"}>{displayTitle}</span
       >
     {/if}
-    <span
-      class="mode"
-      title={app.connectionMode === "local"
-        ? "Unix socket on this machine"
-        : "TCP connection to a remote server"}
-    >
-      {app.connectionMode}
-    </span>
     {#if sandboxTier === "local_restricted_fallback"}
       <span
         class="badge warn"
@@ -174,13 +165,6 @@
     {#if takenOver}
       <span class="badge warn"
         ><Icon name="warning" size={12} /> Opened elsewhere</span
-      >
-    {/if}
-    {#if planMode}
-      <span
-        class="badge plan"
-        title="Only read-only tools are available to the model right now"
-        >Plan mode</span
       >
     {/if}
   </div>
@@ -350,17 +334,6 @@
       opacity: 0;
     }
   }
-  /* Reads as a qualifier on the chat's name ("this thread, over there"),
-     which is why it sits next to it rather than across the header. */
-  .mode {
-    flex-shrink: 0;
-    font-size: 0.68rem;
-    color: var(--text-dim);
-    padding: 0.1rem 0.45rem;
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-pill);
-  }
   .badge {
     display: inline-flex;
     align-items: center;
@@ -373,10 +346,6 @@
   .badge.warn {
     background: var(--danger-dim);
     color: var(--danger);
-  }
-  .badge.plan {
-    background: var(--accent-dim);
-    color: var(--accent);
   }
   .right {
     display: flex;

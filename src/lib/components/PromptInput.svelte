@@ -68,14 +68,16 @@
     if (!textarea) return;
     const el = textarea;
     const onEnd = (e: TransitionEvent) => {
-      if (e.target === el && e.propertyName === "height") onMorphPropEnd("height");
+      if (e.target === el && e.propertyName === "height")
+        onMorphPropEnd("height");
     };
     el.addEventListener("transitionend", onEnd);
     return () => el.removeEventListener("transitionend", onEnd);
   });
   $effect(() => {
     if (!morphing || !stackEl) return;
-    const ms = parseFloat(getComputedStyle(stackEl).transitionDuration) * 1000 || 400;
+    const ms =
+      parseFloat(getComputedStyle(stackEl).transitionDuration) * 1000 || 400;
     const t = setTimeout(() => {
       morphing = false;
       pendingMorphProps.clear();
@@ -106,8 +108,10 @@
     const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
     const minHeight = lineHeight * (floating ? 3 : 1);
     const target =
-      Math.max(minHeight, Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT)) +
-      "px";
+      Math.max(
+        minHeight,
+        Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT),
+      ) + "px";
     if (prevHeight) {
       textarea.style.height = prevHeight;
       void textarea.offsetHeight;
@@ -211,6 +215,7 @@
   function setMode(m: ChatMode) {
     const wasPlan = app.modeBySession[sessionId] === "plan";
     app.modeBySession[sessionId] = m;
+    app.setLastUsedMode(m);
     if (m === "plan" && !wasPlan) setPlanMode(sessionId, true);
     else if (wasPlan && m !== "plan") setPlanMode(sessionId, false);
   }
@@ -381,202 +386,208 @@
 </script>
 
 <div class="wrap" class:floating>
- <div class="stack" class:morphing bind:this={stackEl}>
-  <h2 class="hero" class:hidden={!floating}>
-    {#if projectName}What shall we build in <span class="hero-project"
-        >{projectName}</span
-      >?{:else}What shall we build?{/if}
-  </h2>
+  <div class="stack" class:morphing bind:this={stackEl}>
+    <h2 class="hero" class:hidden={!floating}>
+      {#if projectName}What shall we build in <span class="hero-project"
+          >{projectName}</span
+        >?{:else}What shall we build?{/if}
+    </h2>
 
-  <form class="box" class:pending bind:this={boxEl} onsubmit={submit}>
-    {#if pending}
-      <div class="permission">
-        <div class="permission-head">
-          <span class="permission-title"
-            >{pending.diff?.filePath ?? pending.toolName}</span
-          >
-          <span class="permission-desc">{pending.description}</span>
+    <form class="box" class:pending bind:this={boxEl} onsubmit={submit}>
+      {#if pending}
+        <div class="permission">
+          <div class="permission-head">
+            <span class="permission-title"
+              >{pending.diff?.filePath ?? pending.toolName}</span
+            >
+            <span class="permission-desc">{pending.description}</span>
+          </div>
+          {#if pending.diff}
+            <DiffView diff={pending.diff} />
+          {/if}
+          <div class="permission-actions">
+            <button
+              type="button"
+              class="deny"
+              onclick={() => respond(false, false)}>Reject</button
+            >
+            <button
+              type="button"
+              class="ghost"
+              onclick={() => respond(true, false)}>Allow Once</button
+            >
+            <button
+              type="button"
+              class="allow"
+              onclick={() => respond(true, true)}>Always Allow</button
+            >
+          </div>
         </div>
-        {#if pending.diff}
-          <DiffView diff={pending.diff} />
-        {/if}
-        <div class="permission-actions">
-          <button
-            type="button"
-            class="deny"
-            onclick={() => respond(false, false)}>Reject</button
-          >
-          <button
-            type="button"
-            class="ghost"
-            onclick={() => respond(true, false)}>Allow Once</button
-          >
-          <button
-            type="button"
-            class="allow"
-            onclick={() => respond(true, true)}>Always Allow</button
-          >
-        </div>
-      </div>
-    {/if}
-
-    <div class="input-area">
-      <textarea
-        bind:this={textarea}
-        bind:value={text}
-        onkeydown={onKeydown}
-        onkeyup={trackCursor}
-        onclick={trackCursor}
-        oninput={() => {
-          autosize();
-          trackCursor();
-        }}
-        placeholder={pending
-          ? "Optional — reject and tell it what to do instead…"
-          : !projectPath
-            ? "Pick a project in the sidebar to start chatting…"
-            : floating
-              ? "Ask anything about this project…"
-              : "Reply…"}
-        rows="1"
-      ></textarea>
-
-      {#if mentionMatches.length > 0}
-        <ul class="mentions">
-          {#each mentionMatches as file, i (file)}
-            <li>
-              <button
-                type="button"
-                class:active={i === mentionIndex}
-                onclick={() => pickMention(file)}
-              >
-                {file}
-              </button>
-            </li>
-          {/each}
-        </ul>
       {/if}
-    </div>
 
-    <div class="toolbar">
-      <!-- The mode trigger lives inside the Dropdown component, which owns its
+      <div class="input-area">
+        <textarea
+          bind:this={textarea}
+          bind:value={text}
+          onkeydown={onKeydown}
+          onkeyup={trackCursor}
+          onclick={trackCursor}
+          oninput={() => {
+            autosize();
+            trackCursor();
+          }}
+          placeholder={pending
+            ? "Optional — reject and tell it what to do instead…"
+            : !projectPath
+              ? "Pick a project in the sidebar to start chatting…"
+              : floating
+                ? "Ask anything about this project…"
+                : "Reply…"}
+          rows="1"
+        ></textarea>
+
+        {#if mentionMatches.length > 0}
+          <ul class="mentions">
+            {#each mentionMatches as file, i (file)}
+              <li>
+                <button
+                  type="button"
+                  class:active={i === mentionIndex}
+                  onclick={() => pickMention(file)}
+                >
+                  {file}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+
+      <div class="toolbar">
+        <!-- The mode trigger lives inside the Dropdown component, which owns its
            own styles — so the active mode's colors reach it as inherited
            custom properties from here rather than as a style on the trigger
            itself (see the .mode-trigger rules below). -->
-      <div class="left" style={modeColors(currentModeMeta)}>
-        {#if !pending}
-          <button
-            type="button"
-            class="icon-chip"
-            title={canAttach
-              ? "Attach a local file"
-              : "Requires a local server connection — remote upload isn't supported yet"}
-            disabled={!canAttach}
-            onclick={attachFile}
-          >
-            <Icon name="paperclip" size={14} />
-          </button>
+        <div class="left" style={modeColors(currentModeMeta)}>
+          {#if !pending}
+            <button
+              type="button"
+              class="icon-chip"
+              title={canAttach
+                ? "Attach a local file"
+                : "Requires a local server connection — remote upload isn't supported yet"}
+              disabled={!canAttach}
+              onclick={attachFile}
+            >
+              <Icon name="paperclip" size={14} />
+            </button>
 
-          <ModelPicker {sessionId} />
+            <ModelPicker {sessionId} />
 
-          <Dropdown
-            items={modeItems}
-            bind:value={() => currentMode, setModeValue}
-            triggerIcon={currentModeMeta.icon}
-            triggerTitle={currentModeMeta.hint}
-            triggerClass="mode-trigger"
-          >
-            {#snippet item({ value, label, selected })}
-              {@const mode = MODE_BY_ID[value as ChatMode]}
-              <span class="mode-item" style={modeColors(mode)}>
-                <Icon name={mode.icon} size={13} />
-                <span class="dropdown-item-label" title={mode.hint}
-                  >{label}</span
-                >
-              </span>
-              {#if selected}<Icon name="check" size={11} />{/if}
-            {/snippet}
-          </Dropdown>
-        {/if}
+            <Dropdown
+              items={modeItems}
+              bind:value={() => currentMode, setModeValue}
+              triggerIcon={currentModeMeta.icon}
+              triggerTitle={currentModeMeta.hint}
+              triggerClass="mode-trigger"
+            >
+              {#snippet item({ value, label, selected })}
+                {@const mode = MODE_BY_ID[value as ChatMode]}
+                <span class="mode-item" style={modeColors(mode)}>
+                  <Icon name={mode.icon} size={13} />
+                  <span class="dropdown-item-label" title={mode.hint}
+                    >{label}</span
+                  >
+                </span>
+                {#if selected}<Icon name="check" size={11} />{/if}
+              {/snippet}
+            </Dropdown>
+          {/if}
+        </div>
+
+        <div class="right">
+          {#if turnId}
+            <button
+              type="button"
+              class="stop"
+              onclick={() => cancelTurn(sessionId, turnId)}
+            >
+              <Icon name="pause" size={13} /> Stop
+            </button>
+          {/if}
+          {#if pending}
+            <button
+              type="submit"
+              class="send"
+              disabled={!connected}
+              title={text.trim()
+                ? "Reject and send this instead"
+                : "Reject with no note"}
+            >
+              <Icon name="send" size={13} />
+              {text.trim() ? "Reject & send" : "Reject"}
+            </button>
+          {:else if !turnId}
+            <button
+              type="button"
+              class="icon-chip"
+              title="Mention a file (@path)"
+              onclick={insertMention}
+            >
+              <Icon name="at-sign" size={14} />
+            </button>
+            <button
+              type="submit"
+              class="send icon-only"
+              disabled={!text.trim() ||
+                !connected ||
+                !projectPath ||
+                !hasProvider}
+              title={!connected
+                ? "Connect to yoakeland to send this"
+                : !projectPath
+                  ? "Pick a project first"
+                  : !hasProvider
+                    ? "Pick a provider first"
+                    : "Send"}
+            >
+              <Icon name="send" size={15} />
+            </button>
+          {/if}
+        </div>
       </div>
+    </form>
 
-      <div class="right">
-        {#if turnId}
-          <button
-            type="button"
-            class="stop"
-            onclick={() => cancelTurn(sessionId, turnId)}
-          >
-            <Icon name="pause" size={13} /> Stop
-          </button>
-        {/if}
-        {#if pending}
-          <button
-            type="submit"
-            class="send"
-            disabled={!connected}
-            title={text.trim()
-              ? "Reject and send this instead"
-              : "Reject with no note"}
-          >
-            <Icon name="send" size={13} />
-            {text.trim() ? "Reject & send" : "Reject"}
-          </button>
-        {:else if !turnId}
-          <button
-            type="button"
-            class="icon-chip"
-            title="Mention a file (@path)"
-            onclick={insertMention}
-          >
-            <Icon name="at-sign" size={14} />
-          </button>
-          <button
-            type="submit"
-            class="send icon-only"
-            disabled={!text.trim() || !connected || !projectPath || !hasProvider}
-            title={!connected
-              ? "Connect to yoakeland to send this"
-              : !projectPath
-                ? "Pick a project first"
-                : !hasProvider
-                  ? "Pick a provider first"
-                  : "Send"}
-          >
-            <Icon name="send" size={15} />
-          </button>
-        {/if}
-      </div>
-    </div>
-  </form>
-
-  <div
-    class="float-controls"
-    class:tucked={!floating}
-    inert={!floating}
-    aria-hidden={!floating}
-  >
-    <Dropdown
-      items={projectItems}
-      bind:value={() => projectPath, setProject}
-      placeholder="Select a project…"
-      triggerIcon="folder"
-      triggerTitle="Switch project"
-      searchable={app.recentProjects.length > 6}
-      searchPlaceholder="Search projects…"
-      triggerClass="fc-pill"
-    />
-    <button
-      type="button"
-      class="fc-pill"
-      title="Switch between a local and remote server"
-      onclick={() => (app.showConnectModal = true)}
+    <div
+      class="float-controls"
+      class:tucked={!floating}
+      inert={!floating}
+      aria-hidden={!floating}
     >
-      <Icon name={app.connectionMode === "local" ? "computer" : "cloud"} size={12} />
-      {app.connectionMode}
-    </button>
+      <Dropdown
+        items={projectItems}
+        bind:value={() => projectPath, setProject}
+        placeholder="Select a project…"
+        triggerIcon="folder"
+        triggerTitle="Switch project"
+        searchable={app.recentProjects.length > 6}
+        searchPlaceholder="Search projects…"
+        triggerClass="fc-pill"
+      />
+      <button
+        type="button"
+        class="fc-pill"
+        title="Switch between a local and remote server"
+        onclick={() => (app.showConnectModal = true)}
+      >
+        <Icon
+          name={app.connectionMode === "local" ? "computer" : "cloud"}
+          size={12}
+        />
+        {app.connectionMode}
+      </button>
+    </div>
   </div>
- </div>
 </div>
 
 <style>
