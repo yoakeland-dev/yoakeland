@@ -1,0 +1,393 @@
+@import url("https://fonts.googleapis.com/css2?family=Questrial&display=swap");
+
+@font-face {
+  font-family: "Departure Mono";
+  src: url("./lib/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+}
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0b0c11;
+  --panel-bg: #16181f;
+  --panel-border: rgba(255, 255, 255, 0.07);
+  /* The two halves of --panel-border, so a hairline can sit a touch lighter
+     along its top edge than along its bottom one — what keeps a 1px border
+     from reading as a flat outline. Applied at each border, in the same rule
+     as the shorthand itself:
+     `border-block-color: var(--panel-border-top) var(--panel-border-bottom);`
+     Deliberately not an inset top highlight: that would also paint on the
+     controls that stay borderless until hovered (chips, triggers, pills). */
+  --panel-border-top: rgba(255, 255, 255, 0.1);
+  --panel-border-bottom: rgba(255, 255, 255, 0.045);
+  --sidebar-fg: #cfd2dc;
+  --sidebar-fg-dim: #83879a;
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: rgba(255, 255, 255, 0.1);
+
+  --text: #e7e8ee;
+  --text-dim: #9498a8;
+  /* Fallback values only, visible before JS applies a theme — every token on
+     this list is overridden at runtime by applySettings() in state.svelte.ts
+     (deriveTheme in theme.ts), predefined scheme or custom accent alike, so
+     the whole UI recolors, not just the accent swatch. */
+  --accent: #7c9bff;
+  --accent-dim: color-mix(in srgb, var(--accent) 15%, transparent);
+  --danger: #ff6b6b;
+  --danger-dim: rgba(255, 107, 107, 0.15);
+  --success: #58d68d;
+  --warning: #f0b429;
+  --info: #5b9bff;
+
+  --bubble-user-bg: #232838;
+  --bubble-border: rgba(255, 255, 255, 0.08);
+
+  --statusbar-bg: #10141c;
+  --statusbar-fg: #9498a8;
+
+  /* Two radii, full stop: --radius-sm for every non-pill surface (inputs,
+     buttons, cards, modals alike — a card isn't a "bigger" input, so it
+     doesn't get a bigger radius), --radius-pill for true binary toggles/tags
+     (999px, always a stadium regardless of height). The old -md/-lg/-xl
+     names stay as aliases so existing rules don't need touching, but they
+     all resolve to the same value now — don't give them a distinct size
+     again, that's exactly the drift this collapses. */
+  --radius-sm: 7px;
+  --radius-md: var(--radius-sm);
+  --radius-lg: var(--radius-sm);
+  --radius-xl: var(--radius-sm);
+  --radius-pill: 999px;
+
+  /* Spacing scale, 8px grid (halved once for tight in-row gaps). rem-based
+     so it scales with Settings > Appearance > UI font size like everything
+     else here — divide the px value by the 14px base to get the rem figure. */
+  --space-half: 0.29rem;
+  /* 4px */
+  --space-1: 0.57rem;
+  /* 8px */
+  --space-2: 1.14rem;
+  /* 16px */
+  --space-3: 1.71rem;
+  /* 24px */
+  --space-4: 2.29rem;
+  /* 32px */
+  --space-5: 3.43rem;
+  /* 48px */
+
+  /* Type scale: four sizes, deliberate weight jumps between them rather than
+     leaning on color/opacity alone to separate a modal title from a label. */
+  --text-title-size: 1.05rem;
+  --text-title-weight: 700;
+  --text-heading-size: 0.72rem;
+  --text-heading-weight: 700;
+  --text-label-size: 0.78rem;
+  --text-label-weight: 500;
+  --text-body-size: 0.85rem;
+  --text-body-weight: 400;
+
+  /* Layout rhythm. The chat panel floats with --chat-margin around it and
+     opens with a header band of --header-height; the sidebar's own first row
+     and the floating window chrome (toggle button, window controls) are sized
+     and positioned off these same values, so all three line up on one row
+     instead of each picking its own padding. All in rem, so they scale with
+     Settings > Appearance > UI font size. */
+  --chat-margin: 0.4rem;
+  --header-pad-y: 0.8rem;
+  --header-pad-x: 1.1rem;
+  --header-line: 1.6rem;
+  --header-height: calc(var(--header-pad-y) * 2 + var(--header-line));
+  /* Floating window chrome. Three pieces, all on the same line, so the top of
+     the window reads as one band:
+       - the sidebar toggle: its own button, pinned top-left of the *window*,
+         outside either island so it stays put while the sidebar slides;
+       - the chat island (previous/next chat, then the chat's title) inside the
+         main chat area — positioned from ChatHeader.svelte's own flow rather
+         than from here, since it belongs to that panel;
+       - the right island (terminal, right panel, then the window buttons),
+         pinned top-right of the window.
+     One button size, one gap, one padding across all three, so a card is the
+     plain sum of its contents and its reserve can't disagree with what renders.
+     The three window buttons only join the right island on desktop, so that
+     island's width has a second value — keyed off the presence of
+     `data-window-chrome`, set from isDesktop in +page.svelte, since no media
+     query can see whether we're inside the Tauri shell. */
+  --chrome-pad: var(--space-half);
+  --chrome-gap: 0.21rem;
+  --chrome-btn-w: var(--header-line);
+  /* Outer height of a chrome card: a full --header-line of button, with the same
+     padding above and below as the card has at its ends. */
+  --chrome-h: calc(var(--header-line) + 2 * var(--chrome-pad) + 2px);
+  /* How far each pinned piece sits from the window's top, left and right edges.
+     Deliberately one number for all three, so those margins are even by
+     construction and the corners of the floating layer line up with each other.
+     Derived rather than a flat figure: a card's *centre* has to sit on the panel
+     header's own content line (that's what keeps the chat title, the sidebar's
+     brand row and the window chrome on one baseline), so the top margin is
+     whatever centring a --chrome-h-tall card on that line leaves above it. The
+     panel's own hairline cancels out of it — it pushes that content line down by
+     the same pixel it adds above the card. */
+  --chrome-inset: calc(var(--chat-margin) + var(--header-pad-y) - var(--chrome-pad));
+  /* The toggle is a lone button, so it's square at the chrome height — same band
+     as the islands, no wider than it needs to be. */
+  --toggle-w: var(--chrome-h);
+  /* Room the sidebar toggle needs kept clear of it, in window coordinates: by
+     the sidebar's own brand row (which the button floats over), and by a chat
+     header whose panel the button lands on once the sidebar is collapsed. The
+     gap is the same 0.43rem the sidebar's own rows use, so the collapsed sidebar
+     leaves the chat island sitting just off the button rather than a clear band
+     away from it. */
+  --toggle-reserve: calc(var(--chrome-inset) + var(--toggle-w) + 0.43rem);
+  /* The same reserve for a header that lives *inside* a panel (whose box starts
+     --chat-margin from the window edge, plus its own hairline), which is what
+     padding is measured against there. */
+  --toggle-reserve-in-panel: calc(var(--toggle-reserve) - var(--chat-margin) - 1px);
+  --chrome-island-w: calc(2 * var(--chrome-btn-w) + 1 * var(--chrome-gap) + 2 * var(--chrome-pad) + 2px);
+  /* What a header that the right island floats over has to pad itself clear of:
+     island width, plus how far the island's edge sits past that header's own
+     content box (--chrome-inset minus the panel's --chat-margin and its 1px
+     hairline), plus breathing room. Only --chrome-island-w changes per platform,
+     so this follows it for free — no second copy to keep in step. */
+  --chrome-reserve: calc(var(--chrome-island-w) + var(--chrome-inset) - var(--chat-margin) - 1px + 0.6rem);
+
+  /* Shared stacking order for anything that portals to document.body (bits-ui
+     Select/Popover/Dialog/DropdownMenu content, and the one hand-rolled
+     ContextMenu) — without this, portaled pieces stack by DOM insertion order
+     among themselves, which is whichever mounted most recently, not intent.
+     Lowest to highest: inline dropdowns, floating popovers, modal dialogs
+     (backdrop then its own content one above), then the context menu, which
+     as a momentary top-layer control should never be obscured by anything. */
+  --z-dropdown: 60;
+  --z-popover: 80;
+  --z-overlay-backdrop: 100;
+  --z-overlay-content: 101;
+  --z-context-menu: 110;
+  /* The OS-level window drag region + minimize/maximize/close controls —
+     always above every portaled surface, since losing them behind a dialog
+     would trap the window (no way to move or close it). */
+  --z-window-chrome: 120;
+
+  /* Scrollbar sizing, shared by the Firefox (scrollbar-width) and WebKit
+     (::-webkit-scrollbar) rules below so both engines agree on "thin". */
+  --scrollbar-size: 6px;
+
+  --ui-font-family: "Questrial", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --logo-font-family: "Departure Mono", ui-monospace, monospace;
+  --code-font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  --ui-font-size: 14px;
+  --code-font-size: 12.5px;
+  /* Multiplier on transition/animation durations — Settings > Appearance;
+     0 effectively turns animation off. Individual rules opt in by writing
+     `calc(<base> * var(--anim-speed))` rather than a fixed duration. */
+  --anim-speed: 1;
+
+  /* Settings > Appearance > Surfaces. Every surface that floats over the rest
+     of the UI — the composer, popup panels (menus, pickers, context menu,
+     dialog cards), the idle pills, and the two window-chrome islands — takes
+     its fill from --float-bg, its edge from --float-border* and its blur from
+     --float-blur, so one switch converts all of them: "opaque" (the default)
+     resolves each of those tokens to exactly the plain panel fill/hairline, so
+     nothing moves, "frosted" makes the fill translucent, the outline a touch
+     stronger and blurs what's behind it. Kept subtle on purpose — the fill
+     stays mostly opaque, so it reads as depth rather than as a glassy effect.
+     The surfaces that *aren't* floating — the chat panel, both sidebars, the
+     terminal drawer — keep --panel-bg and never blur: they're the page, not
+     something resting on top of it.
+     --float-hover-bg is the resting wash the pills use when they light up,
+     which has to be a solid-ish tone of its own (a translucent pill only
+     frosts once it's hovered). */
+  --float-bg: var(--panel-bg);
+  --float-hover-bg: rgba(255, 255, 255, 0.06);
+  --float-blur: none;
+  /* The outline of a floating surface, split into the same two halves
+     --panel-border is (see above) — an exact alias of it in opaque mode, and a
+     little stronger once the surface is translucent: a blurred backdrop behind
+     the edge costs the hairline the contrast an opaque panel gets for free. */
+  --float-border: var(--panel-border);
+  --float-border-top: var(--panel-border-top);
+  --float-border-bottom: var(--panel-border-bottom);
+
+  font-family: var(--ui-font-family);
+  font-size: var(--ui-font-size);
+}
+
+/* Frosted surfaces — see the --float-* tokens above. Keyed off a data
+   attribute rather than a class so it can't collide with component styles, and
+   set from Settings (applySettings in state.svelte.ts). */
+:root[data-surface="frosted"] {
+  /* 72%, not fully opaque: still clearly a pane of glass over what's behind it,
+     but opaque enough that text on top of it keeps its contrast — the nudge
+     from the earlier 62% traded a visible frosted read for legibility. */
+  --float-bg: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+  --float-hover-bg: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+  /* Big enough to be legible as blur rather than as a slightly soft backdrop —
+     at 8px it only read as frosted over the new-chat wallpaper, and as nothing
+     at all over the flat panel fill most of these surfaces sit on. */
+  --float-blur: blur(16px);
+  --float-border: color-mix(in srgb, var(--text) 14%, transparent);
+  --float-border-top: color-mix(in srgb, var(--text) 20%, transparent);
+  --float-border-bottom: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+/* Desktop puts the minimize/maximize/close buttons in the same right island as
+   the terminal and right-panel toggles — see +page.svelte, which sets this from
+   isDesktop. Widens --chrome-island-w, and --chrome-reserve follows it on its
+   own (see the token block above). */
+:root[data-window-chrome] {
+  --chrome-island-w: calc(5 * var(--chrome-btn-w) + 4 * var(--chrome-gap) + 2 * var(--chrome-pad) + 2px);
+}
+
+/* The fill, edge and blur every piece of floating window chrome wears: the two
+   islands and the sidebar toggle (+page.svelte, ChatHeader.svelte). One rule
+   rather than the three near-identical ones this was, and shared deliberately —
+   a chrome piece that's left out of it is a piece that ignores Settings >
+   Appearance > Surfaces. Shape (height, radius and layout) stays with each
+   piece, since that's what actually differs between them. */
+.chrome-surface {
+  background: var(--float-bg);
+  backdrop-filter: var(--float-blur);
+  -webkit-backdrop-filter: var(--float-blur);
+  border: 1px solid var(--float-border);
+  border-block-color: var(--float-border-top) var(--float-border-bottom);
+  border-radius: var(--radius-sm);
+}
+
+/* Buttons inside a chrome surface are flat until hovered: the surface's own
+   fill is what's underneath them, so painting each one separately is what the
+   island exists to stop. */
+.chrome-surface .chrome-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  /* Square, one size for every piece of chrome — which is also how
+     --chrome-island-w above can be a plain sum of its buttons. Deliberately a
+     fixed --header-line rather than 100% of the card: the card is --chrome-h
+     (--chrome-pad taller on each side), and a button that filled it would leave
+     the buttons flush to its edges again, which is exactly what made the
+     islands feel cramped. */
+  width: var(--chrome-btn-w);
+  height: var(--header-line);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background-color calc(0.12s * var(--anim-speed, 1)) ease,
+    color calc(0.12s * var(--anim-speed, 1)) ease,
+    transform calc(0.08s * var(--anim-speed, 1)) ease;
+}
+
+.chrome-surface .chrome-btn:hover:not(:disabled) {
+  /* Mixing the text colour into the surface's own fill rather than swapping in
+     a flat wash: the fill has to survive the hover (it's still a pane of glass
+     when frosted), and a plain translucent wash would make the hovered button
+     the *most* transparent thing on screen. */
+  background: color-mix(in srgb, var(--text) 10%, var(--float-bg));
+  color: var(--text);
+}
+
+.chrome-surface .chrome-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.chrome-surface .chrome-btn:disabled {
+  /* Dimmed, not hidden: the nav arrows are both disabled whenever the chat
+     history is empty (a fresh launch), and at 0.35 they read as an empty slot
+     rather than as a disabled arrow. */
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chrome-surface .chrome-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.selectable,
+.selectable * {
+  user-select: text;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  /* Firefox's thin-scrollbar equivalent of the WebKit rules below. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+button {
+  font-family: inherit;
+}
+
+code,
+pre {
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
+}
+
+/* Placeholder text always reads as "not a value yet" — lower contrast and
+   italic, so a real value (plain, full --text) is never confused with one,
+   most importantly in the credentials fields under Settings > Providers and
+   the Connect screen. */
+::placeholder {
+  color: var(--text-dim);
+  opacity: 0.65;
+  font-style: italic;
+}
+
+/* One empty-state recipe (icon over one-line copy, centered) shared by the
+   main chat panel's floating composer and the right side panel's
+   nothing-open placeholder — same icon treatment, same voice, same layout,
+   so neither reads as a different feature bolted on. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--text-body-size);
+}
+
+.empty-state svg {
+  opacity: 0.5;
+}
+
+/* Thin scrollbars everywhere by default, WebKit engines (Chrome/Safari/Edge).
+   Firefox gets the equivalent via `scrollbar-width: thin` above. */
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
