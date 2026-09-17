@@ -187,7 +187,23 @@ export interface ToolCallEntry {
    * them), which renders them before the text, matching pre-existing
    * behavior for reloaded transcripts. */
   textOffset?: number;
+  /** `message.thinking?.length` at the same moment — lets AssistantMessage
+   * slice `message.thinking` back into the reasoning chunk that occurred
+   * between two calls, same way `textOffset` does for answer text. A run of
+   * calls still only ends on answer text (`textOffset` moving); reasoning
+   * appearing mid-run doesn't end it, it becomes a `thought` step nested
+   * inside that run's WorkGroup instead (see AssistantMessage.svelte). Same
+   * history-rebuild caveat as `textOffset`. */
+  thinkingOffset?: number;
 }
+
+/** One step in a run of activity between two spans of answer text
+ * (AssistantMessage.svelte) — either a chunk of reasoning or a burst of
+ * consecutive tool calls with no reasoning in between. `at` is the thought's
+ * starting offset into `message.thinking`, used only as a stable render key. */
+export type AssistantStep =
+  | { kind: "thought"; text: string; at: number }
+  | { kind: "cluster"; calls: ToolCallEntry[] };
 
 export interface ChatMessage {
   id: string;
@@ -209,4 +225,12 @@ export interface ChatMessage {
    * `authorAvatar`) — an emoji glyph or a data URL, whichever the sending
    * client uses. */
   authorAvatar?: string;
+  /** Provider name / model id active for the session when this assistant
+   * reply was started (state.svelte.ts's addUserMessage) — stamped once at
+   * send time so it stays correct even if the session's selection changes
+   * later. Undefined for a reply rebuilt from session history, since
+   * get_session_history carries no per-message model info (§3.2) — the
+   * footer just omits the model line for those. */
+  provider?: string;
+  model?: string;
 }

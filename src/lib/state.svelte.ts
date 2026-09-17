@@ -104,6 +104,7 @@ const TERMINAL_OPEN_KEY = "yoake.terminalOpen";
 const SETTINGS_KEY = "yoake.settings";
 const LAST_USED_PROVIDER_KEY = "yoake.lastUsedProvider";
 const LAST_USED_MODEL_KEY = "yoake.lastUsedModel";
+const LAST_USED_MODE_KEY = "yoake.lastUsedMode";
 
 /** Stable key for a (provider, model) pair — used as a Svelte `#each` key in
  * ModelPicker.svelte. Favorites themselves are server-persisted per provider
@@ -671,8 +672,16 @@ class AppState {
       this.messagesBySession[sessionId] = [];
     }
     if (!this.modeBySession[sessionId]) {
-      this.modeBySession[sessionId] = "auto";
+      const lastMode = typeof localStorage !== "undefined" ? localStorage.getItem(LAST_USED_MODE_KEY) : null;
+      this.modeBySession[sessionId] =
+        lastMode === "ask" || lastMode === "auto" || lastMode === "plan" ? lastMode : "auto";
     }
+  }
+
+  /** Persists the last mode a user picked, so the next new chat starts there
+   * instead of always defaulting back to Auto (see ensureSession). */
+  setLastUsedMode(mode: ChatMode) {
+    if (typeof localStorage !== "undefined") localStorage.setItem(LAST_USED_MODE_KEY, mode);
   }
 
   rememberProject(path: string) {
@@ -769,7 +778,7 @@ class AppState {
    * clobber live-streaming state. */
   applySessionHistory(
     sessionId: string,
-    messages: { role: "user" | "assistant" | "tool"; content: string; author?: string; authorAvatar?: string; toolCalls?: { id: string; name: string; args: Record<string, unknown> }[]; toolCallId?: string }[],
+    messages: { role: "user" | "assistant" | "tool"; content: string; author?: string; authorAvatar?: string; reasoning?: string; toolCalls?: { id: string; name: string; args: Record<string, unknown> }[]; toolCallId?: string }[],
   ) {
     if (this.activeTurnBySession[sessionId]) return;
     const toolResults = new Map<string, string>();
@@ -815,6 +824,7 @@ class AppState {
           id: `${sessionId}-hist-${turnIndex}`,
           role: "assistant",
           text: m.content ?? "",
+          thinking: m.reasoning || undefined,
           toolCalls,
           streaming: false,
           createdAt,
@@ -899,7 +909,11 @@ class AppState {
     this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], msg];
     this.activeTurnBySession[sessionId] = turnId;
 
-    // Placeholder assistant message that streaming deltas fill in.
+    // Placeholder assistant message that streaming deltas fill in. Provider/
+    // model are stamped now, not read back off turn_completed (which carries
+    // neither, §3.2) — this is whatever the session is about to run with,
+    // and stays correct as the message's own record even if the session's
+    // selection changes before the next turn.
     const reply: ChatMessage = {
       id: `${turnId}-reply`,
       role: "assistant",
@@ -908,6 +922,8 @@ class AppState {
       toolCalls: [],
       streaming: true,
       createdAt: Date.now(),
+      provider: this.providerBySession[sessionId],
+      model: this.modelBySession[sessionId],
     };
     this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], reply];
     this.saveChatHistory();
@@ -935,7 +951,11 @@ class AppState {
     switch (env.type) {
       case "model_delta": {
         const msg = this.findAssistantMessage(sessionId, env.turnId);
-        if (msg) msg.text += String((env.data as { content?: string })?.content ?? "");
+        const data = env.data as { content?: string; reasoning?: string };
+        if (msg) {
+          if (data?.reasoning) msg.thinking = (msg.thinking ?? "") + data.reasoning;
+          else msg.text += String(data?.content ?? "");
+        }
         break;
       }
       case "tool_call_requested": {
@@ -957,6 +977,7 @@ class AppState {
               args: data.args ?? {},
               status: "requested",
               textOffset: msg.text.length,
+              thinkingOffset: msg.thinking?.length ?? 0,
             };
             msg.toolCalls = [...msg.toolCalls, entry];
           }
@@ -1193,7 +1214,7 @@ class AppState {
       case "session_history": {
         const data = env.data as {
           sessionId: string;
-          messages: { role: "user" | "assistant" | "tool"; content: string; author?: string; authorAvatar?: string; toolCalls?: { id: string; name: string; args: Record<string, unknown> }[]; toolCallId?: string }[];
+          messages: { role: "user" | "assistant" | "tool"; content: string; author?: string; authorAvatar?: string; reasoning?: string; toolCalls?: { id: string; name: string; args: Record<string, unknown> }[]; toolCallId?: string }[];
         };
         this.applySessionHistory(data.sessionId, data.messages ?? []);
         this.setSessionSyncing(data.sessionId, false);
