@@ -188,8 +188,12 @@
 
   // A session created by `newChat` but never sent doesn't exist on the
   // server yet — hide it from the list until its first message goes out.
+  // `messageCount` alone would miss a just-sent local message before the
+  // server round-trips a session_updated/list_sessions; the local cache
+  // alone would miss any session this client hasn't opened yet (another
+  // device, a fresh install, one only seen via session_list) — check both.
   function hasMessages(s: SessionSummary): boolean {
-    return (app.messagesBySession[s.sessionId] ?? []).length > 0;
+    return s.messageCount > 0 || (app.messagesBySession[s.sessionId] ?? []).length > 0;
   }
 
   function matchesSearch(s: SessionSummary): boolean {
