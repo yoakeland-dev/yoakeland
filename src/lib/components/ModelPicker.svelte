@@ -2,183 +2,31 @@
   import { Popover } from "bits-ui";
   import { app, modelKey } from "../state.svelte";
   import { setProvider, listModels, setFavoriteModels } from "../ipc";
-  import type { ModelInfo, ProviderInfo } from "../types";
+  import {
+    type Entry,
+    type Vendor,
+    VENDOR_META,
+    VENDOR_ORDER,
+    directVendorOf,
+    isOpenRouter,
+    isCli,
+    titleFor,
+    vendorMetaFor,
+  } from "../modelVendor";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
 
-  let { sessionId }: { sessionId: string } = $props();
-
-  // One flattened row per (provider, model) pair — a provider is a credential,
-  // not a model choice (SPEC.md §6b), so the picker's actual unit of
-  // selection is the model, sourced per-provider from list_models.
-  interface Entry {
-    provider: ProviderInfo;
-    model: ModelInfo;
-  }
-
-  // Vendor tabs in the left rail — for *direct* (non-aggregator) api_key
-  // providers only. cli_claude/cli_codex get their own tabs (grouped by
-  // transport, not brand, since there's only ever one or two of them) and
-  // OpenRouter gets a single aggregator tab — see TabKey below. Splitting it
-  // this way is the point: an OpenRouter key alone used to make every one of
-  // its hundreds of cross-vendor models bucket into one wrong-icon tab.
-  type Vendor = "anthropic" | "openai" | "deepseek" | "gemini" | "ollama";
-
-  // LobeHub icon slugs (see node_modules/@lobehub/icons-static-svg/icons).
-  // "claude" rather than "anthropic" for the vendor mark — Anthropic's own
-  // logo is mono-only, Claude's has a colored variant, and it's the mark
-  // people actually recognize.
-  const VENDOR_META: Record<Vendor, { label: string; icon: string }> = {
-    anthropic: { label: "Anthropic", icon: "claude" },
-    openai: { label: "OpenAI", icon: "openai" },
-    deepseek: { label: "DeepSeek", icon: "deepseek" },
-    gemini: { label: "Gemini", icon: "gemini" },
-    ollama: { label: "Ollama", icon: "ollama" },
-  };
-  const VENDOR_ORDER: Vendor[] = [
-    "anthropic",
-    "openai",
-    "deepseek",
-    "gemini",
-    "ollama",
-  ];
-
-  // Checked in order, first match wins — sniffed from the provider's own
-  // name/model text since the wire protocol only reports httpProvider as
-  // anthropic/openai/openrouter (§3.2), with no concept of e.g. a DeepSeek or
-  // Ollama endpoint registered as a generic OpenAI-compatible `api_key`.
-  const VENDOR_SNIFFERS: [Vendor, RegExp][] = [
-    ["deepseek", /deepseek/],
-    ["gemini", /gemini|google/],
-    ["ollama", /ollama/],
-    ["anthropic", /claude|anthropic/],
-  ];
-
-  function directVendorOf(p: ProviderInfo, model?: string): Vendor {
-    const hay = `${p.name} ${model ?? ""}`.toLowerCase();
-    for (const [id, re] of VENDOR_SNIFFERS) if (re.test(hay)) return id;
-    return p.httpProvider === "anthropic" ? "anthropic" : "openai";
-  }
-
-  function isOpenRouter(p: ProviderInfo): boolean {
-    return p.kind === "api_key" && p.httpProvider === "openrouter";
-  }
-  function isCli(p: ProviderInfo): boolean {
-    return p.kind === "cli_claude" || p.kind === "cli_codex";
-  }
-
-  // The icon shown per model row inside the OpenRouter tab — an aggregator's
-  // whole point is routing to many different vendors, so unlike the left
-  // rail this can't collapse to one icon. OpenRouter model IDs are
-  // conventionally `<vendor-slug>/<model>`, and that vendor slug is usually
-  // *also* a valid @lobehub/icons-static-svg slug (openai, deepseek,
-  // mistral, qwen, zhipu, stepfun, ...) — LobeHub ships 150+ vendor marks, far
-  // more than would be worth hand-listing here. So rather than a closed
-  // allowlist (which silently falls back to a generic OpenRouter icon for
-  // every vendor nobody thought to add), try the slug directly and only
-  // remap the handful of cases where OpenRouter's own slug doesn't match
-  // LobeHub's; LobeIcon's `fallback` prop still catches genuine misses.
-  const VENDOR_ICON_ALIASES: Record<string, string> = {
-    google: "gemini",
-    "google-ai-studio": "gemini",
-    "meta-llama": "meta",
-    mistralai: "mistral",
-    "x-ai": "xai",
-    "z-ai": "zai",
-    "stepfun-ai": "stepfun",
-    "inference-net": "inference",
-    moonshotai: "moonshot",
-    "01-ai": "yi",
-    amazon: "aws",
-    "arcee-ai": "arcee",
-  };
-
-  // Pretty labels for the vendors likely to show up often — everything else
-  // falls back to title-casing the raw slug, which is a fine label even
-  // without a manual entry (e.g. "Nousresearch").
-  const VENDOR_LABELS: Record<string, string> = {
-    anthropic: "Anthropic",
-    openai: "OpenAI",
-    gemini: "Google",
-    deepseek: "DeepSeek",
-    meta: "Meta",
-    mistral: "Mistral",
-    qwen: "Qwen",
-    xai: "xAI",
-    cohere: "Cohere",
-    perplexity: "Perplexity",
-    ai21: "AI21",
-    zai: "Z.AI",
-    stepfun: "StepFun",
-    inference: "Inference",
-    moonshot: "Moonshot AI",
-    yi: "01.AI",
-    aws: "Amazon",
-    arcee: "Arcee AI",
-    nvidia: "NVIDIA",
-    microsoft: "Microsoft",
-    baidu: "Baidu",
-    liquid: "Liquid AI",
-    inflection: "Inflection",
-    nousresearch: "Nous Research",
-    minimax: "MiniMax",
-    openrouter: "OpenRouter",
-  };
-
-  function prettifySlug(slug: string): string {
-    return slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  }
-
-  function openRouterVendorMeta(modelId: string): {
-    label: string;
-    icon: string;
-  } {
-    const prefix = modelId.split("/")[0]?.toLowerCase();
-    if (!prefix) return { label: "OpenRouter", icon: "openrouter" };
-    // Google publishes more than one model *family* under the "google/"
-    // slug — Gemini and Gemma have distinct LobeHub marks, so the vendor
-    // prefix alone isn't enough here the way it is for single-family vendors.
-    if (prefix === "google" && /gemma/.test(modelId.toLowerCase())) {
-      return { label: "Gemma", icon: "gemma" };
-    }
-    const icon = VENDOR_ICON_ALIASES[prefix] ?? prefix;
-    return { label: VENDOR_LABELS[icon] ?? prettifySlug(prefix), icon };
-  }
-
-  /** OpenRouter's own model names read "Vendor: Model Name" — that vendor
-   * prefix becomes the bottom line (see vendorMetaFor) instead of cluttering
-   * the title. cli_claude/cli_codex return a small fixed list of bare
-   * aliases (SPEC.md §6b) with no displayName at all — "sonnet"/"opus" reads
-   * as a debug string, so title-case it as a floor. cli_codex instead sends
-   * displayName === id verbatim (SPEC.md §1031, no per-model manifest yet),
-   * which reads the same way and gets the same floor. The real fix (a
-   * proper displayName like "Claude Sonnet 4.5" from the server) is
-   * server-side — see the provider checklist. */
-  function titleFor(entry: Entry): string {
-    const raw = entry.model.displayName || entry.model.id;
-    if (isOpenRouter(entry.provider)) {
-      const idx = raw.indexOf(":");
-      if (idx > 0 && idx < 30) return raw.slice(idx + 1).trim();
-      return raw;
-    }
-    if (
-      isCli(entry.provider) &&
-      (!entry.model.displayName || entry.model.displayName === entry.model.id)
-    ) {
-      return prettifySlug(raw);
-    }
-    return raw;
-  }
-
-  function vendorMetaFor(entry: Entry): { label: string; icon: string } {
-    if (entry.provider.kind === "cli_claude")
-      return { label: "Claude", icon: "claude" };
-    if (entry.provider.kind === "cli_codex")
-      return { label: "ChatGPT", icon: "openai" };
-    if (isOpenRouter(entry.provider))
-      return openRouterVendorMeta(entry.model.id);
-    return VENDOR_META[directVendorOf(entry.provider, entry.model.id)];
-  }
+  // `displayOverride` swaps just the trigger's icon/label for a caller-chosen
+  // one (AssistantMessage's per-message footer chip, which shows whichever
+  // model actually generated *that* reply — possibly not the session's
+  // current pick, if the user has since switched). The popover itself still
+  // operates on `sessionId`'s live selection regardless — clicking any
+  // message's chip opens the same picker and changes the session going
+  // forward, it doesn't rewrite what already happened.
+  let {
+    sessionId,
+    displayOverride,
+  }: { sessionId: string; displayOverride?: { icon: string; label: string } | null } = $props();
 
   // Model options (§3.1 set_model_options) — mirror whichever upstream's own
   // capability shape close to verbatim (SPEC.md §3.2 model_list), so there's
@@ -408,7 +256,9 @@
   >
     <span class="trigger-icon">
       <span class="crossfade a">
-        {#if currentEntry}
+        {#if displayOverride}
+          <LobeIcon name={displayOverride.icon} fallback="openrouter" size={13} />
+        {:else if currentEntry}
           <LobeIcon
             name={vendorMetaFor(currentEntry).icon}
             fallback="openrouter"
@@ -421,11 +271,13 @@
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
     <span class="trigger-label"
-      >{currentEntry
-        ? titleFor(currentEntry)
-        : currentProvider
-          ? currentModel || currentProvider.name
-          : "Provider…"}</span
+      >{displayOverride
+        ? displayOverride.label
+        : currentEntry
+          ? titleFor(currentEntry)
+          : currentProvider
+            ? currentModel || currentProvider.name
+            : "Provider…"}</span
     >
   </Popover.Trigger>
 
