@@ -1,8 +1,12 @@
-//! Owns the single connection to a yoakeland server (§2a) — either a TCP
+//! Owns every live connection to a yoakeland server (§2a) — either a TCP
 //! socket (auth handshake required) or, for same-machine use, a Unix domain
 //! socket (§2a's "unix:" mode — no token, the OS enforces who can connect).
+//! `BackendState` holds a map of these, one per `ConnectionId`, so a single
+//! app instance can be talking to several different servers at once — each
+//! `connect_tcp`/`connect_unix` call mints a fresh id and adds an entry
+//! rather than replacing whatever was there.
 //!
-//! The server is a standalone process the user can start on its own
+//! Each server is a standalone process the user can start on its own
 //! (`yoakeland -listen ...`) and leave running independently of this UI —
 //! this module never spawns it as a piped child it then owns. When asked to
 //! connect locally and nothing answers yet, `spawn_detached_server`/
@@ -12,34 +16,94 @@
 //!
 //! Envelopes are newline-delimited JSON in both directions (§2). We don't
 //! interpret them here beyond framing + the auth handshake — everything else
-//! is forwarded to the frontend verbatim as a `yoake-event` Tauri event and
-//! the frontend's TS state machine (src/lib/ipc.ts) does the rest.
+//! is forwarded to the frontend verbatim as a `yoake-event` Tauri event
+//! (tagged with the originating `ConnectionId`) and the frontend's TS state
+//! machine (src/lib/ipc.ts) does the rest.
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{split, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, UnixStream};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, RwLock};
+use tokio::task::JoinHandle;
 use tokio_rustls::TlsConnector;
+use uuid::Uuid;
 
 const MAX_FRAME_BYTES: usize = 10 * 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_millis(400);
 
+/// Client-minted, opaque to the server — not yoakeland's own `serverId`
+/// (SPEC.md §3.2 `server_identity`), which isn't known until after this
+/// connection's handshake completes. This is what lets a caller address one
+/// specific connection the instant `connect_tcp`/`connect_unix` returns, and
+/// what every emitted event is tagged with so the frontend can route it to
+/// the right one. Mapping a `ConnectionId` to whichever `serverId` it turns
+/// out to belong to is the frontend's job (src/lib/state.svelte.ts), not
+/// this module's.
+pub type ConnectionId = String;
+
 struct Connection {
     tx: mpsc::UnboundedSender<String>,
+    reader: JoinHandle<()>,
+    writer: JoinHandle<()>,
 }
 
+/// One entry per live connection, keyed by `ConnectionId` — was a single
+/// `Mutex<Option<Connection>>` when this app only ever talked to one server;
+/// an `RwLock` over a map lets `send_envelope` calls to *different*
+/// connections proceed concurrently instead of serializing behind one lock,
+/// and lets more than one connection exist at all.
 #[derive(Default)]
-pub struct BackendState(Arc<Mutex<Option<Connection>>>);
+pub struct BackendState(Arc<RwLock<HashMap<ConnectionId, Connection>>>);
+
+impl BackendState {
+    async fn insert(&self, connection_id: ConnectionId, conn: Connection) {
+        self.0.write().await.insert(connection_id, conn);
+    }
+
+    /// Sends `line` on `connection_id`'s writer, or `"not connected"` if no
+    /// such connection exists (already disconnected, or never existed).
+    async fn send(&self, connection_id: &ConnectionId, line: String) -> Result<(), String> {
+        let guard = self.0.read().await;
+        let conn = guard.get(connection_id).ok_or("not connected")?;
+        conn.tx.send(line).map_err(|e| format!("send failed: {e}"))
+    }
+
+    /// Removes and returns `connection_id`'s entry, if it exists. Callers are
+    /// responsible for `.abort()`-ing the returned `Connection`'s tasks —
+    /// kept a separate step (rather than folded in here) so this stays a
+    /// plain map operation the tests below can exercise without needing a
+    /// real reader/writer task pair.
+    async fn remove(&self, connection_id: &ConnectionId) -> Option<Connection> {
+        self.0.write().await.remove(connection_id)
+    }
+}
+
+#[derive(Serialize, Clone)]
+struct EventPayload {
+    #[serde(rename = "connectionId")]
+    connection_id: ConnectionId,
+    envelope: Value,
+}
+
+#[derive(Serialize, Clone)]
+struct LogPayload {
+    #[serde(rename = "connectionId")]
+    connection_id: ConnectionId,
+    message: String,
+}
 
 #[derive(Serialize, Clone)]
 struct DisconnectedPayload {
+    #[serde(rename = "connectionId")]
+    connection_id: ConnectionId,
     reason: String,
 }
 
@@ -54,7 +118,7 @@ fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
-fn spawn_writer_task<W>(mut writer: W, mut rx: mpsc::UnboundedReceiver<String>)
+fn spawn_writer_task<W>(mut writer: W, mut rx: mpsc::UnboundedReceiver<String>) -> JoinHandle<()>
 where
     W: AsyncWrite + Unpin + Send + 'static,
 {
@@ -67,10 +131,23 @@ where
                 break;
             }
         }
-    });
+    })
 }
 
-fn spawn_reader_task<R>(app: AppHandle, reader: R, on_eof_reason: &'static str)
+/// Tags every event this connection produces with `connection_id`, so a
+/// frontend holding several simultaneous connections can route each one to
+/// the right server's state. Returns the task's `JoinHandle` so a caller can
+/// `.abort()` it explicitly on disconnect/supersession — dropping a
+/// `JoinHandle` does *not* cancel the task, only losing the last reference to
+/// it does (eventually, via the runtime's own cleanup), which is what used to
+/// let a superseded connection's reader linger until its own socket happened
+/// to error out.
+fn spawn_reader_task<R>(
+    app: AppHandle,
+    connection_id: ConnectionId,
+    reader: R,
+    on_eof_reason: &'static str,
+) -> JoinHandle<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
@@ -85,16 +162,31 @@ where
                     if line.len() > MAX_FRAME_BYTES {
                         let _ = app.emit(
                             "yoake-log",
-                            format!("dropped oversized frame ({} bytes)", line.len()),
+                            LogPayload {
+                                connection_id: connection_id.clone(),
+                                message: format!("dropped oversized frame ({} bytes)", line.len()),
+                            },
                         );
                         continue;
                     }
                     match serde_json::from_str::<Value>(&line) {
                         Ok(v) => {
-                            let _ = app.emit("yoake-event", v);
+                            let _ = app.emit(
+                                "yoake-event",
+                                EventPayload {
+                                    connection_id: connection_id.clone(),
+                                    envelope: v,
+                                },
+                            );
                         }
                         Err(e) => {
-                            let _ = app.emit("yoake-log", format!("bad frame: {e}: {line}"));
+                            let _ = app.emit(
+                                "yoake-log",
+                                LogPayload {
+                                    connection_id: connection_id.clone(),
+                                    message: format!("bad frame: {e}: {line}"),
+                                },
+                            );
                         }
                     }
                 }
@@ -102,6 +194,7 @@ where
                     let _ = app.emit(
                         "yoake-disconnected",
                         DisconnectedPayload {
+                            connection_id: connection_id.clone(),
                             reason: on_eof_reason.to_string(),
                         },
                     );
@@ -111,6 +204,7 @@ where
                     let _ = app.emit(
                         "yoake-disconnected",
                         DisconnectedPayload {
+                            connection_id: connection_id.clone(),
                             reason: format!("read error: {e}"),
                         },
                     );
@@ -118,7 +212,7 @@ where
                 }
             }
         }
-    });
+    })
 }
 
 /// Fast "is anything listening here" check — used to decide whether the local
@@ -178,12 +272,19 @@ async fn spawn_and_pipe_logs(app: AppHandle, bin_path: &str, args: &[String]) ->
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
+    // No ConnectionId yet at this point — spawning the binary happens before
+    // any connect_tcp/connect_unix call, so this is tagged with an empty
+    // sentinel id rather than a real connection's. The frontend treats an
+    // empty connectionId as an unscoped/startup log line.
     if let Some(stdout) = stdout {
         let app = app.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let _ = app.emit("yoake-log", format!("[server] {line}"));
+                let _ = app.emit(
+                    "yoake-log",
+                    LogPayload { connection_id: String::new(), message: format!("[server] {line}") },
+                );
             }
         });
     }
@@ -192,7 +293,10 @@ async fn spawn_and_pipe_logs(app: AppHandle, bin_path: &str, args: &[String]) ->
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let _ = app.emit("yoake-log", format!("[server] {line}"));
+                let _ = app.emit(
+                    "yoake-log",
+                    LogPayload { connection_id: String::new(), message: format!("[server] {line}") },
+                );
             }
         });
     }
@@ -305,7 +409,7 @@ pub async fn connect_tcp(
     name: Option<String>,
     device_type: Option<String>,
     avatar: Option<String>,
-) -> Result<(), String> {
+) -> Result<ConnectionId, String> {
     // The TCP listener is TLS-only now (§2a) — no plaintext fallback exists
     // server-side any more, so this always negotiates TLS before the
     // envelope protocol starts.
@@ -327,10 +431,11 @@ pub async fn connect_tcp(
         })?;
 
     let (read_half, write_half) = split(stream);
+    let connection_id = Uuid::new_v4().to_string();
 
     let (tx, rx) = mpsc::unbounded_channel();
-    spawn_writer_task(write_half, rx);
-    spawn_reader_task(app.clone(), read_half, "connection closed");
+    let writer = spawn_writer_task(write_half, rx);
+    let reader = spawn_reader_task(app.clone(), connection_id.clone(), read_half, "connection closed");
 
     let mut auth_data = serde_json::json!({"token": token});
     if let Some(name) = name {
@@ -346,9 +451,8 @@ pub async fn connect_tcp(
     tx.send(auth.to_string())
         .map_err(|e| format!("failed to send auth frame: {e}"))?;
 
-    let mut guard = state.0.lock().await;
-    *guard = Some(Connection { tx });
-    Ok(())
+    state.insert(connection_id.clone(), Connection { tx, reader, writer }).await;
+    Ok(connection_id)
 }
 
 /// Connects over a Unix domain socket (§2a) — no auth handshake required, the
@@ -366,16 +470,17 @@ pub async fn connect_unix(
     name: Option<String>,
     device_type: Option<String>,
     avatar: Option<String>,
-) -> Result<(), String> {
+) -> Result<ConnectionId, String> {
     let path = expand_tilde(&path);
     let stream = UnixStream::connect(&path)
         .await
         .map_err(|e| format!("connect to {path} failed: {e}"))?;
     let (read_half, write_half) = stream.into_split();
+    let connection_id = Uuid::new_v4().to_string();
 
     let (tx, rx) = mpsc::unbounded_channel();
-    spawn_writer_task(write_half, rx);
-    spawn_reader_task(app.clone(), read_half, "connection closed");
+    let writer = spawn_writer_task(write_half, rx);
+    let reader = spawn_reader_task(app.clone(), connection_id.clone(), read_half, "connection closed");
 
     if name.is_some() || device_type.is_some() || avatar.is_some() {
         let mut auth_data = serde_json::Map::new();
@@ -393,31 +498,36 @@ pub async fn connect_unix(
             .map_err(|e| format!("failed to send auth frame: {e}"))?;
     }
 
-    let mut guard = state.0.lock().await;
-    *guard = Some(Connection { tx });
-    Ok(())
+    state.insert(connection_id.clone(), Connection { tx, reader, writer }).await;
+    Ok(connection_id)
 }
 
 #[tauri::command]
 pub async fn send_envelope(
     state: tauri::State<'_, BackendState>,
+    connection_id: ConnectionId,
     envelope: Value,
 ) -> Result<(), String> {
-    let guard = state.0.lock().await;
-    let conn = guard.as_ref().ok_or("not connected")?;
-    conn.tx
-        .send(envelope.to_string())
-        .map_err(|e| format!("send failed: {e}"))
+    state.send(&connection_id, envelope.to_string()).await
 }
 
-/// Closes this app's connection only. Never touches a server process — a
-/// server spawned by `spawn_detached_server`/`spawn_detached_unix_server`, or
-/// one the user started themselves, is never something this app owns the
-/// lifecycle of.
+/// Closes one specific connection. Never touches a server process — a server
+/// spawned by `spawn_detached_server`/`spawn_detached_unix_server`, or one the
+/// user started themselves, is never something this app owns the lifecycle
+/// of. Explicitly `.abort()`s both the reader and writer tasks rather than
+/// just dropping the map entry: dropping a `JoinHandle` does not cancel its
+/// task, only `.abort()` does — this is what makes disconnecting (or a new
+/// connection superseding an old one) actually stop the old reader instead of
+/// leaving it running until its socket happens to error out on its own.
 #[tauri::command]
-pub async fn disconnect(state: tauri::State<'_, BackendState>) -> Result<(), String> {
-    let mut guard = state.0.lock().await;
-    guard.take();
+pub async fn disconnect(
+    state: tauri::State<'_, BackendState>,
+    connection_id: ConnectionId,
+) -> Result<(), String> {
+    if let Some(conn) = state.remove(&connection_id).await {
+        conn.reader.abort();
+        conn.writer.abort();
+    }
     Ok(())
 }
 
@@ -430,4 +540,97 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
     tokio::fs::read_to_string(&path)
         .await
         .map_err(|e| format!("failed to read {path}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A `Connection` whose reader/writer tasks just spin, incrementing an
+    /// atomic counter, until aborted — a stand-in for a real socket's
+    /// reader/writer pair that lets us prove `.abort()` actually stops them,
+    /// without needing a real TCP/Unix connection.
+    fn spinning_connection() -> (Connection, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let reader_ticks = Arc::new(AtomicUsize::new(0));
+        let writer_ticks = Arc::new(AtomicUsize::new(0));
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let r = reader_ticks.clone();
+        let reader = tokio::spawn(async move {
+            loop {
+                r.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+        let w = writer_ticks.clone();
+        let writer = tokio::spawn(async move {
+            loop {
+                w.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+
+        (Connection { tx, reader, writer }, reader_ticks, writer_ticks)
+    }
+
+    #[tokio::test]
+    async fn send_envelope_to_unknown_connection_errors() {
+        let state = BackendState::default();
+        let err = state.send(&"nonexistent".to_string(), "{}".to_string()).await.unwrap_err();
+        assert_eq!(err, "not connected");
+    }
+
+    #[tokio::test]
+    async fn two_connections_are_independent() {
+        let state = BackendState::default();
+        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+        let noop = || tokio::spawn(async { std::future::pending::<()>().await });
+
+        state.insert("a".into(), Connection { tx: tx_a, reader: noop(), writer: noop() }).await;
+        state.insert("b".into(), Connection { tx: tx_b, reader: noop(), writer: noop() }).await;
+
+        state.send(&"a".to_string(), "hello-a".to_string()).await.unwrap();
+        state.send(&"b".to_string(), "hello-b".to_string()).await.unwrap();
+
+        assert_eq!(rx_a.recv().await.unwrap(), "hello-a");
+        assert_eq!(rx_b.recv().await.unwrap(), "hello-b");
+    }
+
+    /// Guards the actual fix in this rewrite: removing a connection must stop
+    /// its reader/writer tasks, not just drop the map entry a caller can no
+    /// longer reach. Before this change, superseding/disconnecting a
+    /// connection only dropped the sender, which stopped the writer (its
+    /// `rx.recv()` returns `None`) but left the reader running indefinitely.
+    #[tokio::test]
+    async fn remove_aborts_reader_and_writer_tasks() {
+        let state = BackendState::default();
+        let (conn, reader_ticks, writer_ticks) = spinning_connection();
+        state.insert("a".into(), conn).await;
+
+        // Let both tasks tick at least once so we know they were really running.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(reader_ticks.load(Ordering::SeqCst) > 0);
+        assert!(writer_ticks.load(Ordering::SeqCst) > 0);
+
+        let conn = state.remove(&"a".to_string()).await.expect("connection should exist");
+        conn.reader.abort();
+        conn.writer.abort();
+
+        let reader_at_abort = reader_ticks.load(Ordering::SeqCst);
+        let writer_at_abort = writer_ticks.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Aborted tasks stop ticking almost immediately; a lingering task
+        // (the bug this guards against) would keep incrementing.
+        assert_eq!(reader_ticks.load(Ordering::SeqCst), reader_at_abort);
+        assert_eq!(writer_ticks.load(Ordering::SeqCst), writer_at_abort);
+
+        // And the connection is genuinely gone, not just its tasks stopped.
+        assert_eq!(
+            state.send(&"a".to_string(), "x".to_string()).await,
+            Err("not connected".to_string())
+        );
+    }
 }

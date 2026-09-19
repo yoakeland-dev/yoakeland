@@ -8,6 +8,17 @@ import { isDesktop } from "./platform";
 
 let wired = false;
 
+// The Rust side (src-tauri/src/backend.rs) now keys connections by an opaque
+// id it mints per connect_tcp/connect_unix call, rather than assuming "the
+// one connection" — this is phase 2 of the multi-server-connections plan
+// (see looking-at-the-server-adaptive-squid.md): the connection manager is
+// fully rewritten underneath, but this client still only ever opens one
+// connection, tracked here as a single module-private variable, so nothing
+// about the app's visible behavior changes yet. Phase 3 moves this onto
+// AppState (keyed by connection, not a lone variable) once the UI actually
+// exposes more than one.
+let activeConnectionId: string | null = null;
+
 // --- Liveness (§2a "Keeping a connection alive") ---
 // The backend pings roughly every 30s and drops a connection after ~90s of
 // silence. A dead network path (wifi drop, a laptop sleeping, a NAT timeout)
@@ -33,9 +44,11 @@ function startLiveness() {
   clearInterval(watchdogTimer);
   watchdogTimer = setInterval(() => {
     if (app.connectionStatus === "connected" && Date.now() - lastActivityAt > LIVENESS_TIMEOUT_MS) {
-      void invoke("disconnect").catch(() => {
-        // best-effort — we're about to treat the connection as dead either way
-      });
+      if (activeConnectionId) {
+        void invoke("disconnect", { connectionId: activeConnectionId }).catch(() => {
+          // best-effort — we're about to treat the connection as dead either way
+        });
+      }
       handleConnectionLost("no response from server");
     }
   }, WATCHDOG_INTERVAL_MS);
@@ -68,6 +81,7 @@ function scheduleReconnect() {
 function handleConnectionLost(reason: string) {
   const mode = app.connectionMode;
   stopLiveness();
+  activeConnectionId = null;
   app.connectionStatus = "disconnected";
   app.connectionError = reason;
   app.log(`disconnected: ${reason}`);
@@ -79,9 +93,17 @@ export function wireEvents() {
   if (wired || !isDesktop) return;
   wired = true;
 
-  listen<Envelope>("yoake-event", (e) => {
+  // Every payload now carries the ConnectionId backend.rs's reader task
+  // tagged it with (see backend.rs's module doc). This client still only
+  // ever tracks one (activeConnectionId, above), so anything from a
+  // different/stale connection id is dropped rather than misapplied — this
+  // can only happen today from a superseded connection's last in-flight
+  // event landing just after a new one replaces it, not from genuine
+  // multi-connection use yet (that's phase 3+).
+  listen<{ connectionId: string; envelope: Envelope }>("yoake-event", (e) => {
+    if (e.payload.connectionId !== activeConnectionId) return;
     lastActivityAt = Date.now();
-    const env = e.payload;
+    const env = e.payload.envelope;
     if (env.type === "ping") {
       // Backend liveness check (§2a) — echo the nonce straight back.
       void send({ type: "pong", data: { nonce: (env.data as { nonce?: string })?.nonce } });
@@ -107,16 +129,21 @@ export function wireEvents() {
 
   });
 
-  listen<string>("yoake-log", (e) => app.log(e.payload));
+  listen<{ connectionId: string; message: string }>("yoake-log", (e) => app.log(e.payload.message));
 
-  listen<{ reason: string }>("yoake-disconnected", (e) => {
+  listen<{ connectionId: string; reason: string }>("yoake-disconnected", (e) => {
+    if (e.payload.connectionId !== activeConnectionId) return;
     handleConnectionLost(e.payload.reason);
   });
 }
 
 export async function send(envelope: Envelope) {
+  if (!activeConnectionId) {
+    app.log("send failed: not connected");
+    return;
+  }
   try {
-    await invoke("send_envelope", { envelope });
+    await invoke("send_envelope", { connectionId: activeConnectionId, envelope });
   } catch (err) {
     // Most callers fire-and-forget (`void send(...)`) — a rejection here
     // (e.g. a stray pong racing a disconnect) would otherwise surface as an
@@ -207,7 +234,7 @@ export async function connectTcp(host: string, port: number, token: string, caPe
   app.connectionStatus = "connecting";
   app.connectionError = null;
   try {
-    await invoke("connect_tcp", { host, port, token, caPem: caPem || undefined, ...peerIdentity() });
+    activeConnectionId = await invoke<string>("connect_tcp", { host, port, token, caPem: caPem || undefined, ...peerIdentity() });
     app.connectionMode = "remote";
     app.connectionStatus = "connected";
     if (caPem) {
@@ -246,7 +273,7 @@ export async function connectLocalUnix(opts: SpawnUnixServerOpts) {
         if (await probeUnix(opts.socketPath)) break;
       }
     }
-    await invoke("connect_unix", { path: opts.socketPath, ...peerIdentity() });
+    activeConnectionId = await invoke<string>("connect_unix", { path: opts.socketPath, ...peerIdentity() });
     app.connectionMode = "local";
     app.connectionStatus = "connected";
     afterConnect();
@@ -294,7 +321,10 @@ export async function autoConnect() {
 
 export async function disconnect() {
   stopLiveness();
-  await invoke("disconnect");
+  if (activeConnectionId) {
+    await invoke("disconnect", { connectionId: activeConnectionId });
+    activeConnectionId = null;
+  }
   app.connectionStatus = "disconnected";
   app.clearAllSessionSyncing();
 }
