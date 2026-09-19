@@ -3,7 +3,7 @@
   import { tick } from "svelte";
   import { app } from "../state.svelte";
   import { setSessionArchived, setSessionTitle, deleteSession, openInSidePanel, openChatSession } from "../ipc";
-  import { relTime, basename } from "../format";
+  import { relTime, basename, sessionTitle } from "../format";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import SplitEntry from "./SplitEntry.svelte";
@@ -13,8 +13,13 @@
     projectPath,
     sessions,
     archived,
-  }: { projectPath: string; sessions: SessionSummary[]; archived: boolean } =
-    $props();
+    onNewChat,
+  }: {
+    projectPath: string;
+    sessions: SessionSummary[];
+    archived: boolean;
+    onNewChat?: () => void;
+  } = $props();
 
   // Native <details> can't be smoothly animated — a plain toggle + {#if}
   // lets the open/close use the same slide transition as the sidebar itself.
@@ -81,7 +86,7 @@
         icon: "trash",
         danger: true,
         onSelect: () => {
-          if (confirm(`Permanently delete "${s.title || s.sessionId}"? This can't be undone.`)) {
+          if (confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
             deleteSession(s.sessionId);
           }
         },
@@ -97,10 +102,39 @@
     >
     <span class="name">{basename(projectPath)}</span>
     <span class="divider"></span>
-    <span class="count">{sessions.length}</span>
+    {#if onNewChat}
+      <span class="count-slot">
+        <span class="count">{sessions.length}</span>
+        <span
+          role="button"
+          tabindex="0"
+          class="new-chat-btn"
+          title="New chat"
+          aria-label={`New chat in ${basename(projectPath)}`}
+          onclick={(e) => {
+            e.stopPropagation();
+            onNewChat();
+          }}
+          onkeydown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              e.stopPropagation();
+              onNewChat();
+            }
+          }}
+        >
+          <Icon name="message-circle-plus" size={13} />
+        </span>
+      </span>
+    {:else}
+      <span class="count">{sessions.length}</span>
+    {/if}
   </button>
   {#if open}
     <div class="rows" class:refreshing={app.refreshingProjects[projectPath]} transition:slide={{ duration: slideDuration }}>
+      {#if sessions.length === 0}
+        <p class="empty">No chats yet</p>
+      {/if}
       {#each sessions as s (s.sessionId)}
         {@const paired = app.splitPartnerFor(s.sessionId)}
         {#if paired}
@@ -136,14 +170,14 @@
                   class="chat-item"
                   class:syncing={app.syncingSessions[s.sessionId]}
                   disabled={app.syncingSessions[s.sessionId]}
-                  aria-label={`${s.title || s.sessionId}, ${app.syncingSessions[s.sessionId] ? "syncing" : app.sessionStatus(s.sessionId)}`}
+                  aria-label={`${sessionTitle(s)}, ${app.syncingSessions[s.sessionId] ? "syncing" : app.sessionStatus(s.sessionId)}`}
                   ondblclick={() => startRename(s)}
                   onclick={() => openChatSession(s.sessionId)}
                 >
                   <span class="status-icon status-{app.sessionStatus(s.sessionId)}" aria-hidden="true">
                     <Icon name={statusIcon[app.sessionStatus(s.sessionId)]} size={13} />
                   </span>
-                  <span class="label">{s.title || s.sessionId}</span>
+                  <span class="label">{sessionTitle(s)}</span>
                 </button>
               </ContextMenu>
             {/if}
@@ -163,7 +197,7 @@
                 title="Delete"
                 aria-label="Delete"
                 onclick={() => {
-                  if (confirm(`Permanently delete "${s.title || s.sessionId}"? This can't be undone.`)) {
+                  if (confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
                     deleteSession(s.sessionId);
                   }
                 }}
@@ -191,14 +225,14 @@
 
 <style>
   .group {
-    margin: 0.14rem 0;
+    margin: 0.25rem 0;
   }
   .summary {
     width: 100%;
     display: flex;
     align-items: center;
     gap: 0.43rem;
-    padding: 0.43rem 0.57rem;
+    padding: 0.24rem 0.26rem 0.24rem 0.57rem;
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 0.76rem;
@@ -240,11 +274,54 @@
     color: var(--sidebar-fg-dim);
     opacity: 0.7;
   }
+  .count-slot {
+    position: relative;
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+  .count-slot .count {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .summary:hover .count-slot .count {
+    opacity: 0;
+  }
+  .new-chat-btn {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--sidebar-fg-dim);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .summary:hover .new-chat-btn {
+    opacity: 1;
+  }
+  .new-chat-btn:hover {
+    color: var(--text);
+    background: var(--sidebar-hover);
+  }
+  .empty {
+    padding: 0.36rem 0.71rem;
+    font-size: 0.72rem;
+    color: var(--sidebar-fg-dim);
+    opacity: 0.7;
+  }
   .rows {
     display: flex;
     flex-direction: column;
     gap: 0.14rem;
-    padding-left: var(--space-half);
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
   .rows.refreshing {
@@ -255,6 +332,7 @@
     align-items: center;
     width: 100%;
     border-radius: var(--radius-sm);
+    padding-right: 0.25rem;
     transition: background calc(0.12s * var(--anim-speed, 1)) ease;
   }
   .chat-row:hover {
@@ -271,7 +349,7 @@
     background: transparent;
     border: none;
     color: var(--sidebar-fg);
-    padding: 0.5rem 0.71rem;
+    padding: 0.5rem 0.71rem 0.5rem 1rem;
     cursor: pointer;
     text-align: left;
     font: inherit;
@@ -288,9 +366,8 @@
   .meta-slot {
     position: relative;
     flex-shrink: 0;
-    width: 1.9rem;
-    height: 1.6rem;
-    margin-right: 0.36rem;
+    width: 1.5rem;
+    height: 1.5rem;
   }
   .archive,
   .meta {
@@ -298,7 +375,7 @@
     inset: 0;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: center;
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
   .archive {
