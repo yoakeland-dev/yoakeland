@@ -225,12 +225,25 @@ export interface ChatMessage {
    * `authorAvatar`) — an emoji glyph or a data URL, whichever the sending
    * client uses. */
   authorAvatar?: string;
-  /** Provider name / model id active for the session when this assistant
-   * reply was started (state.svelte.ts's addUserMessage) — stamped once at
-   * send time so it stays correct even if the session's selection changes
-   * later. Undefined for a reply rebuilt from session history, since
-   * get_session_history carries no per-message model info (§3.2) — the
-   * footer just omits the model line for those. */
+  /** Provider name / model id that generated this assistant reply —
+   * initially stamped client-side at send time (state.svelte.ts's
+   * addUserMessage, whatever the session is about to run with) and then
+   * overwritten with the server's persisted values once turn_completed /
+   * session_history confirm them (§3.2), so it stays correct across a
+   * session switch instead of reverting to undefined. Undefined only for a
+   * message stored before the backend persisted this field at all. */
   provider?: string;
   model?: string;
+  /** How long the model round-trip that produced this assistant reply took
+   * (§3.2 `generationMs`) — undefined for a message stored before the
+   * backend persisted it, and for a still-streaming reply (use
+   * `finish.durationMs` instead, which covers the whole turn). */
+  generationMs?: number;
+  /** This round-trip's own token/cost accounting (§3.2 `usage`) — not the
+   * whole turn's. `inputTokens` is already the full conversation resent as
+   * this round-trip's request, so it doubles as "tokens in, cumulative up
+   * to this point"; `outputTokens` is just this round-trip's own reply.
+   * Undefined for a message stored before the backend persisted it, and
+   * for a still-streaming reply. */
+  usage?: { inputTokens: number; outputTokens: number; costUsd: number };
 }

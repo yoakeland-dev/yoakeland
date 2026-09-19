@@ -10,6 +10,7 @@
   // sections.
   import { app } from "../state.svelte";
   import { setSessionLayout, openChatSession } from "../ipc";
+  import { sessionTitle } from "../format";
   import Icon from "./Icon.svelte";
   import type { SessionSummary } from "../types";
 
@@ -54,12 +55,12 @@
       <span class="status-icon status-{app.sessionStatus(s.sessionId)}">
         <Icon name={statusIcon[app.sessionStatus(s.sessionId)]} size={12} />
       </span>
-      <span class="label">{s.title || s.sessionId}</span>
+      <span class="label">{sessionTitle(s)}</span>
       <button
         type="button"
         class="maximize-btn"
         title="Maximize"
-        aria-label={`Maximize ${s.title || s.sessionId}`}
+        aria-label={`Maximize ${sessionTitle(s)}`}
         onclick={(e) => {
           e.stopPropagation();
           setSessionLayout(primary.sessionId, null);

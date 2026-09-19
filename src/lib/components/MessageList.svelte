@@ -104,7 +104,7 @@
         {#if message.role === "user"}
           <MessageBubble text={message.text} author={message.author} authorAvatar={message.authorAvatar} />
         {:else}
-          <AssistantMessage {message} {sessionId} />
+          <AssistantMessage {message} />
         {/if}
       {:else}
         <div class="msg-placeholder"></div>
@@ -117,7 +117,7 @@
   .list {
     flex: 1;
     overflow-y: auto;
-    padding: 20px 28px calc(var(--composer-height, 90px) + 20px);
+    padding: 20px 28px calc(var(--composer-height, 90px) + 40px);
     display: flex;
     flex-direction: column;
     gap: 14px;

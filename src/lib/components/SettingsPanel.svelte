@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Deliberately basic — visuals get hand-tuned later. Appearance, Profile
-  // and Connections are fully functional (client-only, no protocol needed).
+  // Deliberately basic — visuals get hand-tuned later. Appearance and
+  // Profile are fully functional (client-only, no protocol needed).
   // Network and Server are UI shells: both need yoakeland changes that don't
   // exist yet (a peer/connection registry, and runtime-settable remote-access
   // config) — see the checklist. Their controls are inert on purpose rather
@@ -21,6 +21,7 @@
     removeProvider,
     registerToken,
     removeToken,
+    removeProject,
   } from "../ipc";
   import { extractAccentFromImage, hexToHue, hslToHex, deriveTheme } from "../theme";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
@@ -750,7 +751,15 @@
                 <Icon name="folder" size={13} />
                 <span class="path-name" title={path}>{basename(path)}</span>
                 <span class="path-full" title={path}>{path}</span>
-                <button type="button" class="remove" onclick={() => app.forgetProject(path)} title="Remove">
+                <button
+                  type="button"
+                  class="remove"
+                  onclick={() => {
+                    app.forgetProject(path);
+                    removeProject(path);
+                  }}
+                  title="Remove"
+                >
                   <Icon name="xmark" size={11} />
                 </button>
               </li>

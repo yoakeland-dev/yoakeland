@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fade as fadeTransition } from "svelte/transition";
   import { isPhotoAvatar } from "../avatar";
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
@@ -9,7 +10,7 @@
   // (not a character count) so it clips correctly regardless of formatting —
   // a message full of short markdown headings wraps very differently than
   // one long paragraph of the same length.
-  const COLLAPSED_MAX = 220;
+  const COLLAPSED_MAX = 180;
 
   let expanded = $state(false);
   // Measured on the *inner* content wrapper, never on the clipped `.clip`
@@ -34,7 +35,17 @@
   const capped = $derived(overflowing && !expanded);
   // Before the first measurement (fullHeight still 0) this must be "none",
   // not a stale px value — otherwise the bubble clips to 0 for a frame.
-  const maxHeight = $derived(capped ? `${COLLAPSED_MAX}px` : fullHeight ? `${fullHeight}px` : "none");
+  // fullHeight is measured on contentEl, which has no padding of its own —
+  // but max-height applies to .clip's border-box, which does (0.71rem top +
+  // 0.71rem bottom). Miss that and the box is ~1.42rem short, clipping the
+  // last line (or the inline "Show less" button) off every time.
+  const maxHeight = $derived(
+    capped ? `${COLLAPSED_MAX}px` : fullHeight ? `calc(${fullHeight}px + 1.42rem)` : "none",
+  );
+  // Extra bottom padding reserved for the fade + "Show all" overlay while
+  // capped, so it never sits on top of the last line of text. Animated
+  // alongside max-height so the overlay slides into place as it grows.
+  const clipPadBottom = $derived(capped ? "3rem" : "0.71rem");
 </script>
 
 <div class="row">
@@ -43,17 +54,24 @@
       <span class="author">{author}</span>
     {/if}
     <div class="bubble">
-      <div class="clip" style="max-height: {maxHeight}">
+      <div class="clip" style="max-height: {maxHeight}; padding-bottom: {clipPadBottom}">
         <div bind:this={contentEl}>
           <Markdown {text} />
+          {#if overflowing && expanded}
+            <button class="toggle inline" transition:fadeTransition={{ duration: 120 }} onclick={() => (expanded = false)}>
+              Show less
+              <span class="chevron open"><Icon name="chevron-down" size={12} /></span>
+            </button>
+          {/if}
         </div>
       </div>
-      {#if overflowing}
-        <div class="fade" class:hidden={!capped}></div>
-        <button class="toggle" onclick={() => (expanded = !expanded)}>
-          {expanded ? "Show less" : "Show all"}
-          <span class="chevron" class:open={expanded}><Icon name="chevron-down" size={12} /></span>
-        </button>
+      {#if overflowing && capped}
+        <div class="fade" transition:fadeTransition={{ duration: 160 }}>
+          <button class="toggle overlay" onclick={() => (expanded = true)}>
+            Show all
+            <span class="chevron"><Icon name="chevron-down" size={12} /></span>
+          </button>
+        </div>
       {/if}
     </div>
   </div>
@@ -113,39 +131,50 @@
     position: relative;
     background: var(--bubble-user-bg);
     border-radius: 16px;
-    padding: 0.71rem 1rem;
     font-size: 0.9rem;
+    /* Bottom always rounds correctly, capped or expanded: the bubble itself
+       clips, so nothing (fade, text) can square off its corners. */
+    overflow: hidden;
   }
   .clip {
     position: relative;
     overflow: hidden;
-    transition: max-height calc(0.32s * var(--anim-speed, 1)) cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 0.71rem 1rem;
+    transition:
+      max-height calc(0.22s * var(--anim-speed, 1)) ease,
+      padding-bottom calc(0.22s * var(--anim-speed, 1)) ease;
   }
   .fade {
     position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
-    height: 2.6rem;
-    background: linear-gradient(to bottom, transparent, var(--bubble-user-bg));
+    height: 3rem;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 0.6rem;
+    background: linear-gradient(to bottom, transparent, var(--bubble-user-bg) 55%);
     pointer-events: none;
-    opacity: 1;
-    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
   }
-  .fade.hidden {
-    opacity: 0;
+  .fade .toggle {
+    pointer-events: auto;
   }
   .toggle {
     display: flex;
+    width: 100%;
     align-items: center;
+    justify-content: center;
     gap: 0.21rem;
-    margin-top: 0.43rem;
     background: none;
     border: none;
     color: var(--accent);
     font-size: 0.75rem;
-    padding: 0;
+    padding: 0.2rem 0;
     cursor: pointer;
+  }
+  .toggle.inline {
+    margin-top: 0.43rem;
   }
   .chevron {
     display: inline-flex;

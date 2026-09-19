@@ -2,13 +2,15 @@
   import type { AssistantStep, ChatMessage, ToolCallEntry } from "../types";
   import { app } from "../state.svelte";
   import { vendorMetaFor, titleFor, type Entry } from "../modelVendor";
+  import { relTime, shortNum } from "../format";
   import ToolCallGroup from "./ToolCallGroup.svelte";
   import WorkGroup from "./WorkGroup.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
   import Markdown from "./Markdown.svelte";
-  import ModelPicker from "./ModelPicker.svelte";
+  import Icon from "./Icon.svelte";
+  import LobeIcon from "./LobeIcon.svelte";
 
-  let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
+  let { message }: { message: ChatMessage } = $props();
 
   type Segment =
     | { key: string; kind: "text"; text: string }
@@ -30,7 +32,9 @@
   // tool call ever attached to it (plain reasoning-then-answer, no tools at
   // all) falls out of the same logic as a standalone `thinking` segment.
   const segments = $derived.by((): Segment[] => {
-    const calls = [...message.toolCalls].sort((a, b) => (a.textOffset ?? 0) - (b.textOffset ?? 0));
+    const calls = [...message.toolCalls].sort(
+      (a, b) => (a.textOffset ?? 0) - (b.textOffset ?? 0),
+    );
     const segs: Segment[] = [];
     let cursor = 0;
     let thinkCursor = 0;
@@ -51,29 +55,55 @@
       const hasCluster = runSteps.some((s) => s.kind === "cluster");
       if (!hasCluster) {
         for (const s of runSteps) {
-          if (s.kind === "thought") segs.push({ key: `think-${s.at}`, kind: "thinking", text: s.text });
+          if (s.kind === "thought")
+            segs.push({ key: `think-${s.at}`, kind: "thinking", text: s.text });
         }
       } else if (runSteps.some((s) => s.kind === "thought")) {
-        const first = runSteps.find((s): s is Extract<AssistantStep, { kind: "cluster" }> => s.kind === "cluster");
-        segs.push({ key: `work-${first?.calls[0]?.toolCallId ?? "0"}`, kind: "workgroup", steps: runSteps });
+        const first = runSteps.find(
+          (s): s is Extract<AssistantStep, { kind: "cluster" }> =>
+            s.kind === "cluster",
+        );
+        segs.push({
+          key: `work-${first?.calls[0]?.toolCallId ?? "0"}`,
+          kind: "workgroup",
+          steps: runSteps,
+        });
       } else {
         const only = runSteps[0] as Extract<AssistantStep, { kind: "cluster" }>;
-        segs.push({ key: `tools-${only.calls[0]?.toolCallId ?? "0"}`, kind: "toolgroup", calls: only.calls });
+        segs.push({
+          key: `tools-${only.calls[0]?.toolCallId ?? "0"}`,
+          kind: "toolgroup",
+          calls: only.calls,
+        });
       }
       runSteps = [];
     }
 
     for (const call of calls) {
-      const offset = Math.min(Math.max(call.textOffset ?? 0, cursor), message.text.length);
+      const offset = Math.min(
+        Math.max(call.textOffset ?? 0, cursor),
+        message.text.length,
+      );
       if (offset > cursor) {
         flushRun();
-        segs.push({ key: `text-${cursor}`, kind: "text", text: message.text.slice(cursor, offset) });
+        segs.push({
+          key: `text-${cursor}`,
+          kind: "text",
+          text: message.text.slice(cursor, offset),
+        });
         cursor = offset;
       }
-      const thinkOffset = Math.min(Math.max(call.thinkingOffset ?? 0, thinkCursor), thinkingLen);
+      const thinkOffset = Math.min(
+        Math.max(call.thinkingOffset ?? 0, thinkCursor),
+        thinkingLen,
+      );
       if (thinkOffset > thinkCursor) {
         flushCluster();
-        runSteps.push({ kind: "thought", text: message.thinking!.slice(thinkCursor, thinkOffset), at: thinkCursor });
+        runSteps.push({
+          kind: "thought",
+          text: message.thinking!.slice(thinkCursor, thinkOffset),
+          at: thinkCursor,
+        });
         thinkCursor = thinkOffset;
       }
       pendingCluster.push(call);
@@ -84,26 +114,38 @@
     // think-then-write order a live stream actually happened in.
     if (thinkCursor < thinkingLen) {
       flushCluster();
-      runSteps.push({ kind: "thought", text: message.thinking!.slice(thinkCursor), at: thinkCursor });
+      runSteps.push({
+        kind: "thought",
+        text: message.thinking!.slice(thinkCursor),
+        at: thinkCursor,
+      });
       thinkCursor = thinkingLen;
     }
     flushRun();
     if (cursor < message.text.length || segs.length === 0) {
-      segs.push({ key: `text-${cursor}`, kind: "text", text: message.text.slice(cursor) });
+      segs.push({
+        key: `text-${cursor}`,
+        kind: "text",
+        text: message.text.slice(cursor),
+      });
     }
     return segs;
   });
 
-  // Provider/model stamped on the message at send time (state.svelte.ts) —
-  // resolved against the live provider/model lists for an icon + display
-  // name. Absent for a reply rebuilt from session history (no per-message
-  // model info on the wire, §3.2) or if the provider/model was since
-  // removed, in which case the footer just omits the model chip.
+  // Provider/model on the message — stamped client-side at send time
+  // (state.svelte.ts) and, once persisted, also carried by a reply rebuilt
+  // from session history (§3.2's `provider`/`model` per message). Resolved
+  // against the live provider/model lists for an icon + display name;
+  // absent if that provider/model has since been removed, or for a message
+  // stored before the backend persisted these fields, in which case the
+  // footer just omits the model chip.
   const modelEntry = $derived.by((): Entry | null => {
     if (!message.provider || !message.model) return null;
     const provider = app.providers.find((p) => p.name === message.provider);
     if (!provider) return null;
-    const model = app.modelsByProvider[message.provider]?.find((m) => m.id === message.model) ?? {
+    const model = app.modelsByProvider[message.provider]?.find(
+      (m) => m.id === message.model,
+    ) ?? {
       id: message.model,
     };
     return { provider, model };
@@ -114,7 +156,23 @@
   const contextPct = $derived.by(() => {
     const ctx = message.finish?.context;
     if (!ctx || !ctx.maxTokens) return null;
-    return Math.min(100, Math.round((ctx.estimatedTokens / ctx.maxTokens) * 100));
+    return Math.min(
+      100,
+      Math.round((ctx.estimatedTokens / ctx.maxTokens) * 100),
+    );
+  });
+
+  // The persisted per-message usage (§3.2 `usage`) once a reload has it;
+  // falls back to the live turn's own usage while streaming/just-completed,
+  // before that persisted value exists yet. `inputTokens` is already the
+  // full conversation resent as this round-trip's request, so it doubles as
+  // "tokens in, cumulative up to this point" — `outputTokens` is just this
+  // reply.
+  const usage = $derived(message.usage ?? message.finish?.usage ?? null);
+
+  const durationS = $derived.by(() => {
+    const ms = message.finish?.durationMs ?? message.generationMs;
+    return ms !== undefined ? (ms / 1000).toFixed(1) : null;
   });
 </script>
 
@@ -135,7 +193,7 @@
     {/if}
   {/each}
 
-  {#if modelMeta || message.finish}
+  {#if modelMeta || message.finish || usage || durationS !== null}
     <div
       class="finish"
       class:cancelled={message.finish?.finishReason === "cancelled" ||
@@ -144,31 +202,70 @@
       class:truncated={message.finish?.finishReason === "length"}
     >
       {#if modelMeta}
-        <span class="model-chip">
-          <ModelPicker {sessionId} displayOverride={{ icon: modelMeta.icon, label: modelTitle }} />
+        <span class="model-chip" title={modelTitle}>
+          <LobeIcon name={modelMeta.icon} fallback="openrouter" size={13} />
+          <span class="model-label">{modelTitle}</span>
         </span>
       {/if}
+
       {#if message.finish?.finishReason === "cancelled"}
-        <span class="stat">Cancelled</span>
+        {#if modelMeta}<span class="dot">·</span>{/if}
+        <span class="stat">cancelled</span>
       {:else if message.finish?.finishReason === "budget_exceeded"}
-        <span class="stat">Session budget exceeded — turn not run</span>
+        {#if modelMeta}<span class="dot">·</span>{/if}
+        <span class="stat">session budget exceeded — turn not run</span>
       {:else if message.finish?.finishReason === "no_provider"}
+        {#if modelMeta}<span class="dot">·</span>{/if}
         <span class="stat"
-          >No provider configured yet —
-          <button class="link" onclick={() => app.openProviderSettings()}>add one</button>
-          and pick it from the toolbar below.</span
+          >no provider configured yet —
+          <button class="link" onclick={() => app.openProviderSettings()}
+            >add one</button
+          >
+          and pick it from the toolbar below</span
         >
-      {:else if message.finish}
-        <span class="stat">{message.finish.usage.totalTokens ?? 0} tokens</span>
-        <span class="stat">${(message.finish.usage.costUsd ?? 0).toFixed(4)}</span>
-        <span class="stat">{((message.finish.durationMs ?? 0) / 1000).toFixed(1)}s</span>
-        {#if contextPct !== null}<span class="stat">{contextPct}% context</span>{/if}
-        {#if message.finish.finishReason === "length"}
-          <span class="stat">cut off at the output limit</span>
-        {/if}
       {:else}
-        <span class="stat">Generating…</span>
+        {#if usage}
+          {#if modelMeta}<span class="dot">·</span>{/if}
+          <span
+            class="stat"
+            title="Tokens in — the full conversation sent with this reply"
+          >
+            <Icon name="arrow-narrow-down" size={12} />{shortNum(
+              usage.inputTokens ?? 0,
+            )}
+          </span>
+          <span class="stat" title="Tokens out — this reply only">
+            <Icon name="arrow-narrow-up" size={12} />{shortNum(
+              usage.outputTokens ?? 0,
+            )}
+          </span>
+          <span class="dot">·</span>
+          <span class="stat">${(usage.costUsd ?? 0).toFixed(4)}</span>
+        {/if}
+
+        {#if message.streaming}
+          <span class="dot">·</span>
+          <span class="stat">generating…</span>
+        {:else}
+          {#if durationS !== null}
+            <span class="dot">·</span>
+            <span class="stat">{durationS}s</span>
+          {/if}
+          {#if contextPct !== null}
+            <span class="dot">·</span>
+            <span class="stat">{contextPct}% context</span>
+          {/if}
+          {#if message.finish?.finishReason === "length"}
+            <span class="dot">·</span>
+            <span class="stat">cut off at the output limit</span>
+          {/if}
+        {/if}
       {/if}
+
+      <span class="dot">·</span>
+      <span class="stat" title={new Date(message.createdAt).toLocaleString()}
+        >{relTime(message.createdAt)}</span
+      >
     </div>
   {/if}
 </div>
@@ -198,14 +295,16 @@
       opacity: 0;
     }
   }
+
   .finish {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.07rem 0.57rem;
+    gap: 0.4rem;
     margin-top: 0.43rem;
     font-size: var(--text-heading-size);
     color: var(--text-dim);
+    line-height: 1;
   }
   .finish.cancelled {
     color: var(--danger);
@@ -213,34 +312,37 @@
   .finish.truncated {
     color: var(--warning);
   }
+
+  .dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    opacity: 0.5;
+    color: var(--text-dim);
+    line-height: 1;
+  }
+
   .model-chip {
     display: inline-flex;
     align-items: center;
-  }
-  /* ModelPicker's default trigger is sized for the composer toolbar — shrink
-     it to sit inline in this dense stats row instead, keeping its actual
-     popover/click behavior untouched. */
-  .model-chip :global(.picker-trigger) {
-    padding: 0;
-    border: none;
-    max-width: none;
-    font-size: inherit;
+    gap: 0.3rem;
+    margin-right: 0.3rem;
     font-weight: 600;
-    color: var(--text);
+    color: var(--text-dim);
+    flex-shrink: 0;
   }
-  .model-chip :global(.picker-trigger:hover),
-  .model-chip :global(.picker-trigger.open) {
-    background: none;
-    color: var(--accent);
+  .model-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
   }
   .stat {
     display: inline-flex;
-  }
-  .stat + .stat::before,
-  .model-chip + .stat::before {
-    content: "·";
-    margin-right: 0.57rem;
-    color: var(--text-dim);
+    align-items: center;
+    gap: 0.14rem;
+    line-height: 1;
   }
   .link {
     background: none;

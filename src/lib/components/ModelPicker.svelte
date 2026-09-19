@@ -16,17 +16,7 @@
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
 
-  // `displayOverride` swaps just the trigger's icon/label for a caller-chosen
-  // one (AssistantMessage's per-message footer chip, which shows whichever
-  // model actually generated *that* reply — possibly not the session's
-  // current pick, if the user has since switched). The popover itself still
-  // operates on `sessionId`'s live selection regardless — clicking any
-  // message's chip opens the same picker and changes the session going
-  // forward, it doesn't rewrite what already happened.
-  let {
-    sessionId,
-    displayOverride,
-  }: { sessionId: string; displayOverride?: { icon: string; label: string } | null } = $props();
+  let { sessionId }: { sessionId: string } = $props();
 
   // Model options (§3.1 set_model_options) — mirror whichever upstream's own
   // capability shape close to verbatim (SPEC.md §3.2 model_list), so there's
@@ -256,9 +246,7 @@
   >
     <span class="trigger-icon">
       <span class="crossfade a">
-        {#if displayOverride}
-          <LobeIcon name={displayOverride.icon} fallback="openrouter" size={13} />
-        {:else if currentEntry}
+        {#if currentEntry}
           <LobeIcon
             name={vendorMetaFor(currentEntry).icon}
             fallback="openrouter"
@@ -271,13 +259,11 @@
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
     <span class="trigger-label"
-      >{displayOverride
-        ? displayOverride.label
-        : currentEntry
-          ? titleFor(currentEntry)
-          : currentProvider
-            ? currentModel || currentProvider.name
-            : "Provider…"}</span
+      >{currentEntry
+        ? titleFor(currentEntry)
+        : currentProvider
+          ? currentModel || currentProvider.name
+          : "Provider…"}</span
     >
   </Popover.Trigger>
 

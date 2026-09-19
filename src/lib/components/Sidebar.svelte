@@ -3,7 +3,7 @@
   import { tick } from "svelte";
   import { app, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from "../state.svelte";
   import { selectProject, browseAndAddProject, setSessionTitle, setSessionArchived, deleteSession, openInSidePanel, openChatSession } from "../ipc";
-  import { relTime, basename } from "../format";
+  import { relTime, basename, sessionTitle } from "../format";
   import { isPhotoAvatar } from "../avatar";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
@@ -166,7 +166,7 @@
         icon: "trash",
         danger: true,
         onSelect: () => {
-          if (confirm(`Permanently delete "${s.title || s.sessionId}"? This can't be undone.`)) {
+          if (confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
             deleteSession(s.sessionId);
           }
         },
@@ -174,15 +174,15 @@
     ];
   }
 
-  async function newChat() {
-    const projectPath = app.currentProjectPath ?? (await browseAndAddProject());
-    if (projectPath) {
-      if (!app.currentProjectPath) selectProject(projectPath);
+  async function newChat(projectPath?: string) {
+    const path = projectPath ?? app.currentProjectPath ?? (await browseAndAddProject());
+    if (path) {
+      if (path !== app.currentProjectPath) selectProject(path);
       const current = app.currentSessionId;
       if (current && (app.messagesBySession[current] ?? []).length === 0) {
         app.discardUnsentSession(current);
       }
-      app.newSessionInProject(projectPath);
+      app.newSessionInProject(path);
     }
   }
 
@@ -257,7 +257,9 @@
               ),
           ] as [string, SessionSummary[]],
       )
-      .filter(([, sessions]) => sessions.length > 0),
+      // Empty groups still render — see ProjectGroup's own empty state —
+      // except while searching, where an empty group is just noise.
+      .filter(([, sessions]) => sessions.length > 0 || !search.trim()),
   );
 
   const archiveGroups = $derived(
@@ -308,7 +310,7 @@
           </button>
         {/if}
       </div>
-      <button class="new-chat" onclick={newChat} title="New chat" aria-label="New chat">
+      <button class="new-chat" onclick={() => newChat()} title="New chat" aria-label="New chat">
         <Icon name="message-circle-plus" size={16} />
       </button>
     </div>
@@ -397,7 +399,7 @@
                   class:active={s.sessionId === app.currentSessionId}
                   class:syncing={app.syncingSessions[s.sessionId]}
                   disabled={app.syncingSessions[s.sessionId]}
-                  aria-label={`${s.title || s.sessionId}, ${app.syncingSessions[s.sessionId] ? "syncing" : app.sessionStatus(s.sessionId)}`}
+                  aria-label={`${sessionTitle(s)}, ${app.syncingSessions[s.sessionId] ? "syncing" : app.sessionStatus(s.sessionId)}`}
                   ondblclick={() => startRename(s)}
                   onclick={() => openChatSession(s.sessionId)}
                 >
@@ -405,7 +407,7 @@
                     <span class="status-icon status-{app.sessionStatus(s.sessionId)}" aria-hidden="true">
                       <Icon name={statusIcon[app.sessionStatus(s.sessionId)]} size={13} />
                     </span>
-                    <span class="label">{s.title || s.sessionId}</span>
+                    <span class="label">{sessionTitle(s)}</span>
                     {#if s.sessionId !== app.currentSessionId}
                       <!-- Not a real <button>: this sits inside the .chat-card
                            button above it, and nested <button>s are invalid
@@ -443,7 +445,7 @@
         {#if activeGroups.length > 0}
           {#if running.length > 0}<div class="section-label">Recent</div>{/if}
           {#each activeGroups as [project, sessions] (project)}
-            <ProjectGroup projectPath={project} {sessions} archived={false} />
+            <ProjectGroup projectPath={project} {sessions} archived={false} onNewChat={() => newChat(project)} />
           {/each}
         {:else if running.length === 0}
           <p class="empty">No threads yet</p>
@@ -761,6 +763,10 @@
     display: flex;
     flex-direction: column;
     gap: 0.07rem;
+    scrollbar-width: none;
+  }
+  .chat-list::-webkit-scrollbar {
+    display: none;
   }
   .section-label {
     padding: 0.43rem var(--space-1) 0.14rem;

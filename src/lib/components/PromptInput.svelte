@@ -599,6 +599,12 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
+    /* Own stacking context, so ::after's negative z-index (below) only
+       reorders it against .wrap's own children (.stack) — without this it
+       would resolve against the nearest ancestor stacking context instead
+       (.body, see ChatPanel.svelte) and end up entirely behind MessageList,
+       which defeats the fade rather than just tucking it under the box. */
+    isolation: isolate;
   }
   /* A big soft scrim behind the floating composer so it stays legible over a
      busy/dark wallpaper (only shown pre-first-message — see .wallpaper.visible
@@ -619,6 +625,34 @@
     transition: opacity calc(0.3s * var(--anim-speed, 1)) ease;
   }
   .wrap.floating::before {
+    opacity: 1;
+  }
+  /* Fades scrolled-under transcript text out behind the docked composer,
+     rather than having it cut off hard at the box's edge. Only shown once
+     docked (there's no transcript behind the floating/empty-state composer
+     to fade). Height matches MessageList's own reserved bottom padding
+     (--composer-height + the same 40px gap, see .list there) exactly, so
+     the fade's transparent top edge lines up with where real message
+     content is allowed to sit at rest — it only ever covers the blank
+     buffer zone plus whatever scrolls up into it, never a message that's
+     just sitting there unscrolled (which is how a message's footer used to
+     go dark: a flat 7rem band doesn't track the composer's actual size). */
+  .wrap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: calc(var(--composer-height, 90px) + 40px);
+    background: linear-gradient(to bottom, transparent, var(--panel-bg) 65%);
+    opacity: 0;
+    /* Behind .stack (the composer) — ::after otherwise paints after it in
+       DOM order and would sit on top, covering the box instead of just the
+       transcript behind it. */
+    z-index: -1;
+    transition: opacity calc(0.3s * var(--anim-speed, 1)) ease;
+  }
+  .wrap:not(.floating)::after {
     opacity: 1;
   }
   /* Bottom-anchored by default: sits `top` from the wrap's own bottom edge,

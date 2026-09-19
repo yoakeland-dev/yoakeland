@@ -67,6 +67,8 @@
   import brain from "@tabler/icons/outline/brain.svg?raw";
   import tool from "@tabler/icons/outline/tool.svg?raw";
   import world from "@tabler/icons/outline/world.svg?raw";
+  import arrowNarrowUp from "@tabler/icons/outline/arrow-narrow-up.svg?raw";
+  import arrowNarrowDown from "@tabler/icons/outline/arrow-narrow-down.svg?raw";
 
   const icons = {
     plus,
@@ -133,6 +135,8 @@
     brain,
     tool,
     world,
+    "arrow-narrow-up": arrowNarrowUp,
+    "arrow-narrow-down": arrowNarrowDown,
   };
 
   let { name, size = 16 }: { name: keyof typeof icons; size?: number } = $props();
