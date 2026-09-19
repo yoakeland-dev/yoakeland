@@ -352,6 +352,25 @@ export function getSessionHistory(sessionId: string) {
   void send({ type: "get_session_history", data: { sessionId, projectPath } });
 }
 
+/** Re-sends a resumed session's own provider/model and plan-mode choice from
+ * this client's cache (`providerBySession`/`planModeBySession`) if it has
+ * one. These are server-memory-only (SPEC.md §4b) — lost across a server
+ * restart or a `remove_project` teardown, with no push telling the client it
+ * happened — so a resumed session's next turn would otherwise silently run
+ * on the registry's default provider instead of what the user picked. This
+ * is the client-side half of that documented recovery contract: the same
+ * cache that already renders the picker's current selection is replayed
+ * back to the server, not just displayed. No-op if nothing's cached (a
+ * session that never had `set_provider`/`set_plan_mode` called on it, or a
+ * fresh app launch that never populated the cache to begin with — this
+ * can't recover state the client itself no longer remembers). */
+function reassertSessionSettings(sessionId: string) {
+  const providerName = app.providerBySession[sessionId];
+  if (providerName) setProvider(sessionId, providerName, app.modelBySession[sessionId]);
+  const planMode = app.planModeBySession[sessionId];
+  if (planMode !== undefined) setPlanMode(sessionId, planMode);
+}
+
 /** Opens `sessionId` as the main chat and refreshes it from the server so a
  * session opened cold — a second device, a fresh install, a reconnect after
  * being offline — shows its actual history instead of whatever (or nothing)
@@ -366,7 +385,10 @@ export function getSessionHistory(sessionId: string) {
 export function openChatSession(sessionId: string) {
   if (sessionId !== app.currentSessionId) app.pushNavHistory(app.currentSessionId);
   app.openSession(sessionId);
-  if (app.connectionStatus === "connected") getSessionHistory(sessionId);
+  if (app.connectionStatus === "connected") {
+    getSessionHistory(sessionId);
+    reassertSessionSettings(sessionId);
+  }
 }
 
 /** The titlebar island's back/forward arrows — same open-and-refresh path as
@@ -378,7 +400,10 @@ export function navigateSessionHistory(direction: "back" | "forward") {
   const target = direction === "back" ? app.stepBack() : app.stepForward();
   if (!target) return;
   app.openSession(target);
-  if (app.connectionStatus === "connected") getSessionHistory(target);
+  if (app.connectionStatus === "connected") {
+    getSessionHistory(target);
+    reassertSessionSettings(target);
+  }
 }
 
 export function cancelTurn(sessionId: string, turnId: string) {
@@ -484,7 +509,10 @@ export function openInSidePanel(sessionId: string) {
   }
   app.ensureSession(sessionId);
   app.showInSidePanel(sessionId);
-  if (app.connectionStatus === "connected") getSessionHistory(sessionId);
+  if (app.connectionStatus === "connected") {
+    getSessionHistory(sessionId);
+    reassertSessionSettings(sessionId);
+  }
 }
 
 /** Browses the *backend's* filesystem (§3.1) — the only correct way to pick a
@@ -500,16 +528,26 @@ export function openProject(path: string) {
   void send({ type: "open_project", data: { path } });
 }
 
-/** Selects `path` as the current project everywhere in the UI, remembering
- * it locally (§4b — the server doesn't persist "recently opened" for us) and,
- * if connected, opening it server-side and fetching its threads. */
+/** Selects `path` as the current project everywhere in the UI and, if
+ * connected, opens it server-side and fetches its threads. The server now
+ * persists the known-projects list itself (§4b `projects.json`) and echoes
+ * back the canonical (symlink-resolved) form of whatever path was sent — so
+ * when connected, `rememberProject` is only called once, from that
+ * `project_opened` response (state.svelte.ts), not here with the raw picked
+ * path too. Calling it both places used to leave two differently-spelled
+ * entries in `recentProjects` for the same real folder whenever the raw pick
+ * wasn't already exactly absolute/clean. When *not* connected there's no
+ * round-trip to canonicalize/confirm this against, so it's remembered
+ * locally as a best guess — reconciled the next time list_projects (or this
+ * same open_project) succeeds. */
 export function selectProject(path: string) {
   app.selectProject(path);
-  app.rememberProject(path);
   if (app.connectionStatus === "connected") {
     openProject(path);
     listSessionsForProject(path);
     listFiles(path);
+  } else {
+    app.rememberProject(path);
   }
 }
 
@@ -555,18 +593,36 @@ export async function pickProjectFolder(): Promise<string | null> {
 }
 
 /** The one remaining native-dialog entry point — Settings > Connections'
- * "Browse…", for adding a new path from scratch. Adds to the saved list
- * without switching to it; daily selection goes through the sidebar's
- * dropdown (sourced from that same saved list) instead of a dialog. */
+ * "Browse…", for adding a new path from scratch without switching to it
+ * (daily selection goes through the sidebar's dropdown instead). Must still
+ * reach the server via `open_project` when connected — the known-projects
+ * list is server-persisted now (§4b), so a path only ever remembered
+ * locally here would never make it into `projects.json` and so would never
+ * show up for another device, or survive this client forgetting its own
+ * localStorage. Same connected/offline split as `selectProject`. */
 export async function browseAndAddProject(): Promise<string | null> {
   const dir = await pickFolder("Add a project folder");
   if (!dir) return null;
-  app.rememberProject(dir);
+  if (app.connectionStatus === "connected") {
+    app.nextProjectOpenSwitches = false; // "adds without switching to it" — see state.svelte.ts's project_opened handler
+    openProject(dir);
+  } else {
+    app.rememberProject(dir);
+  }
   return dir;
 }
 
 export function listProjects() {
   void send({ type: "list_projects", data: {} });
+}
+
+/** Drops a path from the server's persisted known-projects list (so it stops
+ * coming back on the next list_projects) and cancels/evicts any session
+ * still live in it server-side — real teardown, not just a client-side
+ * "hide it" (SPEC.md §3.1 remove_project). Paired with the user removing it
+ * locally (Settings > Connections) — see app.forgetProject. */
+export function removeProject(path: string) {
+  void send({ type: "remove_project", data: { path } });
 }
 
 export function listSessionsForProject(projectPath: string) {

@@ -40,10 +40,22 @@ const SESSION_SCOPED_EVENTS = new Set([
   "session_taken_over",
 ]);
 
+// A path handler passed straight to `onclick` (instead of wrapped in an
+// arrow function) receives the DOM event in place of its intended string
+// argument — `String(event)` stringifies to this. Filters out that specific
+// garbage shape wherever a path/project key is read back from storage.
+function looksLikePath(p: unknown): p is string {
+  return typeof p === "string" && !/^\[object \w+\]$/.test(p);
+}
+
 function loadRecentProjects(): string[] {
   try {
     const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
-    return raw ? (JSON.parse(raw) as string[]) : [];
+    if (!raw) return [];
+    // Same reasoning as sanitizeChatHistory below: this blob outlives whatever
+    // shape wrote it, so a stale/corrupted entry shouldn't crash every reader
+    // (basename(p) et al.) that assumes a plain string path.
+    return (JSON.parse(raw) as unknown[]).filter(looksLikePath);
   } catch {
     return [];
   }
@@ -83,7 +95,15 @@ function sanitizeChatHistory(history: ChatHistory): ChatHistory {
       toolCalls: m.toolCalls ?? [],
     }));
   }
-  return { ...history, messagesBySession };
+  const sessionsByProject: Record<string, SessionSummary[]> = {};
+  for (const [project, sessions] of Object.entries(history.sessionsByProject ?? {})) {
+    if (looksLikePath(project)) sessionsByProject[project] = sessions;
+  }
+  const projectBySession: Record<string, string> = {};
+  for (const [sessionId, project] of Object.entries(history.projectBySession ?? {})) {
+    if (looksLikePath(project)) projectBySession[sessionId] = project;
+  }
+  return { ...history, messagesBySession, sessionsByProject, projectBySession };
 }
 
 function loadChatHistory(): ChatHistory {
@@ -260,6 +280,15 @@ class AppState {
 
   settings = $state<AppSettings>(typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS });
 
+  // Not UI-bound, so a plain field rather than $state: whether the *next*
+  // project_opened response should switch currentProjectPath. open_project
+  // (SPEC.md §3.1) itself has no such concept — it just opens/validates a
+  // path — so "should this also switch the active project" is a client-side
+  // decision the sender (ipc.selectProject vs. ipc.browseAndAddProject)
+  // makes per call. Defaults true so every other/future open_project caller
+  // keeps today's switch-on-open behavior unless it opts out.
+  nextProjectOpenSwitches = true;
+
   sandboxTierByProject = $state<Record<string, SandboxTier>>({});
   snapshotsByProject = $state<Record<string, SnapshotInfo[]>>({});
   directoryListing = $state<{ path: string; entries: DirectoryEntry[] } | null>(null);
@@ -306,10 +335,14 @@ class AppState {
   }
 
   // Projects (§4b): a server process can have many open at once. `projects`
-  // is what the server has told us it's opened this run (`project_list`);
-  // `recentProjects` is *our own* memory of folders worth offering again —
-  // the spec is explicit that the server has no persisted memory of this,
-  // the client is the source of truth for "recently opened folders."
+  // is what the server has told us is live this run (`project_list`, though
+  // nothing currently reads this field separately from `recentProjects`).
+  // `recentProjects` is the actual project switcher/picker list — a thin,
+  // capped (20-entry) local cache reconciled against the server's own
+  // persisted `projects.json` (§4b) on every `project_list` response, not an
+  // independent source of truth: the server is now the durable memory of
+  // "which projects exist" (so a second device sees a project this one
+  // added), this is just what paints instantly before that round-trip lands.
   projects = $state<string[]>([]);
   recentProjects = $state<string[]>(typeof localStorage !== "undefined" ? loadRecentProjects() : []);
   currentProjectPath = $state<string | null>(null);
@@ -691,8 +724,9 @@ class AppState {
     saveRecentProjects(this.recentProjects);
   }
 
-  /** Removes a saved path from the picker (Settings > Connections) — doesn't
-   * touch anything server-side, this is purely "stop offering it locally." */
+  /** Removes a saved path from the picker (Settings > Connections). Purely
+   * the local half — the caller also sends remove_project so the server
+   * stops re-adding it via the next project_list (see ipc.removeProject). */
   forgetProject(path: string) {
     this.recentProjects = this.recentProjects.filter((p) => p !== path);
     saveRecentProjects(this.recentProjects);
@@ -778,7 +812,20 @@ class AppState {
    * clobber live-streaming state. */
   applySessionHistory(
     sessionId: string,
-    messages: { role: "user" | "assistant" | "tool"; content: string; author?: string; authorAvatar?: string; reasoning?: string; toolCalls?: { id: string; name: string; args: Record<string, unknown> }[]; toolCallId?: string }[],
+    messages: {
+      role: "user" | "assistant" | "tool";
+      content: string;
+      author?: string;
+      authorAvatar?: string;
+      reasoning?: string;
+      toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
+      toolCallId?: string;
+      provider?: string;
+      model?: string;
+      createdAt?: string;
+      generationMs?: number;
+      usage?: { inputTokens: number; outputTokens: number; costUsd: number };
+    }[],
   ) {
     if (this.activeTurnBySession[sessionId]) return;
     const toolResults = new Map<string, string>();
@@ -790,7 +837,11 @@ class AppState {
     for (const m of messages) {
       if (m.role === "tool") continue;
       turnIndex++;
-      const createdAt = base - (messages.length - turnIndex) * 1000;
+      // The server's own createdAt (§3.2) is authoritative when present —
+      // fall back to the old evenly-spaced synthetic timestamp only for a
+      // message stored before that field existed.
+      const stored = m.createdAt ? Date.parse(m.createdAt) : NaN;
+      const createdAt = Number.isFinite(stored) ? stored : base - (messages.length - turnIndex) * 1000;
       if (m.role === "user") {
         // A user message with no stored author predates the server persisting
         // who sent one (§3.2), or came from a client that doesn't report it.
@@ -813,22 +864,60 @@ class AppState {
             : this.settings.profileAvatar || undefined,
         });
       } else {
-        const toolCalls: ToolCallEntry[] = (m.toolCalls ?? []).map((tc) => ({
-          toolCallId: tc.id,
-          name: tc.name,
-          args: tc.args ?? {},
-          status: "done",
-          output: toolResults.get(tc.id) ?? "",
-        }));
-        out.push({
-          id: `${sessionId}-hist-${turnIndex}`,
-          role: "assistant",
-          text: m.content ?? "",
-          thinking: m.reasoning || undefined,
-          toolCalls,
-          streaming: false,
-          createdAt,
-        });
+        // A turn with tool calls makes one round-trip per assistant entry
+        // here (§3.2), but the live stream accumulates all of them into a
+        // single message keyed by turnId (see findAssistantMessage/
+        // tool_call_requested below) — text and tool calls interleaved by
+        // offset into one growing string. Reload must rebuild that same
+        // shape, or each round-trip repaints as its own bubble with its own
+        // footer and an uncollapsed tool group. There's no stored turnId to
+        // group by, so consecutive assistant entries between two user
+        // messages are assumed to be one turn.
+        let cur = out[out.length - 1];
+        if (!cur || cur.role !== "assistant") {
+          cur = {
+            id: `${sessionId}-hist-turn-${turnIndex}`,
+            role: "assistant",
+            text: "",
+            toolCalls: [],
+            streaming: false,
+            createdAt,
+          };
+          out.push(cur);
+        }
+
+        // The backend has been observed persisting the same toolCallId twice
+        // (see the live tool_call_requested handler below) — dedupe here too,
+        // or a duplicate key crashes the keyed {#each} over toolCalls.
+        const seen = new Set(cur.toolCalls.map((t) => t.toolCallId));
+        for (const tc of m.toolCalls ?? []) {
+          if (seen.has(tc.id)) continue;
+          seen.add(tc.id);
+          cur.toolCalls.push({
+            toolCallId: tc.id,
+            name: tc.name,
+            args: tc.args ?? {},
+            status: "done",
+            output: toolResults.get(tc.id) ?? "",
+            textOffset: cur.text.length,
+            thinkingOffset: cur.thinking?.length ?? 0,
+          });
+        }
+        cur.text += m.content ?? "";
+        if (m.reasoning) cur.thinking = (cur.thinking ?? "") + m.reasoning;
+        // Provider/model/usage/duration are per round-trip; the merged
+        // bubble's footer shows the turn's totals — provider/model as last
+        // used (a mid-turn switch is the rare case), usage/duration summed.
+        cur.provider = m.provider || cur.provider;
+        cur.model = m.model || cur.model;
+        cur.generationMs = (cur.generationMs ?? 0) + (m.generationMs ?? 0) || undefined;
+        if (m.usage) {
+          cur.usage = {
+            inputTokens: m.usage.inputTokens,
+            outputTokens: (cur.usage?.outputTokens ?? 0) + m.usage.outputTokens,
+            costUsd: (cur.usage?.costUsd ?? 0) + m.usage.costUsd,
+          };
+        }
       }
     }
     this.messagesBySession[sessionId] = out;
@@ -1120,14 +1209,34 @@ class AppState {
       }
       case "project_opened": {
         const data = env.data as { path: string; sandboxTier?: SandboxTier };
+        // Always remember it (this is also the one place a path gets
+        // upgraded from however it was raw-picked to the server's
+        // canonical, symlink-resolved form — see ipc.selectProject) —
+        // but only switch the active project if this open was meant to.
         this.rememberProject(data.path);
-        this.currentProjectPath = data.path;
+        if (this.nextProjectOpenSwitches) this.currentProjectPath = data.path;
+        this.nextProjectOpenSwitches = true;
         if (data.sandboxTier) this.sandboxTierByProject[data.path] = data.sandboxTier;
         break;
       }
       case "project_list": {
+        // Server-persisted and authoritative now (§4b projects.json), sorted
+        // most-recently-opened first. rememberProject unshifts each path it's
+        // given, so feeding it in server order would build the list
+        // backwards — walk it in reverse so the end result matches.
         const data = env.data as { paths: string[] };
-        for (const p of data.paths ?? []) this.rememberProject(p);
+        for (const p of [...(data.paths ?? [])].reverse()) this.rememberProject(p);
+        break;
+      }
+      case "project_removed": {
+        // Server-confirmed removal. There's no cross-connection push for
+        // this (SPEC.md §3.1 remove_project) — another peer that removed a
+        // shared project is picked up here on *this* connection's own next
+        // list_projects, same as any other shared-state change in this
+        // protocol; this case only ever fires as a direct response to our
+        // own removeProject call, not a live notification from elsewhere.
+        const data = env.data as { path: string };
+        this.forgetProject(data.path);
         break;
       }
       case "session_list": {
