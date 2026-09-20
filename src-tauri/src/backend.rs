@@ -59,8 +59,10 @@ struct Connection {
 /// `Mutex<Option<Connection>>` when this app only ever talked to one server;
 /// an `RwLock` over a map lets `send_envelope` calls to *different*
 /// connections proceed concurrently instead of serializing behind one lock,
-/// and lets more than one connection exist at all.
-#[derive(Default)]
+/// and lets more than one connection exist at all. `Clone` is cheap (just the
+/// inner `Arc`) — needed so `spawn_reader_task` can hold its own handle to
+/// clean up after itself on a connection it discovers is dead (see there).
+#[derive(Default, Clone)]
 pub struct BackendState(Arc<RwLock<HashMap<ConnectionId, Connection>>>);
 
 impl BackendState {
@@ -142,8 +144,21 @@ where
 /// it does (eventually, via the runtime's own cleanup), which is what used to
 /// let a superseded connection's reader linger until its own socket happened
 /// to error out.
+///
+/// On EOF or a read error — a connection dying on its own (server restart,
+/// network drop, laptop sleep), as opposed to the frontend calling
+/// `disconnect` — this is the only code that will ever find out, so it also
+/// removes `connection_id` from `state` and aborts the writer task itself.
+/// Without this, a connection that dies on its own left its `Connection`
+/// (and the still-running writer, and the OS socket) in the map forever:
+/// nothing but an explicit `disconnect` call ever removed an entry, and nothing
+/// calls that in response to a `yoake-disconnected` event the frontend didn't
+/// itself initiate (e.g. the frontend's own watchdog-timeout path does call
+/// `disconnect` first, but a plain EOF does not) — every drop-then-reconnect
+/// would otherwise leak one dead entry.
 fn spawn_reader_task<R>(
     app: AppHandle,
+    state: BackendState,
     connection_id: ConnectionId,
     reader: R,
     on_eof_reason: &'static str,
@@ -153,7 +168,7 @@ where
 {
     tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
-        loop {
+        let reason = loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     if line.trim().is_empty() {
@@ -189,30 +204,28 @@ where
                             );
                         }
                     }
+                    continue;
                 }
-                Ok(None) => {
-                    let _ = app.emit(
-                        "yoake-disconnected",
-                        DisconnectedPayload {
-                            connection_id: connection_id.clone(),
-                            reason: on_eof_reason.to_string(),
-                        },
-                    );
-                    break;
-                }
-                Err(e) => {
-                    let _ = app.emit(
-                        "yoake-disconnected",
-                        DisconnectedPayload {
-                            connection_id: connection_id.clone(),
-                            reason: format!("read error: {e}"),
-                        },
-                    );
-                    break;
-                }
+                Ok(None) => break on_eof_reason.to_string(),
+                Err(e) => break format!("read error: {e}"),
             }
-        }
+        };
+        let _ = app.emit(
+            "yoake-disconnected",
+            DisconnectedPayload { connection_id: connection_id.clone(), reason },
+        );
+        forget_dead_connection(&state, &connection_id).await;
     })
+}
+
+/// Removes `connection_id` from `state` and aborts its writer task — the
+/// cleanup a connection's reader does for itself once it discovers (via EOF
+/// or a read error) that the connection is dead. Split out from
+/// `spawn_reader_task` so it's exercisable without a real `AppHandle`.
+async fn forget_dead_connection(state: &BackendState, connection_id: &ConnectionId) {
+    if let Some(conn) = state.remove(connection_id).await {
+        conn.writer.abort();
+    }
 }
 
 /// Fast "is anything listening here" check — used to decide whether the local
@@ -435,7 +448,13 @@ pub async fn connect_tcp(
 
     let (tx, rx) = mpsc::unbounded_channel();
     let writer = spawn_writer_task(write_half, rx);
-    let reader = spawn_reader_task(app.clone(), connection_id.clone(), read_half, "connection closed");
+    let reader = spawn_reader_task(
+        app.clone(),
+        state.inner().clone(),
+        connection_id.clone(),
+        read_half,
+        "connection closed",
+    );
 
     let mut auth_data = serde_json::json!({"token": token});
     if let Some(name) = name {
@@ -480,7 +499,13 @@ pub async fn connect_unix(
 
     let (tx, rx) = mpsc::unbounded_channel();
     let writer = spawn_writer_task(write_half, rx);
-    let reader = spawn_reader_task(app.clone(), connection_id.clone(), read_half, "connection closed");
+    let reader = spawn_reader_task(
+        app.clone(),
+        state.inner().clone(),
+        connection_id.clone(),
+        read_half,
+        "connection closed",
+    );
 
     if name.is_some() || device_type.is_some() || avatar.is_some() {
         let mut auth_data = serde_json::Map::new();
@@ -596,6 +621,39 @@ mod tests {
 
         assert_eq!(rx_a.recv().await.unwrap(), "hello-a");
         assert_eq!(rx_b.recv().await.unwrap(), "hello-b");
+    }
+
+    /// Guards a second, previously-latent leak: a connection that dies on its
+    /// own (EOF/read error, as opposed to an explicit `disconnect` call) must
+    /// still remove itself from `BackendState` and stop its writer task —
+    /// see spawn_reader_task's doc comment. This is the cleanup that code
+    /// path calls once it detects EOF/an error; testing it directly avoids
+    /// needing a real `AppHandle` (spawn_reader_task itself isn't
+    /// constructible in a plain unit test).
+    #[tokio::test]
+    async fn forget_dead_connection_removes_entry_and_aborts_writer() {
+        let state = BackendState::default();
+        let (conn, _reader_ticks, writer_ticks) = spinning_connection();
+        let connection_id = "will-drop".to_string();
+        state.insert(connection_id.clone(), conn).await;
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(writer_ticks.load(Ordering::SeqCst) > 0, "writer should have been running");
+
+        forget_dead_connection(&state, &connection_id).await;
+
+        let writer_at_cleanup = writer_ticks.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            writer_ticks.load(Ordering::SeqCst),
+            writer_at_cleanup,
+            "the writer task should have been aborted, not left running",
+        );
+        assert_eq!(
+            state.send(&connection_id, "x".to_string()).await,
+            Err("not connected".to_string()),
+            "the dead connection's entry should be gone from BackendState",
+        );
     }
 
     /// Guards the actual fix in this rewrite: removing a connection must stop

@@ -115,6 +115,7 @@ async function redial(oldConnectionId: ConnectionId) {
   try {
     const newConnectionId = await invoke<string>("connect_unix", { path: params.socketPath, ...peerIdentity() });
     delete app.servers[oldConnectionId];
+    stopLiveness(oldConnectionId); // oldConnectionId is retired — afterConnect(newConnectionId) starts fresh tracking
     server.connectionId = newConnectionId;
     server.connectionStatus = "connected";
     server.connectionError = null;
