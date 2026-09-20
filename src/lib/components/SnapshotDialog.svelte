@@ -8,7 +8,16 @@
   import { listSnapshots, restoreSnapshot } from "../ipc";
   import Icon from "./Icon.svelte";
 
-  const snapshots = $derived(app.currentProjectPath ? app.snapshotsByProject[app.currentProjectPath] ?? [] : []);
+  // Per-server fields (snapshots, showSnapshots, ...) live on the active
+  // connection's own ServerState now — see the multi-server-connections
+  // plan. `cid` is needed by every ipc.ts call now that they're threaded
+  // per connection.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
+  const snapshots = $derived(
+    server?.currentProjectPath ? server.snapshotsByProject[server.currentProjectPath] ?? [] : [],
+  );
 
   // Tracks the snapshot currently being restored so the dialog waits for the
   // backend's snapshot_restored confirmation instead of closing optimistically
@@ -17,21 +26,22 @@
   let restoringId = $state<string | null>(null);
   let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  // bind:open below keeps app.showSnapshots in sync for every open/close
-  // path; this effect just runs the "just opened" side effect (refresh the
-  // list) on the false → true transition, matching the same idiom used in
+  // bind:open below keeps showSnapshots in sync for every open/close path;
+  // this effect just runs the "just opened" side effect (refresh the list)
+  // on the false → true transition, matching the same idiom used in
   // ModelPicker/DirectoryBrowser.
   let wasOpen = false;
   $effect(() => {
-    if (app.showSnapshots && !wasOpen && app.currentProjectPath) listSnapshots(app.currentProjectPath);
-    wasOpen = app.showSnapshots;
+    const isOpen = server?.showSnapshots ?? false;
+    if (isOpen && !wasOpen && cid && server?.currentProjectPath) listSnapshots(cid, server.currentProjectPath);
+    wasOpen = isOpen;
   });
 
   function restore(snapshotId: string) {
-    if (!app.currentSessionId) return;
+    if (!cid || !server?.currentSessionId) return;
     if (!confirm("Restore this snapshot? This overwrites the project's current files.")) return;
     restoringId = snapshotId;
-    restoreSnapshot(app.currentSessionId, snapshotId);
+    restoreSnapshot(cid, server.currentSessionId, snapshotId);
     clearTimeout(restoreTimeout);
     restoreTimeout = setTimeout(() => {
       restoringId = null;
@@ -39,17 +49,22 @@
   }
 
   $effect(() => {
-    if (restoringId && app.lastSnapshotRestored?.snapshotId === restoringId) {
+    if (restoringId && server?.lastSnapshotRestored?.snapshotId === restoringId) {
       clearTimeout(restoreTimeout);
       restoringId = null;
-      app.showSnapshots = false;
+      server.showSnapshots = false;
     }
   });
 
   onDestroy(() => clearTimeout(restoreTimeout));
 </script>
 
-<Dialog.Root bind:open={app.showSnapshots}>
+<Dialog.Root
+  open={server?.showSnapshots ?? false}
+  onOpenChange={(v) => {
+    if (server) server.showSnapshots = v;
+  }}
+>
   <Dialog.Portal>
     <Dialog.Overlay class="snap-overlay" />
     <Dialog.Content class="snap-content">

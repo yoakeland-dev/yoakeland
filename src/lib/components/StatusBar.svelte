@@ -2,10 +2,14 @@
   import { app } from "../state.svelte";
   import { basename } from "../format";
 
+  // Per-server fields live on the active connection's own ServerState now —
+  // see the multi-server-connections plan.
+  let server = $derived(app.active);
+
   const lastFinish = $derived(
-    [...app.currentMessages].reverse().find((m) => m.role === "assistant" && m.finish)?.finish,
+    [...(server?.currentMessages ?? [])].reverse().find((m) => m.role === "assistant" && m.finish)?.finish,
   );
-  const projectName = $derived(app.currentProjectPath ? basename(app.currentProjectPath) : null);
+  const projectName = $derived(server?.currentProjectPath ? basename(server.currentProjectPath) : null);
 </script>
 
 <footer class="statusbar">
@@ -14,13 +18,13 @@
       ● {app.connectionStatus}
     </span>
     <span class="item">{app.connectionMode}</span>
-    {#if app.serverIdentity}
-      <span class="item" title="Server identity">{app.serverIdentity}</span>
+    {#if server?.serverIdentity}
+      <span class="item" title="Server identity">{server.serverIdentity}</span>
     {/if}
     {#if projectName}
-      <span class="item" title={app.currentProjectPath}>{projectName}</span>
+      <span class="item" title={server?.currentProjectPath}>{projectName}</span>
     {/if}
-    {#if app.isCurrentTurnActive}
+    {#if server?.isCurrentTurnActive}
       <span class="item busy">turn in progress…</span>
     {/if}
   </div>
@@ -28,13 +32,13 @@
     {#if lastFinish?.spend}
       <span class="item">project ${(lastFinish.spend.projectTotalUsd ?? 0).toFixed(2)}</span>
     {/if}
-    {#if app.cliAvailability.claude || app.cliAvailability.codex}
+    {#if server?.cliAvailability.claude || server?.cliAvailability.codex}
       <span class="item">
-        CLI: {app.cliAvailability.claude ? "claude" : ""}{app.cliAvailability.claude && app.cliAvailability.codex ? ", " : ""}{app.cliAvailability.codex ? "codex" : ""}
+        CLI: {server.cliAvailability.claude ? "claude" : ""}{server.cliAvailability.claude && server.cliAvailability.codex ? ", " : ""}{server.cliAvailability.codex ? "codex" : ""}
       </span>
     {/if}
-    <span class="item">{app.projects.length} project{app.projects.length === 1 ? "" : "s"}</span>
-    <span class="item">{app.currentSessions.length} thread{app.currentSessions.length === 1 ? "" : "s"}</span>
+    <span class="item">{server?.projects.length ?? 0} project{(server?.projects.length ?? 0) === 1 ? "" : "s"}</span>
+    <span class="item">{server?.currentSessions.length ?? 0} thread{(server?.currentSessions.length ?? 0) === 1 ? "" : "s"}</span>
   </div>
 </footer>
 

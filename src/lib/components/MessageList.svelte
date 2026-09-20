@@ -12,7 +12,7 @@
   let container: HTMLDivElement;
   let lastSessionId: string | undefined = undefined;
   const NEAR_BOTTOM_PX = 80;
-  const messages = $derived(app.messagesBySession[sessionId] ?? []);
+  const messages = $derived(app.active?.messagesBySession[sessionId] ?? []);
   const lastMessage = $derived(messages[messages.length - 1] as ChatMessage | undefined);
 
   // A message far above the fold doesn't need its markdown parsed or its

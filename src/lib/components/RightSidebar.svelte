@@ -110,20 +110,20 @@
     class:collapsed={app.rightSidebarCollapsed}
     style={sizeVars}
   >
-    {#if app.sidebarSessionId}
+    {#if app.active?.sidebarSessionId}
       <div class="panel">
         <ChatHeader
-          sessionId={app.sidebarSessionId}
+          sessionId={app.active.sidebarSessionId}
           sidePanel
           reserveChrome
           overlay
         />
         <div class="body">
           <MessageList
-            sessionId={app.sidebarSessionId}
+            sessionId={app.active.sidebarSessionId}
             paddingTop="calc(var(--header-height) + 20px)"
           />
-          <PromptInput sessionId={app.sidebarSessionId} floating={false} />
+          <PromptInput sessionId={app.active.sidebarSessionId} floating={false} />
         </div>
       </div>
     {:else}

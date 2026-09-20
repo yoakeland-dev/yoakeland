@@ -8,9 +8,9 @@
   let { sessionId }: { sessionId: string } = $props();
 
   const isEmpty = $derived(
-    (app.messagesBySession[sessionId] ?? []).length === 0,
+    (app.active?.messagesBySession[sessionId] ?? []).length === 0,
   );
-  const isSyncing = $derived(app.syncingSessions[sessionId] ?? false);
+  const isSyncing = $derived(app.active?.syncingSessions[sessionId] ?? false);
 </script>
 
 <div class="chat-area">

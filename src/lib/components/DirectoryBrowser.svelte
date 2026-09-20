@@ -19,6 +19,12 @@
     return path.endsWith("/") ? `${path}${name}` : `${path}/${name}`;
   }
 
+  // The connection whose browse is currently in flight (set by
+  // ipc.browseRemoteDirectory) — needed by every listDirectory call now
+  // that they're threaded per connection. See the multi-server-connections
+  // plan.
+  let cid = $derived(app.browsingConnectionId);
+
   // bind:open below keeps app.showDirectoryBrowser in sync for every close
   // path (Escape, outside click, the Close button) — this effect just runs
   // the side effect a plain assignment can't: resolving the pending
@@ -48,7 +54,7 @@
             type="button"
             class="up"
             disabled={app.directoryListing.path === "/"}
-            onclick={() => listDirectory(parentOf(app.directoryListing!.path))}
+            onclick={() => cid && listDirectory(cid, parentOf(app.directoryListing!.path))}
             title="Up one level"
           >
             <Icon name="chevron-up" size={13} />
@@ -58,7 +64,7 @@
         <ul class="entries">
           {#each app.directoryListing.entries.filter((e) => e.isDir) as entry (entry.name)}
             <li>
-              <button type="button" onclick={() => listDirectory(childPath(app.directoryListing!.path, entry.name))}>
+              <button type="button" onclick={() => cid && listDirectory(cid, childPath(app.directoryListing!.path, entry.name))}>
                 <Icon name="folder" size={14} /> {entry.name}
               </button>
             </li>

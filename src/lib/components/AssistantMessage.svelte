@@ -141,9 +141,9 @@
   // footer just omits the model chip.
   const modelEntry = $derived.by((): Entry | null => {
     if (!message.provider || !message.model) return null;
-    const provider = app.providers.find((p) => p.name === message.provider);
+    const provider = app.active?.providers.find((p) => p.name === message.provider);
     if (!provider) return null;
-    const model = app.modelsByProvider[message.provider]?.find(
+    const model = app.active?.modelsByProvider[message.provider]?.find(
       (m) => m.id === message.model,
     ) ?? {
       id: message.model,

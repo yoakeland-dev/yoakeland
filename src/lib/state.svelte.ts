@@ -24,8 +24,27 @@ import { deriveTheme } from "./theme";
 export type ConnectionMode = "local" | "remote";
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
+// Opaque, client-minted (src-tauri/src/backend.rs mints it on connect_tcp/
+// connect_unix) — not yoakeland's own serverId (ServerState.serverId below),
+// which isn't known until server_identity's first reply. This is what keys
+// `AppState.servers`: a client can hold several of these open at once, one
+// per live connection, each to a potentially different server.
+export type ConnectionId = string;
+
+/** What's needed to redial a connection — captured at connect time so a
+ * reconnect (see ipc.ts's scheduleReconnect) can redial the exact same
+ * target under a fresh ConnectionId, and so a known server can eventually be
+ * offered back for reconnection without the user re-entering host/path
+ * (never the token itself — see KnownServer's own doc comment). */
+export type ConnectParams =
+  | { mode: "local"; socketPath: string; binPath: string }
+  | { mode: "remote"; host: string; port: number; token: string; caPem?: string };
+
 const RECENT_PROJECTS_KEY = "yoake.recentProjects";
 const CHAT_HISTORY_KEY = "yoake.chatHistory";
+const LAST_USED_PROVIDER_KEY = "yoake.lastUsedProvider";
+const LAST_USED_MODEL_KEY = "yoake.lastUsedModel";
+const LAST_USED_MODE_KEY = "yoake.lastUsedMode";
 
 // Event types whose handleEvent case reads the resolved top-level `sessionId`
 // (as opposed to a project-scoped or self-contained payload) — an envelope
@@ -46,27 +65,6 @@ const SESSION_SCOPED_EVENTS = new Set([
 // garbage shape wherever a path/project key is read back from storage.
 function looksLikePath(p: unknown): p is string {
   return typeof p === "string" && !/^\[object \w+\]$/.test(p);
-}
-
-function loadRecentProjects(): string[] {
-  try {
-    const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
-    if (!raw) return [];
-    // Same reasoning as sanitizeChatHistory below: this blob outlives whatever
-    // shape wrote it, so a stale/corrupted entry shouldn't crash every reader
-    // (basename(p) et al.) that assumes a plain string path.
-    return (JSON.parse(raw) as unknown[]).filter(looksLikePath);
-  } catch {
-    return [];
-  }
-}
-
-function saveRecentProjects(paths: string[]) {
-  try {
-    localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(paths.slice(0, 20)));
-  } catch {
-    // best-effort only
-  }
 }
 
 interface ChatHistory {
@@ -106,9 +104,36 @@ function sanitizeChatHistory(history: ChatHistory): ChatHistory {
   return { ...history, messagesBySession, sessionsByProject, projectBySession };
 }
 
-function loadChatHistory(): ChatHistory {
+// --- Per-server persistence (namespaced by yoakeland's own stable serverId,
+// SPEC.md §3.2 server_identity — not this client's ConnectionId, which is
+// fresh every connect and would silently orphan a server's saved state on
+// every reconnect) ---
+
+function serverStorageKey(serverId: string, suffix: string): string {
+  return `yoake.server.${serverId}.${suffix}`;
+}
+
+function loadServerRecentProjects(serverId: string): string[] {
   try {
-    const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+    const raw = localStorage.getItem(serverStorageKey(serverId, "recentProjects"));
+    if (!raw) return [];
+    return (JSON.parse(raw) as unknown[]).filter(looksLikePath);
+  } catch {
+    return [];
+  }
+}
+
+function saveServerRecentProjects(serverId: string, paths: string[]) {
+  try {
+    localStorage.setItem(serverStorageKey(serverId, "recentProjects"), JSON.stringify(paths.slice(0, 20)));
+  } catch {
+    // best-effort only
+  }
+}
+
+function loadServerChatHistory(serverId: string): ChatHistory {
+  try {
+    const raw = localStorage.getItem(serverStorageKey(serverId, "chatHistory"));
     if (!raw) return { ...EMPTY_CHAT_HISTORY };
     return sanitizeChatHistory({ ...EMPTY_CHAT_HISTORY, ...(JSON.parse(raw) as ChatHistory) });
   } catch {
@@ -116,15 +141,106 @@ function loadChatHistory(): ChatHistory {
   }
 }
 
-const SIDEBAR_COLLAPSED_KEY = "yoake.sidebarCollapsed";
-const RIGHT_SIDEBAR_COLLAPSED_KEY = "yoake.rightSidebarCollapsed";
-const SIDEBAR_WIDTH_KEY = "yoake.sidebarWidth";
-const RIGHT_SIDEBAR_RATIO_KEY = "yoake.rightSidebarRatio";
-const TERMINAL_OPEN_KEY = "yoake.terminalOpen";
-const SETTINGS_KEY = "yoake.settings";
-const LAST_USED_PROVIDER_KEY = "yoake.lastUsedProvider";
-const LAST_USED_MODEL_KEY = "yoake.lastUsedModel";
-const LAST_USED_MODE_KEY = "yoake.lastUsedMode";
+function saveServerChatHistory(serverId: string, history: ChatHistory) {
+  try {
+    localStorage.setItem(serverStorageKey(serverId, "chatHistory"), JSON.stringify(history));
+  } catch {
+    // best-effort only
+  }
+}
+
+function loadServerString(serverId: string, suffix: string): string | null {
+  try {
+    return localStorage.getItem(serverStorageKey(serverId, suffix));
+  } catch {
+    return null;
+  }
+}
+
+function saveServerString(serverId: string, suffix: string, value: string) {
+  try {
+    localStorage.setItem(serverStorageKey(serverId, suffix), value);
+  } catch {
+    // best-effort only
+  }
+}
+
+const MIGRATED_LEGACY_STATE_KEY = "yoake.migratedLegacyState";
+
+/** Runs at most once, ever, the first time ANY server's real serverId
+ * becomes known after upgrading past the point where this client only ever
+ * talked to one server (flat, un-namespaced localStorage keys). The *first*
+ * connection to successfully report a serverId is the migration target —
+ * there's exactly one plausible one for a pre-upgrade single-server install,
+ * so there's nothing to ask the user to disambiguate. If no connection ever
+ * succeeds after upgrading, this never runs and the legacy keys are simply
+ * never touched — no guessing, nothing lost. */
+function migrateLegacyStateIfNeeded(serverId: string) {
+  try {
+    if (localStorage.getItem(MIGRATED_LEGACY_STATE_KEY)) return;
+    const moves: [string, string][] = [
+      [RECENT_PROJECTS_KEY, "recentProjects"],
+      [CHAT_HISTORY_KEY, "chatHistory"],
+      [LAST_USED_PROVIDER_KEY, "lastUsedProvider"],
+      [LAST_USED_MODEL_KEY, "lastUsedModel"],
+      [LAST_USED_MODE_KEY, "lastUsedMode"],
+    ];
+    for (const [legacyKey, suffix] of moves) {
+      const value = localStorage.getItem(legacyKey);
+      if (value !== null) {
+        localStorage.setItem(serverStorageKey(serverId, suffix), value);
+        localStorage.removeItem(legacyKey);
+      }
+    }
+    localStorage.setItem(MIGRATED_LEGACY_STATE_KEY, "1");
+  } catch {
+    // best-effort — worst case this re-attempts on a later launch
+  }
+}
+
+// --- Known servers (yoake.knownServers) — enough to offer a remembered
+// server back for reconnection without re-entering host/path. Deliberately
+// never includes the auth token itself (storing a bare TCP token client-side
+// without real OS credential storage isn't something to do silently, same
+// precedent as the reconnect-policy comment in ipc.ts) — a remembered remote
+// server still needs the token typed in again. Not yet read by anything
+// (that's phase 4's "reconnect to a remembered server" UI); populated here
+// so that UI has real data to work with once it exists. ---
+
+export interface KnownServer {
+  serverId: string;
+  mode: ConnectionMode;
+  host?: string;
+  port?: number;
+  socketPath?: string;
+  /** Last-known display identity, so a remembered-servers list can show a
+   * name before ever reconnecting. */
+  label?: string;
+}
+
+const KNOWN_SERVERS_KEY = "yoake.knownServers";
+
+function loadKnownServers(): KnownServer[] {
+  try {
+    const raw = localStorage.getItem(KNOWN_SERVERS_KEY);
+    if (!raw) return [];
+    return (JSON.parse(raw) as unknown[]).filter(
+      (s): s is KnownServer => !!s && typeof s === "object" && typeof (s as KnownServer).serverId === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function upsertKnownServer(entry: KnownServer) {
+  try {
+    const known = loadKnownServers().filter((s) => s.serverId !== entry.serverId);
+    known.unshift(entry);
+    localStorage.setItem(KNOWN_SERVERS_KEY, JSON.stringify(known));
+  } catch {
+    // best-effort only
+  }
+}
 
 /** Stable key for a (provider, model) pair — used as a Svelte `#each` key in
  * ModelPicker.svelte. Favorites themselves are server-persisted per provider
@@ -153,6 +269,13 @@ function saveBool(key: string, value: boolean) {
   }
 }
 
+const SIDEBAR_COLLAPSED_KEY = "yoake.sidebarCollapsed";
+const RIGHT_SIDEBAR_COLLAPSED_KEY = "yoake.rightSidebarCollapsed";
+const SIDEBAR_WIDTH_KEY = "yoake.sidebarWidth";
+const RIGHT_SIDEBAR_RATIO_KEY = "yoake.rightSidebarRatio";
+const TERMINAL_OPEN_KEY = "yoake.terminalOpen";
+const SETTINGS_KEY = "yoake.settings";
+
 // Appearance/profile preferences — entirely per-device, client-only (no
 // protocol involvement). "Custom color themes" is just `accent` overridden at
 // runtime; everything derived from it uses CSS color-mix() (see app.css) so
@@ -170,7 +293,9 @@ export interface AppSettings {
   animationSpeed: number;
   profileName: string;
   /** Either an emoji glyph or an uploaded 96x96 photo as a data URL — see
-   * avatar.ts. Sent to the server when identifying (§2a `auth`). */
+   * avatar.ts. Sent to every server this client connects to when
+   * identifying (§2a `auth`) — one identity, shared across all of them, not
+   * a per-server setting. */
   profileAvatar: string;
   wallpaper: string;
   /** Shader treatment applied to the new-chat wallpaper — see wallpaperGL.ts. */
@@ -191,11 +316,22 @@ export interface AppSettings {
    * sidebar's Archive tab even without the `archived` flag set — a display
    * categorization only, never mutates the server-side flag on its own. */
   autoArchiveDays: number;
-  /** One trusted CA certificate (PEM) per "host:port" a remote server was
-   * paired with (§2a) — yoakeland's TCP listener is TLS-only, either via its
-   * own auto-managed CA (the normal case, paired by importing its ca.pem
-   * once) or an operator-supplied real certificate (left unpaired here, and
-   * verified against the OS trust store instead). */
+  /** One trusted CA certificate (PEM) per "host:port" — yoakeland's TCP
+   * listener is TLS-only, either via its own auto-managed CA (the normal
+   * case, paired by importing its ca.pem once) or an operator-supplied real
+   * certificate (left unpaired here, verified against the OS trust store
+   * instead). Keyed by address rather than serverId because it has to be
+   * looked up *before* a connection succeeds (ConnectScreen's prefill) —
+   * before which no serverId is knowable. See trustedCaByServer for the
+   * keyed-by-identity counterpart used once one is. */
+  trustedCaByHostPort: Record<string, string>;
+  /** The same pairing, re-keyed by the server's own stable serverId once
+   * it's known (ServerState.hydrateFromServerId copies it over the first
+   * time a given server is seen) — this is the one that's actually
+   * authoritative for "do I already trust this server," since a server's
+   * address can change (a new LAN IP, a different hostname) while its
+   * identity doesn't. Both maps are kept, deliberately not collapsed to one
+   * key (see the multi-server plan). */
   trustedCaByServer: Record<string, string>;
 }
 
@@ -215,70 +351,50 @@ const DEFAULT_SETTINGS: AppSettings = {
   surface: "opaque",
   accentFromWallpaper: false,
   autoArchiveDays: 14,
+  trustedCaByHostPort: {},
   trustedCaByServer: {},
 };
 
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    return raw ? { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<AppSettings>) } : { ...DEFAULT_SETTINGS };
+    const loaded = raw ? { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<AppSettings>) } : { ...DEFAULT_SETTINGS };
+    // A settings.json from before trustedCaByServer existed (or from before
+    // the host:port map was renamed from trustedCaByServer to
+    // trustedCaByHostPort) has neither field as an object — guard rather
+    // than let a later `map[key] = ...` throw on undefined.
+    if (!loaded.trustedCaByHostPort) loaded.trustedCaByHostPort = {};
+    if (!loaded.trustedCaByServer) loaded.trustedCaByServer = {};
+    return loaded;
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
 }
 
-class AppState {
-  connectionStatus = $state<ConnectionStatus>("disconnected");
-  connectionMode = $state<ConnectionMode>("local");
+/** Everything scoped to one connection — one server, whichever projects and
+ * sessions live on it. `AppState.servers` holds one of these per live
+ * connection; `AppState.active` is whichever the UI is currently showing
+ * (today, always exactly one — see the multi-server-connections plan). Every
+ * method here that used to read `this.settings`/`this.log(...)` on the old
+ * single-server AppState now reaches through `this.app` for the handful of
+ * things that are genuinely global rather than per-server. */
+export class ServerState {
+  // Not readonly: a dropped local connection reconnects under a brand-new id
+  // (Rust mints a fresh one per connect_unix call, see backend.rs) — rather
+  // than losing this object's in-memory state (current session/project, nav
+  // history, caches) and starting a fresh ServerState, ipc.ts's redial()
+  // re-keys this same instance into app.servers under the new id and updates
+  // this field to match, so a reconnect looks the same as it always has:
+  // quietly picking back up, not resetting to an empty state.
+  connectionId: ConnectionId;
+  private readonly app: AppState;
+  connectParams: ConnectParams;
+
+  /** Null until server_identity's first reply lands on this connection. */
+  serverId = $state<string | null>(null);
+  connectionMode: ConnectionMode;
+  connectionStatus = $state<ConnectionStatus>("connected");
   connectionError = $state<string | null>(null);
-  // The connect flow is a dismissible overlay, not a gate — the UI underneath
-  // is fully explorable without ever connecting. Starts closed: connecting
-  // is automatic (see autoConnect in ipc.ts), and this only opens itself if
-  // that fails with nowhere else to fall back to.
-  showConnectModal = $state(false);
-  showSettings = $state(false);
-  settingsTab = $state("appearance");
-
-  /** Providers live under Settings now, not a standalone modal — this is the
-   * one place that opens straight to that tab (e.g. "no provider" prompts). */
-  openProviderSettings() {
-    this.showSettings = true;
-    this.settingsTab = "providers";
-  }
-
-  // Layout: both sidebars slide off-screen when collapsed rather than
-  // shrinking — see Sidebar.svelte/RightSidebar.svelte. Their shared toggle
-  // button is pinned top-left of the whole window (+page.svelte), outside
-  // either sidebar, so it stays put across the collapse.
-  sidebarCollapsed = $state(typeof localStorage !== "undefined" ? loadBool(SIDEBAR_COLLAPSED_KEY) : false);
-  rightSidebarCollapsed = $state(
-    typeof localStorage !== "undefined" ? loadBool(RIGHT_SIDEBAR_COLLAPSED_KEY) : false,
-  );
-  // Shared with the top bar so its left segment can line up with the
-  // sidebar's actual (resizable) width instead of guessing at it.
-  sidebarWidth = $state(
-    typeof localStorage !== "undefined" ? Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || 250 : 250,
-  );
-  // A fraction (0–0.5) of the space next to the (fixed-width) left sidebar,
-  // not a pixel value — RightSidebar.svelte turns it into a live width with
-  // a plain CSS `clamp()` against `.content-row`, so the actual rendered
-  // width stays proportional across window resizes and left-sidebar
-  // width/collapse changes with no JS keeping the two in sync.
-  rightSidebarRatio = $state(
-    typeof localStorage !== "undefined" ? Number(localStorage.getItem(RIGHT_SIDEBAR_RATIO_KEY)) || 0.22 : 0.22,
-  );
-  /** The one chat shown in the right sidebar, if any — set via the "open in
-   * side panel" button on a session row (Sidebar.svelte / ProjectGroup.svelte),
-   * cleared by closing it from the panel's own header. Independent of
-   * `currentSessionId`. */
-  sidebarSessionId = $state<string | null>(null);
-  /** Bottom drawer, currently just a placeholder for an integrated terminal —
-   * toggled from StatusBar. */
-  terminalOpen = $state(
-    typeof localStorage !== "undefined" ? loadBool(TERMINAL_OPEN_KEY) : false,
-  );
-
-  settings = $state<AppSettings>(typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS });
 
   // Not UI-bound, so a plain field rather than $state: whether the *next*
   // project_opened response should switch currentProjectPath. open_project
@@ -291,8 +407,6 @@ class AppState {
 
   sandboxTierByProject = $state<Record<string, SandboxTier>>({});
   snapshotsByProject = $state<Record<string, SnapshotInfo[]>>({});
-  directoryListing = $state<{ path: string; entries: DirectoryEntry[] } | null>(null);
-  showDirectoryBrowser = $state(false);
   showSnapshots = $state(false);
   // Set on snapshot_restored (§3.2) so SnapshotDialog can confirm the
   // in-flight restore actually completed instead of closing optimistically.
@@ -324,16 +438,6 @@ class AppState {
   // response is coming for any of them any more.
   syncingSessions = $state<Record<string, boolean>>({});
 
-  setSessionSyncing(sessionId: string, syncing: boolean) {
-    if (syncing) this.syncingSessions[sessionId] = true;
-    else delete this.syncingSessions[sessionId];
-    this.syncingSessions = { ...this.syncingSessions };
-  }
-
-  clearAllSessionSyncing() {
-    this.syncingSessions = {};
-  }
-
   // Projects (§4b): a server process can have many open at once. `projects`
   // is what the server has told us is live this run (`project_list`, though
   // nothing currently reads this field separately from `recentProjects`).
@@ -343,26 +447,27 @@ class AppState {
   // independent source of truth: the server is now the durable memory of
   // "which projects exist" (so a second device sees a project this one
   // added), this is just what paints instantly before that round-trip lands.
+  // Both loaded lazily once serverId is known (see hydrateFromServerId) —
+  // there's nothing to load before then.
   projects = $state<string[]>([]);
-  recentProjects = $state<string[]>(typeof localStorage !== "undefined" ? loadRecentProjects() : []);
+  recentProjects = $state<string[]>([]);
   currentProjectPath = $state<string | null>(null);
 
-  sessionsByProject = $state<Record<string, SessionSummary[]>>(
-    typeof localStorage !== "undefined" ? loadChatHistory().sessionsByProject : {},
-  );
+  sessionsByProject = $state<Record<string, SessionSummary[]>>({});
   // Sessions are cached client-side (see messagesBySession/saveChatHistory), so
   // a re-fetch never needs to blank the list — the sidebar just dims whatever
   // it already has until the fresh session_list lands (see ProjectGroup.svelte).
   refreshingProjects = $state<Record<string, boolean>>({});
-  projectBySession = $state<Record<string, string>>(
-    typeof localStorage !== "undefined" ? loadChatHistory().projectBySession : {},
-  );
+  projectBySession = $state<Record<string, string>>({});
   filesByProject = $state<Record<string, string[]>>({});
 
   currentSessionId = $state<string | null>(null);
-  messagesBySession = $state<Record<string, ChatMessage[]>>(
-    typeof localStorage !== "undefined" ? loadChatHistory().messagesBySession : {},
-  );
+  /** The one chat shown in the right sidebar, if any — set via the "open in
+   * side panel" button on a session row (Sidebar.svelte / ProjectGroup.svelte),
+   * cleared by closing it from the panel's own header. Independent of
+   * `currentSessionId`. */
+  sidebarSessionId = $state<string | null>(null);
+  messagesBySession = $state<Record<string, ChatMessage[]>>({});
   activeTurnBySession = $state<Record<string, string | undefined>>({});
   takenOverSessions = $state<Record<string, boolean>>({});
   // A turn that completed while its session wasn't the open one — cleared the
@@ -394,15 +499,14 @@ class AppState {
   // never hardcode a model list, the whole point is it reflects whatever the
   // upstream account currently has access to.
   modelsByProvider = $state<Record<string, ModelInfo[]>>({});
-  // Whatever provider/model last got confirmed active on *any* session — new
-  // sessions default to this (see ModelPicker.svelte) instead of always
-  // landing on "Provider…" and making the user reselect every chat.
-  lastUsedProvider = $state<string | null>(
-    typeof localStorage !== "undefined" ? localStorage.getItem(LAST_USED_PROVIDER_KEY) : null,
-  );
-  lastUsedModel = $state<string | null>(
-    typeof localStorage !== "undefined" ? localStorage.getItem(LAST_USED_MODEL_KEY) : null,
-  );
+  // Whatever provider/model/mode last got confirmed active on *any* session
+  // on THIS server — new sessions default to this (see ModelPicker.svelte,
+  // ensureSession below) instead of always landing on "Provider…" and making
+  // the user reselect every chat. Per-server because a provider name only
+  // means something within the registry it was registered against.
+  lastUsedProvider = $state<string | null>(null);
+  lastUsedModel = $state<string | null>(null);
+  lastUsedMode = $state<ChatMode | null>(null);
   modeBySession = $state<Record<string, ChatMode>>({});
   // Server-confirmed plan-mode state (§4c) — distinct from modeBySession,
   // which is optimistic UI state set the moment the user clicks "Plan".
@@ -413,7 +517,21 @@ class AppState {
     | null
   >(null);
 
-  logs = $state<string[]>([]);
+  // --- Chat history navigation (the titlebar island's back/forward arrows).
+  // Two plain stacks, pushed by ipc.ts's openChatSession — the one funnel every
+  // *user-initiated* session switch goes through — so opening a chat from the
+  // sidebar, a split row or the side panel all land in the same history, while
+  // the automatic opens (restoreLastSession on startup, selectProject's
+  // clearing of the current session) deliberately don't.
+  navBack = $state<string[]>([]);
+  navForward = $state<string[]>([]);
+
+  constructor(connectionId: ConnectionId, app: AppState, connectParams: ConnectParams) {
+    this.connectionId = connectionId;
+    this.app = app;
+    this.connectParams = connectParams;
+    this.connectionMode = connectParams.mode;
+  }
 
   /** Every known session, keyed by id, regardless of project — splits can
    * pair sessions from different sidebar sections (a running task with a
@@ -469,6 +587,14 @@ class AppState {
     return !!this.activeTurnBySession[this.currentSessionId];
   }
 
+  get canGoBack(): boolean {
+    return this.navBack.length > 0;
+  }
+
+  get canGoForward(): boolean {
+    return this.navForward.length > 0;
+  }
+
   sessionStatus(sessionId: string): "working" | "action" | "finished" | "idle" {
     if (this.takenOverSessions[sessionId]) return "idle";
     if (this.pendingPermission?.sessionId === sessionId) return "action";
@@ -477,55 +603,29 @@ class AppState {
     return "idle";
   }
 
+  setSessionSyncing(sessionId: string, syncing: boolean) {
+    if (syncing) this.syncingSessions[sessionId] = true;
+    else delete this.syncingSessions[sessionId];
+    this.syncingSessions = { ...this.syncingSessions };
+  }
+
+  clearAllSessionSyncing() {
+    this.syncingSessions = {};
+  }
+
   /** Chats otherwise live only in memory (§ messagesBySession) and vanish on
    * restart even though the server-side session survives — mirror them to
-   * localStorage the same way recentProjects already is. */
+   * localStorage the same way recentProjects already is. No-ops until
+   * serverId is known (nowhere durable to file it yet — see
+   * hydrateFromServerId, which re-derives everything from disk once it is,
+   * so nothing written before that point needs a retroactive flush). */
   private saveChatHistory() {
-    try {
-      const history: ChatHistory = {
-        messagesBySession: this.messagesBySession,
-        projectBySession: this.projectBySession,
-        sessionsByProject: this.sessionsByProject,
-      };
-      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
-    } catch {
-      // best-effort only
-    }
-  }
-
-  log(line: string) {
-    this.logs.push(line);
-    if (this.logs.length > 500) this.logs.shift();
-  }
-
-  toggleSidebar() {
-    this.setSidebarCollapsed(!this.sidebarCollapsed);
-  }
-
-  /** Sets (rather than flips) the sidebar's collapsed state, persisting it the
-   * same way the toggle does. Sidebar.svelte's drag-to-collapse uses this to
-   * track the pointer live — collapsing past the threshold and re-expanding
-   * when it comes back out — so it can't go through toggleSidebar. */
-  setSidebarCollapsed(collapsed: boolean) {
-    this.sidebarCollapsed = collapsed;
-    saveBool(SIDEBAR_COLLAPSED_KEY, collapsed);
-  }
-
-  // --- Chat history navigation (the titlebar island's back/forward arrows).
-  // Two plain stacks, pushed by ipc.ts's openChatSession — the one funnel every
-  // *user-initiated* session switch goes through — so opening a chat from the
-  // sidebar, a split row or the side panel all land in the same history, while
-  // the automatic opens (restoreLastSession on startup, selectProject's
-  // clearing of the current session) deliberately don't.
-  navBack = $state<string[]>([]);
-  navForward = $state<string[]>([]);
-
-  get canGoBack(): boolean {
-    return this.navBack.length > 0;
-  }
-
-  get canGoForward(): boolean {
-    return this.navForward.length > 0;
+    if (!this.serverId) return;
+    saveServerChatHistory(this.serverId, {
+      messagesBySession: this.messagesBySession,
+      projectBySession: this.projectBySession,
+      sessionsByProject: this.sessionsByProject,
+    });
   }
 
   /** Records "we're leaving `sessionId`" just before a switch. Any forward
@@ -542,9 +642,7 @@ class AppState {
    * an entry in and a deleted one has had removed (see the session_deleted
    * case, which clears both). */
   private pruneNav(stack: string[]): string[] {
-    return stack.filter(
-      (id) => id in this.messagesBySession || id in this.projectBySession,
-    );
+    return stack.filter((id) => id in this.messagesBySession || id in this.projectBySession);
   }
 
   /** Moves one step back through the history and returns the session to open,
@@ -583,145 +681,30 @@ class AppState {
     };
   }
 
-  // Bumped only by an explicit, manual open/close of the right sidebar — see
-  // RightSidebar.svelte's widthAnimating effect. ipc.ts's openInSidePanel and
-  // openSession's own split-partner auto-open also flip
-  // `rightSidebarCollapsed` as a side effect of switching chats; those
-  // should snap instantly, not ease, so they don't touch this.
-  rightSidebarAnimateTick = $state(0);
-
-  toggleRightSidebar() {
-    this.rightSidebarCollapsed = !this.rightSidebarCollapsed;
-    this.rightSidebarAnimateTick++;
-    saveBool(RIGHT_SIDEBAR_COLLAPSED_KEY, this.rightSidebarCollapsed);
-  }
-
-  /** Sets (rather than flips) the right sidebar's collapsed state, persisting
-   * it the same way the toggle does but without bumping
-   * `rightSidebarAnimateTick` — RightSidebar.svelte's drag-to-collapse uses
-   * this to track the pointer live, same reason Sidebar.svelte's
-   * setSidebarCollapsed exists. */
-  setRightSidebarCollapsed(collapsed: boolean) {
-    this.rightSidebarCollapsed = collapsed;
-    saveBool(RIGHT_SIDEBAR_COLLAPSED_KEY, collapsed);
-  }
-
-  /** Shows `sessionId` in the right sidebar, un-collapsing it if needed —
-   * pure UI state. Creating/persisting the pairing itself is ipc.ts's
-   * `openInSidePanel` (it needs to reach the server, §3.1 set_session_layout,
-   * which this module can't import without a circular dependency on ipc.ts). */
-  showInSidePanel(sessionId: string) {
-    this.sidebarSessionId = sessionId;
-    this.rightSidebarCollapsed = false;
-  }
-
-  closeSidePanel() {
-    this.sidebarSessionId = null;
-  }
-
-  setSidebarWidth(width: number) {
-    this.sidebarWidth = width;
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
-    } catch {
-      // best-effort only
-    }
-  }
-
-  /** Persists a new proportion for the right sidebar (0–0.5, a fraction of
-   * the space next to the left sidebar) — the actual live pixel width is
-   * entirely CSS's job (RightSidebar.svelte's `clamp()`, sized against
-   * `.content-row`), so it reflows in real time with the left sidebar's own
-   * width/collapse changes and window resizes with no JS synchronization. */
-  setRightSidebarRatio(ratio: number) {
-    this.rightSidebarRatio = Math.min(0.5, Math.max(0, ratio));
-    try {
-      localStorage.setItem(RIGHT_SIDEBAR_RATIO_KEY, String(this.rightSidebarRatio));
-    } catch {
-      // best-effort only
-    }
-  }
-
-  toggleTerminal() {
-    this.terminalOpen = !this.terminalOpen;
-    saveBool(TERMINAL_OPEN_KEY, this.terminalOpen);
-  }
-
-  /** Persists `settings` and pushes it onto the document as CSS custom
-   * properties / a `data-theme` attribute — call after any mutation made
-   * through the Settings UI, and once at startup. */
-  /** "system" resolved against the OS's live preference; "dark"/"light" pass
-   * straight through. Every consumer that needs an actual paintable mode
-   * (colorScheme, deriveTheme) goes through this instead of `settings.theme`
-   * directly. */
-  get resolvedTheme(): "dark" | "light" {
-    if (this.settings.theme !== "system") return this.settings.theme;
-    return typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
-  }
-
-  applySettings() {
-    if (typeof document === "undefined") return;
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings));
-    } catch {
-      // best-effort only
-    }
-    const root = document.documentElement;
-    const resolved = this.resolvedTheme;
-    root.style.colorScheme = resolved;
-    // Every surface token, not just --accent — a color scheme (predefined or
-    // custom) recolors the whole UI, derived from one hue (see theme.ts).
-    const tokens = deriveTheme(this.settings.accent, resolved);
-    root.style.setProperty("--bg", tokens.bg);
-    root.style.setProperty("--panel-bg", tokens.panelBg);
-    root.style.setProperty("--panel-border", tokens.panelBorder);
-    root.style.setProperty("--panel-border-top", tokens.panelBorderTop);
-    root.style.setProperty("--panel-border-bottom", tokens.panelBorderBottom);
-    root.style.setProperty("--sidebar-fg", tokens.sidebarFg);
-    root.style.setProperty("--sidebar-fg-dim", tokens.sidebarFgDim);
-    root.style.setProperty("--sidebar-hover", tokens.sidebarHover);
-    root.style.setProperty("--sidebar-active", tokens.sidebarActive);
-    root.style.setProperty("--text", tokens.text);
-    root.style.setProperty("--text-dim", tokens.textDim);
-    root.style.setProperty("--accent", tokens.accent);
-    root.style.setProperty("--bubble-user-bg", tokens.bubbleUserBg);
-    root.style.setProperty("--bubble-border", tokens.bubbleBorder);
-    root.style.setProperty("--statusbar-bg", tokens.statusbarBg);
-    root.style.setProperty("--statusbar-fg", tokens.statusbarFg);
-    root.style.setProperty("--ui-font-size", `${this.settings.uiFontSize}px`);
-    root.style.setProperty("--code-font-size", `${this.settings.codeFontSize}px`);
-    root.style.setProperty("--ui-font-family", this.settings.uiFontFamily);
-    root.style.setProperty("--code-font-family", this.settings.codeFontFamily);
-    root.style.setProperty("--anim-speed", String(this.settings.animationSpeed));
-    // The frosted/opaque switch is entirely CSS — the --float-* tokens hang off
-    // this attribute, so nothing else here has to know about it.
-    root.dataset.surface = this.settings.surface;
-  }
-
   ensureSession(sessionId: string) {
     if (!this.messagesBySession[sessionId]) {
       this.messagesBySession[sessionId] = [];
     }
     if (!this.modeBySession[sessionId]) {
-      const lastMode = typeof localStorage !== "undefined" ? localStorage.getItem(LAST_USED_MODE_KEY) : null;
+      const lastMode = this.lastUsedMode;
       this.modeBySession[sessionId] =
         lastMode === "ask" || lastMode === "auto" || lastMode === "plan" ? lastMode : "auto";
     }
   }
 
-  /** Persists the last mode a user picked, so the next new chat starts there
-   * instead of always defaulting back to Auto (see ensureSession). */
+  /** Persists the last mode a user picked on this server, so the next new
+   * chat starts there instead of always defaulting back to Auto (see
+   * ensureSession). */
   setLastUsedMode(mode: ChatMode) {
-    if (typeof localStorage !== "undefined") localStorage.setItem(LAST_USED_MODE_KEY, mode);
+    this.lastUsedMode = mode;
+    if (this.serverId) saveServerString(this.serverId, "lastUsedMode", mode);
   }
 
   rememberProject(path: string) {
     if (!this.projects.includes(path)) this.projects = [...this.projects, path];
     const withoutIt = this.recentProjects.filter((p) => p !== path);
     this.recentProjects = [path, ...withoutIt].slice(0, 20);
-    saveRecentProjects(this.recentProjects);
+    if (this.serverId) saveServerRecentProjects(this.serverId, this.recentProjects);
   }
 
   /** Removes a saved path from the picker (Settings > Connections). Purely
@@ -729,7 +712,7 @@ class AppState {
    * stops re-adding it via the next project_list (see ipc.removeProject). */
   forgetProject(path: string) {
     this.recentProjects = this.recentProjects.filter((p) => p !== path);
-    saveRecentProjects(this.recentProjects);
+    if (this.serverId) saveServerRecentProjects(this.serverId, this.recentProjects);
     if (this.currentProjectPath === path) this.currentProjectPath = null;
   }
 
@@ -787,7 +770,7 @@ class AppState {
     if (partner) {
       this.ensureSession(partner.sessionId);
       this.sidebarSessionId = partner.sessionId;
-      this.rightSidebarCollapsed = false;
+      this.app.rightSidebarCollapsed = false;
     } else {
       this.sidebarSessionId = null;
     }
@@ -798,6 +781,19 @@ class AppState {
     }
     const project = this.projectBySession[sessionId];
     if (project) this.currentProjectPath = project;
+  }
+
+  /** Shows `sessionId` in the right sidebar, un-collapsing it if needed —
+   * pure UI state. Creating/persisting the pairing itself is ipc.ts's
+   * `openInSidePanel` (it needs to reach the server, §3.1 set_session_layout,
+   * which this module can't import without a circular dependency on ipc.ts). */
+  showInSidePanel(sessionId: string) {
+    this.sidebarSessionId = sessionId;
+    this.app.rightSidebarCollapsed = false;
+  }
+
+  closeSidePanel() {
+    this.sidebarSessionId = null;
   }
 
   /** Repaints a session's transcript from `session_history` (§3.2) — the
@@ -858,10 +854,10 @@ class AppState {
           toolCalls: [],
           streaming: false,
           createdAt,
-          author: storedAuthor ?? (this.settings.profileName || undefined),
+          author: storedAuthor ?? (this.app.settings.profileName || undefined),
           authorAvatar: storedAuthor
             ? m.authorAvatar
-            : this.settings.profileAvatar || undefined,
+            : this.app.settings.profileAvatar || undefined,
         });
       } else {
         // A turn with tool calls makes one round-trip per assistant entry
@@ -992,8 +988,8 @@ class AppState {
       toolCalls: [],
       streaming: false,
       createdAt: Date.now(),
-      author: this.settings.profileName || undefined,
-      authorAvatar: this.settings.profileAvatar || undefined,
+      author: this.app.settings.profileName || undefined,
+      authorAvatar: this.app.settings.profileAvatar || undefined,
     };
     this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], msg];
     this.activeTurnBySession[sessionId] = turnId;
@@ -1024,6 +1020,55 @@ class AppState {
     return list?.find((m) => m.turnId === turnId && m.role === "assistant");
   }
 
+  /** Runs once, the first time this connection's serverId becomes known
+   * (server_identity's first reply) — loads whatever this server's own
+   * namespaced localStorage already has (a server this client has talked to
+   * before), running the one-time legacy-flat-key migration first if this
+   * turns out to be the very first serverId this client has ever seen. */
+  private hydrateFromServerId(serverId: string) {
+    migrateLegacyStateIfNeeded(serverId);
+
+    this.recentProjects = loadServerRecentProjects(serverId);
+    const history = loadServerChatHistory(serverId);
+    this.sessionsByProject = history.sessionsByProject;
+    this.projectBySession = history.projectBySession;
+    this.messagesBySession = history.messagesBySession;
+    this.lastUsedProvider = loadServerString(serverId, "lastUsedProvider");
+    this.lastUsedModel = loadServerString(serverId, "lastUsedModel");
+    const mode = loadServerString(serverId, "lastUsedMode");
+    this.lastUsedMode = mode === "ask" || mode === "auto" || mode === "plan" ? mode : null;
+
+    // The first time this particular server is seen under its real identity,
+    // carry over a CA it was trusted under by address (see
+    // AppSettings.trustedCaByHostPort's doc comment) — otherwise a client
+    // that already paired this server's certificate would appear to have
+    // forgotten it the moment serverId-based trust becomes authoritative.
+    if (this.connectParams.mode === "remote") {
+      const hostPortKey = `${this.connectParams.host}:${this.connectParams.port}`;
+      const byHostPort = this.app.settings.trustedCaByHostPort[hostPortKey];
+      if (byHostPort && !this.app.settings.trustedCaByServer[serverId]) {
+        this.app.settings.trustedCaByServer[serverId] = byHostPort;
+        this.app.applySettings();
+      }
+    }
+
+    upsertKnownServer({
+      serverId,
+      mode: this.connectionMode,
+      host: this.connectParams.mode === "remote" ? this.connectParams.host : undefined,
+      port: this.connectParams.mode === "remote" ? this.connectParams.port : undefined,
+      socketPath: this.connectParams.mode === "local" ? this.connectParams.socketPath : undefined,
+      label: this.serverIdentity ?? undefined,
+    });
+
+    // Was run unconditionally at app startup back when there was only ever
+    // one server and its cache loaded synchronously at construction — now
+    // that the cache is this server's own, loaded lazily right here, this is
+    // the equivalent moment: the first point after connecting that there's
+    // actually a session history to restore into.
+    this.restoreLastSession();
+  }
+
   handleEvent(env: Envelope) {
     const sessionId = env.sessionId ?? this.currentSessionId ?? "";
     // A handful of event types are session-agnostic (peer_list, provider_*,
@@ -1032,7 +1077,7 @@ class AppState {
     // silently stand up a bogus "" session. Only bail for types that
     // actually need one.
     if (!sessionId && SESSION_SCOPED_EVENTS.has(env.type)) {
-      this.log(`dropped ${env.type}: no resolvable sessionId`);
+      this.app.log(`dropped ${env.type}: no resolvable sessionId`);
       return;
     }
     if (sessionId) this.ensureSession(sessionId);
@@ -1173,11 +1218,9 @@ class AppState {
         delete this.providerBlockedBySession[data.sessionId];
         this.lastUsedProvider = data.providerName;
         this.lastUsedModel = data.model ?? null;
-        try {
-          localStorage.setItem(LAST_USED_PROVIDER_KEY, data.providerName);
-          if (data.model) localStorage.setItem(LAST_USED_MODEL_KEY, data.model);
-        } catch {
-          // best-effort only
+        if (this.serverId) {
+          saveServerString(this.serverId, "lastUsedProvider", data.providerName);
+          if (data.model) saveServerString(this.serverId, "lastUsedModel", data.model);
         }
         break;
       }
@@ -1277,7 +1320,7 @@ class AppState {
       case "snapshot_restored": {
         const data = env.data as { snapshotId: string };
         this.lastSnapshotRestored = { snapshotId: data.snapshotId, at: Date.now() };
-        this.log(`snapshot restored: ${data.snapshotId}`);
+        this.app.log(`snapshot restored: ${data.snapshotId}`);
         break;
       }
       case "snapshot_list": {
@@ -1287,7 +1330,14 @@ class AppState {
         break;
       }
       case "directory_list": {
-        this.directoryListing = env.data as { path: string; entries: DirectoryEntry[] };
+        // directoryListing/showDirectoryBrowser stay global on AppState
+        // (only one browse flow is ever open at once) — only apply this if
+        // it's still this connection's browse in flight, so a late response
+        // from an abandoned browse against a different server can't clobber
+        // a newer one.
+        if (this.app.browsingConnectionId === this.connectionId) {
+          this.app.directoryListing = env.data as { path: string; entries: DirectoryEntry[] };
+        }
         break;
       }
       case "cli_availability": {
@@ -1306,8 +1356,12 @@ class AppState {
         break;
       }
       case "server_identity": {
-        const data = env.data as { identity: string };
+        const data = env.data as { identity: string; serverId?: string };
         this.serverIdentity = data.identity;
+        if (data.serverId && this.serverId !== data.serverId) {
+          this.serverId = data.serverId;
+          this.hydrateFromServerId(data.serverId);
+        }
         break;
       }
       case "remote_access_set": {
@@ -1352,7 +1406,7 @@ class AppState {
       }
       case "error": {
         const data = env.data as { message: string; fatal?: boolean; projectPath?: string };
-        this.log(`error: ${data.message}`);
+        this.app.log(`error: ${data.message}`);
         if (data.projectPath && this.refreshingProjects[data.projectPath]) {
           delete this.refreshingProjects[data.projectPath];
           this.refreshingProjects = { ...this.refreshingProjects };
@@ -1379,6 +1433,225 @@ class AppState {
       default:
         break;
     }
+  }
+}
+
+class AppState {
+  /** One entry per live connection (see the multi-server-connections plan).
+   * Today's UI only ever creates one at a time — `active` is what every
+   * component renders — but the data model itself already supports more. */
+  servers = $state<Record<ConnectionId, ServerState>>({});
+  activeConnectionId = $state<ConnectionId | null>(null);
+
+  get active(): ServerState | null {
+    return this.activeConnectionId ? (this.servers[this.activeConnectionId] ?? null) : null;
+  }
+
+  // Transient, global: tracks a connect attempt (ConnectScreen / autoConnect)
+  // before any ServerState exists to hold it — there's no ConnectionId yet at
+  // this point (Rust only mints one once connect_tcp/connect_unix actually
+  // succeeds), so it can't live per-server the way a *lost* connection's
+  // status can (see handleConnectionLost in ipc.ts, which updates an
+  // existing ServerState directly). Reset back to "disconnected" the moment
+  // a real ServerState is created.
+  private pendingConnectStatus = $state<ConnectionStatus>("disconnected");
+  private pendingConnectMode = $state<ConnectionMode>("local");
+  private pendingConnectError = $state<string | null>(null);
+
+  setPendingConnect(status: ConnectionStatus, mode?: ConnectionMode, error: string | null = null) {
+    this.pendingConnectStatus = status;
+    if (mode) this.pendingConnectMode = mode;
+    this.pendingConnectError = error;
+  }
+
+  /** Back-compat convenience so every existing read site keeps working
+   * unchanged: transparently reflects the active server's own connection
+   * state once one exists, or the in-flight connect attempt before that. */
+  get connectionStatus(): ConnectionStatus {
+    return this.active?.connectionStatus ?? this.pendingConnectStatus;
+  }
+  get connectionMode(): ConnectionMode {
+    return this.active?.connectionMode ?? this.pendingConnectMode;
+  }
+  get connectionError(): string | null {
+    return this.active?.connectionError ?? this.pendingConnectError;
+  }
+
+  // The connect flow is a dismissible overlay, not a gate — the UI underneath
+  // is fully explorable without ever connecting. Starts closed: connecting
+  // is automatic (see autoConnect in ipc.ts), and this only opens itself if
+  // that fails with nowhere else to fall back to.
+  showConnectModal = $state(false);
+  showSettings = $state(false);
+  settingsTab = $state("appearance");
+
+  /** Providers live under Settings now, not a standalone modal — this is the
+   * one place that opens straight to that tab (e.g. "no provider" prompts). */
+  openProviderSettings() {
+    this.showSettings = true;
+    this.settingsTab = "providers";
+  }
+
+  // Layout: both sidebars slide off-screen when collapsed rather than
+  // shrinking — see Sidebar.svelte/RightSidebar.svelte. Their shared toggle
+  // button is pinned top-left of the whole window (+page.svelte), outside
+  // either sidebar, so it stays put across the collapse.
+  sidebarCollapsed = $state(typeof localStorage !== "undefined" ? loadBool(SIDEBAR_COLLAPSED_KEY) : false);
+  rightSidebarCollapsed = $state(
+    typeof localStorage !== "undefined" ? loadBool(RIGHT_SIDEBAR_COLLAPSED_KEY) : false,
+  );
+  // Shared with the top bar so its left segment can line up with the
+  // sidebar's actual (resizable) width instead of guessing at it.
+  sidebarWidth = $state(
+    typeof localStorage !== "undefined" ? Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || 250 : 250,
+  );
+  // A fraction (0–0.5) of the space next to the (fixed-width) left sidebar,
+  // not a pixel value — RightSidebar.svelte turns it into a live width with
+  // a plain CSS `clamp()` against `.content-row`, so the actual rendered
+  // width stays proportional across window resizes and left-sidebar
+  // width/collapse changes with no JS keeping the two in sync.
+  rightSidebarRatio = $state(
+    typeof localStorage !== "undefined" ? Number(localStorage.getItem(RIGHT_SIDEBAR_RATIO_KEY)) || 0.22 : 0.22,
+  );
+  // Bumped only by an explicit, manual open/close of the right sidebar — see
+  // RightSidebar.svelte's widthAnimating effect. ipc.ts's openInSidePanel and
+  // openSession's own split-partner auto-open also flip
+  // `rightSidebarCollapsed` as a side effect of switching chats; those
+  // should snap instantly, not ease, so they don't touch this.
+  rightSidebarAnimateTick = $state(0);
+  // Bottom drawer, currently just a placeholder for an integrated terminal —
+  // toggled from StatusBar.
+  terminalOpen = $state(
+    typeof localStorage !== "undefined" ? loadBool(TERMINAL_OPEN_KEY) : false,
+  );
+
+  settings = $state<AppSettings>(typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS });
+
+  // Only one directory-browse flow (§3.1 list_directory) is ever open at
+  // once, so these stay global rather than duplicated per server —
+  // `browsingConnectionId` names which connection's browse is currently in
+  // flight, so a late directory_list from an abandoned browse can't clobber
+  // a newer one against a different server (see ServerState.handleEvent's
+  // directory_list case).
+  directoryListing = $state<{ path: string; entries: DirectoryEntry[] } | null>(null);
+  showDirectoryBrowser = $state(false);
+  browsingConnectionId = $state<ConnectionId | null>(null);
+
+  logs = $state<string[]>([]);
+
+  log(line: string) {
+    this.logs.push(line);
+    if (this.logs.length > 500) this.logs.shift();
+  }
+
+  toggleSidebar() {
+    this.setSidebarCollapsed(!this.sidebarCollapsed);
+  }
+
+  /** Sets (rather than flips) the sidebar's collapsed state, persisting it the
+   * same way the toggle does. Sidebar.svelte's drag-to-collapse uses this to
+   * track the pointer live — collapsing past the threshold and re-expanding
+   * when it comes back out — so it can't go through toggleSidebar. */
+  setSidebarCollapsed(collapsed: boolean) {
+    this.sidebarCollapsed = collapsed;
+    saveBool(SIDEBAR_COLLAPSED_KEY, collapsed);
+  }
+
+  toggleRightSidebar() {
+    this.rightSidebarCollapsed = !this.rightSidebarCollapsed;
+    this.rightSidebarAnimateTick++;
+    saveBool(RIGHT_SIDEBAR_COLLAPSED_KEY, this.rightSidebarCollapsed);
+  }
+
+  /** Sets (rather than flips) the right sidebar's collapsed state, persisting
+   * it the same way the toggle does but without bumping
+   * `rightSidebarAnimateTick` — RightSidebar.svelte's drag-to-collapse uses
+   * this to track the pointer live, same reason Sidebar.svelte's
+   * setSidebarCollapsed exists. */
+  setRightSidebarCollapsed(collapsed: boolean) {
+    this.rightSidebarCollapsed = collapsed;
+    saveBool(RIGHT_SIDEBAR_COLLAPSED_KEY, collapsed);
+  }
+
+  setSidebarWidth(width: number) {
+    this.sidebarWidth = width;
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+    } catch {
+      // best-effort only
+    }
+  }
+
+  /** Persists a new proportion for the right sidebar (0–0.5, a fraction of
+   * the space next to the left sidebar) — the actual live pixel width is
+   * entirely CSS's job (RightSidebar.svelte's `clamp()`, sized against
+   * `.content-row`), so it reflows in real time with the left sidebar's own
+   * width/collapse changes and window resizes with no JS synchronization. */
+  setRightSidebarRatio(ratio: number) {
+    this.rightSidebarRatio = Math.min(0.5, Math.max(0, ratio));
+    try {
+      localStorage.setItem(RIGHT_SIDEBAR_RATIO_KEY, String(this.rightSidebarRatio));
+    } catch {
+      // best-effort only
+    }
+  }
+
+  toggleTerminal() {
+    this.terminalOpen = !this.terminalOpen;
+    saveBool(TERMINAL_OPEN_KEY, this.terminalOpen);
+  }
+
+  /** "system" resolved against the OS's live preference; "dark"/"light" pass
+   * straight through. Every consumer that needs an actual paintable mode
+   * (colorScheme, deriveTheme) goes through this instead of `settings.theme`
+   * directly. */
+  get resolvedTheme(): "dark" | "light" {
+    if (this.settings.theme !== "system") return this.settings.theme;
+    return typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  }
+
+  /** Persists `settings` and pushes it onto the document as CSS custom
+   * properties / a `data-theme` attribute — call after any mutation made
+   * through the Settings UI, and once at startup. */
+  applySettings() {
+    if (typeof document === "undefined") return;
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings));
+    } catch {
+      // best-effort only
+    }
+    const root = document.documentElement;
+    const resolved = this.resolvedTheme;
+    root.style.colorScheme = resolved;
+    // Every surface token, not just --accent — a color scheme (predefined or
+    // custom) recolors the whole UI, derived from one hue (see theme.ts).
+    const tokens = deriveTheme(this.settings.accent, resolved);
+    root.style.setProperty("--bg", tokens.bg);
+    root.style.setProperty("--panel-bg", tokens.panelBg);
+    root.style.setProperty("--panel-border", tokens.panelBorder);
+    root.style.setProperty("--panel-border-top", tokens.panelBorderTop);
+    root.style.setProperty("--panel-border-bottom", tokens.panelBorderBottom);
+    root.style.setProperty("--sidebar-fg", tokens.sidebarFg);
+    root.style.setProperty("--sidebar-fg-dim", tokens.sidebarFgDim);
+    root.style.setProperty("--sidebar-hover", tokens.sidebarHover);
+    root.style.setProperty("--sidebar-active", tokens.sidebarActive);
+    root.style.setProperty("--text", tokens.text);
+    root.style.setProperty("--text-dim", tokens.textDim);
+    root.style.setProperty("--accent", tokens.accent);
+    root.style.setProperty("--bubble-user-bg", tokens.bubbleUserBg);
+    root.style.setProperty("--bubble-border", tokens.bubbleBorder);
+    root.style.setProperty("--statusbar-bg", tokens.statusbarBg);
+    root.style.setProperty("--statusbar-fg", tokens.statusbarFg);
+    root.style.setProperty("--ui-font-size", `${this.settings.uiFontSize}px`);
+    root.style.setProperty("--code-font-size", `${this.settings.codeFontSize}px`);
+    root.style.setProperty("--ui-font-family", this.settings.uiFontFamily);
+    root.style.setProperty("--code-font-family", this.settings.codeFontFamily);
+    root.style.setProperty("--anim-speed", String(this.settings.animationSpeed));
+    // The frosted/opaque switch is entirely CSS — the --float-* tokens hang off
+    // this attribute, so nothing else here has to know about it.
+    root.dataset.surface = this.settings.surface;
   }
 }
 

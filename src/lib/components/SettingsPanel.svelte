@@ -32,6 +32,14 @@
 
   const QUICK_AVATARS = ["🐣", "🦊", "🐙", "🐢", "🐝", "🐺"];
 
+  // Everything server-scoped (providers, peers, tokens, remote-access state,
+  // recent projects, ...) now lives on the active connection's own
+  // ServerState — see the multi-server-connections plan. `cid` is that
+  // connection's id, needed by every ipc.ts call now that they're threaded
+  // per connection.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
   // ---- Providers tab (credentials only — model selection lives in
   // ModelPicker.svelte, sourced from list_models) ----
   // OpenRouter is registered as a plain API key here, same as Anthropic/
@@ -52,8 +60,8 @@
 
   function submitProvider(e: Event) {
     e.preventDefault();
-    if (!providerName.trim()) return;
-    registerProvider({
+    if (!cid || !providerName.trim()) return;
+    registerProvider(cid, {
       name: providerName,
       kind: "api_key",
       httpProvider,
@@ -74,33 +82,34 @@
     cli_claude: "claude-subscription",
     cli_codex: "codex-subscription",
   };
-  const claudeProvider = $derived(app.providers.find((p) => p.kind === "cli_claude"));
-  const codexProvider = $derived(app.providers.find((p) => p.kind === "cli_codex"));
+  const claudeProvider = $derived(server?.providers.find((p) => p.kind === "cli_claude"));
+  const codexProvider = $derived(server?.providers.find((p) => p.kind === "cli_codex"));
 
   function toggleCli(kind: "cli_claude" | "cli_codex", existing: ProviderInfo | undefined, enabled: boolean) {
+    if (!cid) return;
     if (enabled) {
-      registerProvider({ name: CLI_PROVIDER_NAME[kind], kind, authMethod: "manual" });
+      registerProvider(cid, { name: CLI_PROVIDER_NAME[kind], kind, authMethod: "manual" });
     } else if (existing) {
-      removeProvider(existing.name);
+      removeProvider(cid, existing.name);
     }
   }
 
   let remotePasswordInput = $state("");
   let serverIdentityInput = $state("");
   $effect(() => {
-    if (app.serverIdentity !== null) serverIdentityInput = app.serverIdentity;
+    if (server?.serverIdentity != null) serverIdentityInput = server.serverIdentity;
   });
 
   const isLocalConnection = $derived(app.connectionStatus === "connected" && app.connectionMode === "local");
 
   function onProfileNameChange() {
     apply();
-    if (app.connectionStatus === "connected") setPeerName(app.settings.profileName || "anonymous");
+    if (cid) setPeerName(cid, app.settings.profileName || "anonymous");
   }
 
   function pushAvatar() {
     apply();
-    if (app.connectionStatus === "connected") setPeerAvatar(app.settings.profileAvatar);
+    if (cid) setPeerAvatar(cid, app.settings.profileAvatar);
   }
 
   function setEmojiAvatar(emoji: string) {
@@ -125,36 +134,36 @@
   }
 
   function onDisconnectPeer(peerId: string, name: string) {
-    if (confirm(`Disconnect "${name}"? Any peer can disconnect any other — there's no extra permission check.`)) {
-      disconnectPeer(peerId);
+    if (cid && confirm(`Disconnect "${name}"? Any peer can disconnect any other — there's no extra permission check.`)) {
+      disconnectPeer(cid, peerId);
     }
   }
 
   function onRemoveProvider(name: string) {
-    if (confirm(`Remove provider "${name}"? This can't be undone.`)) {
-      removeProvider(name);
+    if (cid && confirm(`Remove provider "${name}"? This can't be undone.`)) {
+      removeProvider(cid, name);
     }
   }
 
   function onRemoteAccessToggle(checked: boolean) {
-    setRemoteAccess(checked);
+    if (cid) setRemoteAccess(cid, checked);
   }
 
   function onAutoGenerateTitleToggle(checked: boolean) {
-    setAutoGenerateTitle(checked);
+    if (cid) setAutoGenerateTitle(cid, checked);
   }
 
   function submitRemotePassword(e: Event) {
     e.preventDefault();
-    if (!remotePasswordInput) return;
-    setRemotePassword(remotePasswordInput);
+    if (!cid || !remotePasswordInput) return;
+    setRemotePassword(cid, remotePasswordInput);
     remotePasswordInput = "";
   }
 
   function submitServerIdentity(e: Event) {
     e.preventDefault();
-    if (!serverIdentityInput.trim()) return;
-    setServerIdentity(serverIdentityInput.trim());
+    if (!cid || !serverIdentityInput.trim()) return;
+    setServerIdentity(cid, serverIdentityInput.trim());
   }
 
   let tokenNameInput = $state("");
@@ -162,15 +171,15 @@
 
   function submitToken(e: Event) {
     e.preventDefault();
-    if (!tokenNameInput.trim()) return;
-    registerToken(tokenNameInput.trim(), tokenEmailInput.trim() || undefined);
+    if (!cid || !tokenNameInput.trim()) return;
+    registerToken(cid, tokenNameInput.trim(), tokenEmailInput.trim() || undefined);
     tokenNameInput = "";
     tokenEmailInput = "";
   }
 
   function onRemoveToken(name: string) {
-    if (confirm(`Revoke "${name}"'s access? They'll be logged out on their next reconnect.`)) {
-      removeToken(name);
+    if (cid && confirm(`Revoke "${name}"'s access? They'll be logged out on their next reconnect.`)) {
+      removeToken(cid, name);
     }
   }
 
@@ -653,19 +662,19 @@
               <LobeIcon name="claude" size={20} />
               <div class="cli-card-text">
                 <span class="cli-card-title">Claude subscription</span>
-                <span class="hint" class:warn={!app.cliAvailability.claude}>
-                  {#if !app.cliAvailability.claude}
+                <span class="hint" class:warn={!server?.cliAvailability.claude}>
+                  {#if !server?.cliAvailability.claude}
                     <Icon name="warning" size={11} /> `claude` CLI not found on the server's PATH.
                   {:else}
                     Uses your own Claude subscription — yoakeland never sees a credential.
                   {/if}
                 </span>
               </div>
-              <label class="switch-row" title={!claudeProvider && !app.cliAvailability.claude ? "Install and sign in to the `claude` CLI first" : ""}>
+              <label class="switch-row" title={!claudeProvider && !server?.cliAvailability.claude ? "Install and sign in to the `claude` CLI first" : ""}>
                 <Switch.Root
                   class="switch-root"
                   checked={!!claudeProvider}
-                  disabled={!claudeProvider && !app.cliAvailability.claude}
+                  disabled={!claudeProvider && !server?.cliAvailability.claude}
                   onCheckedChange={(checked) => toggleCli("cli_claude", claudeProvider, checked)}
                 >
                   <Switch.Thumb class="switch-thumb" />
@@ -676,19 +685,19 @@
               <LobeIcon name="openai" size={20} />
               <div class="cli-card-text">
                 <span class="cli-card-title">Codex subscription</span>
-                <span class="hint" class:warn={!app.cliAvailability.codex}>
-                  {#if !app.cliAvailability.codex}
+                <span class="hint" class:warn={!server?.cliAvailability.codex}>
+                  {#if !server?.cliAvailability.codex}
                     <Icon name="warning" size={11} /> `codex` CLI not found on the server's PATH.
                   {:else}
                     Uses your own ChatGPT subscription — yoakeland never sees a credential.
                   {/if}
                 </span>
               </div>
-              <label class="switch-row" title={!codexProvider && !app.cliAvailability.codex ? "Install and sign in to the `codex` CLI first" : ""}>
+              <label class="switch-row" title={!codexProvider && !server?.cliAvailability.codex ? "Install and sign in to the `codex` CLI first" : ""}>
                 <Switch.Root
                   class="switch-root"
                   checked={!!codexProvider}
-                  disabled={!codexProvider && !app.cliAvailability.codex}
+                  disabled={!codexProvider && !server?.cliAvailability.codex}
                   onCheckedChange={(checked) => toggleCli("cli_codex", codexProvider, checked)}
                 >
                   <Switch.Thumb class="switch-thumb" />
@@ -697,9 +706,9 @@
             </div>
           </div>
 
-          {#if app.providers.some((p) => p.kind === "api_key")}
+          {#if server?.providers.some((p) => p.kind === "api_key")}
             <ul class="provider-list">
-              {#each app.providers.filter((p) => p.kind === "api_key") as p (p.name)}
+              {#each (server?.providers ?? []).filter((p) => p.kind === "api_key") as p (p.name)}
                 <li>
                   <span class="pname">{p.name}</span>
                   <span class="pkind">{p.httpProvider}</span>
@@ -746,7 +755,7 @@
             switching. "Browse…" is the one place that still opens one, for adding a folder that isn't saved yet.
           </p>
           <ul class="paths">
-            {#each app.recentProjects as path (path)}
+            {#each (server?.recentProjects ?? []) as path (path)}
               <li>
                 <Icon name="folder" size={13} />
                 <span class="path-name" title={path}>{basename(path)}</span>
@@ -755,8 +764,8 @@
                   type="button"
                   class="remove"
                   onclick={() => {
-                    app.forgetProject(path);
-                    removeProject(path);
+                    server?.forgetProject(path);
+                    if (cid) removeProject(cid, path);
                   }}
                   title="Remove"
                 >
@@ -767,7 +776,7 @@
               <li class="empty">No saved paths yet.</li>
             {/each}
           </ul>
-          <button type="button" class="browse" onclick={() => browseAndAddProject()}>
+          <button type="button" class="browse" onclick={() => cid && browseAndAddProject(cid)}>
             <Icon name="plus" size={13} /> Browse…
           </button>
           </div>
@@ -782,7 +791,7 @@
               Every connection currently open on this server (unix and TCP alike) — pushed live, updates instantly.
             </p>
             <ul class="peers">
-              {#each app.peers as peer (peer.peerId)}
+              {#each (server?.peers ?? []) as peer (peer.peerId)}
                 <li>
                   {#if peer.avatar}
                     <img class="peer-avatar" src={peer.avatar} alt="" />
@@ -831,7 +840,7 @@
               <label class="checkbox" class:disabled={!isLocalConnection}>
                 <Checkbox.Root
                   class="checkbox-box"
-                  checked={app.remoteAccessEnabled ?? false}
+                  checked={server?.remoteAccessEnabled ?? false}
                   disabled={!isLocalConnection}
                   onCheckedChange={onRemoteAccessToggle}
                 >
@@ -859,7 +868,7 @@
             <label class="checkbox">
               <Checkbox.Root
                 class="checkbox-box"
-                checked={app.autoGenerateTitleEnabled ?? true}
+                checked={server?.autoGenerateTitleEnabled ?? true}
                 onCheckedChange={onAutoGenerateTitleToggle}
               >
                 {#snippet children({ checked })}
@@ -885,20 +894,20 @@
               attributed to that name.
             </p>
 
-            {#if app.justRegisteredToken}
+            {#if server?.justRegisteredToken}
               <div class="warning-card">
                 <p class="section-heading warning-heading"><Icon name="warning" size={12} /> Copy this now</p>
                 <p class="hint">
-                  Token for <strong>{app.justRegisteredToken.name}</strong> — shown only this once, there's no way to
+                  Token for <strong>{server?.justRegisteredToken.name}</strong> — shown only this once, there's no way to
                   retrieve it again.
                 </p>
                 <div class="row-with-button">
-                  <input type="text" readonly value={app.justRegisteredToken.token} onclick={(e) => (e.target as HTMLInputElement).select()} />
+                  <input type="text" readonly value={server?.justRegisteredToken.token} onclick={(e) => (e.target as HTMLInputElement).select()} />
                   <button
                     type="button"
                     onclick={() => {
-                      void navigator.clipboard?.writeText(app.justRegisteredToken!.token);
-                      app.justRegisteredToken = null;
+                      void navigator.clipboard?.writeText(server?.justRegisteredToken!.token);
+                      if (server) server.justRegisteredToken = null;
                     }}
                   >
                     Copy &amp; dismiss
@@ -908,7 +917,7 @@
             {/if}
 
             <ul class="peers">
-              {#each app.tokens as token (token.name)}
+              {#each (server?.tokens ?? []) as token (token.name)}
                 <li>
                   <span class="peer-avatar placeholder"><Icon name="user" size={13} /></span>
                   <div class="peer-info">

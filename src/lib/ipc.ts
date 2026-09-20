@@ -2,22 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Envelope } from "./types";
-import { app } from "./state.svelte";
+import { app, ServerState, type ConnectionId } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
 import { isDesktop } from "./platform";
 
 let wired = false;
-
-// The Rust side (src-tauri/src/backend.rs) now keys connections by an opaque
-// id it mints per connect_tcp/connect_unix call, rather than assuming "the
-// one connection" — this is phase 2 of the multi-server-connections plan
-// (see looking-at-the-server-adaptive-squid.md): the connection manager is
-// fully rewritten underneath, but this client still only ever opens one
-// connection, tracked here as a single module-private variable, so nothing
-// about the app's visible behavior changes yet. Phase 3 moves this onto
-// AppState (keyed by connection, not a lone variable) once the UI actually
-// exposes more than one.
-let activeConnectionId: string | null = null;
 
 // --- Liveness (§2a "Keeping a connection alive") ---
 // The backend pings roughly every 30s and drops a connection after ~90s of
@@ -28,37 +17,50 @@ let activeConnectionId: string | null = null;
 // envelope counts, not just its ping) and treat prolonged silence as dead.
 // The client doesn't send its own ping — the backend's heartbeat is the
 // thing being strengthened server-side instead.
+//
+// Phase 3 (multi-server): this is keyed per connection now, not a lone set
+// of module-level variables — each live connection watches and retries
+// independently of every other one.
 const LIVENESS_TIMEOUT_MS = 60_000; // comfortably < the backend's own ~90s cutoff
 const WATCHDOG_INTERVAL_MS = 10_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 
-let lastActivityAt = Date.now();
-let watchdogTimer: ReturnType<typeof setInterval> | undefined;
-let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-let reconnectAttempt = 0;
+interface LivenessState {
+  lastActivityAt: number;
+  watchdogTimer?: ReturnType<typeof setInterval>;
+  reconnectTimer?: ReturnType<typeof setTimeout>;
+  reconnectAttempt: number;
+}
 
-function startLiveness() {
-  lastActivityAt = Date.now();
-  reconnectAttempt = 0;
-  clearInterval(watchdogTimer);
-  watchdogTimer = setInterval(() => {
-    if (app.connectionStatus === "connected" && Date.now() - lastActivityAt > LIVENESS_TIMEOUT_MS) {
-      if (activeConnectionId) {
-        void invoke("disconnect", { connectionId: activeConnectionId }).catch(() => {
-          // best-effort — we're about to treat the connection as dead either way
-        });
-      }
-      handleConnectionLost("no response from server");
+const liveness = new Map<ConnectionId, LivenessState>();
+
+function startLiveness(connectionId: ConnectionId) {
+  stopLiveness(connectionId);
+  const state: LivenessState = { lastActivityAt: Date.now(), reconnectAttempt: 0 };
+  liveness.set(connectionId, state);
+  state.watchdogTimer = setInterval(() => {
+    const server = app.servers[connectionId];
+    if (server?.connectionStatus === "connected" && Date.now() - state.lastActivityAt > LIVENESS_TIMEOUT_MS) {
+      void invoke("disconnect", { connectionId }).catch(() => {
+        // best-effort — we're about to treat the connection as dead either way
+      });
+      handleConnectionLost(connectionId, "no response from server");
     }
   }, WATCHDOG_INTERVAL_MS);
 }
 
-function stopLiveness() {
-  clearInterval(watchdogTimer);
-  clearTimeout(reconnectTimer);
-  watchdogTimer = undefined;
-  reconnectTimer = undefined;
+function stopLiveness(connectionId: ConnectionId) {
+  const state = liveness.get(connectionId);
+  if (!state) return;
+  clearInterval(state.watchdogTimer);
+  clearTimeout(state.reconnectTimer);
+  liveness.delete(connectionId);
+}
+
+function touchActivity(connectionId: ConnectionId) {
+  const state = liveness.get(connectionId);
+  if (state) state.lastActivityAt = Date.now();
 }
 
 /** Only the local unix socket is safe to retry unattended — a remote/TCP
@@ -67,83 +69,112 @@ function stopLiveness() {
  * isn't something to do silently), so a dropped remote connection surfaces
  * as an error and waits for the user to reconnect via the Connect screen
  * instead of guessing at credentials to retry with. */
-function scheduleReconnect() {
-  clearTimeout(reconnectTimer);
-  const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS);
-  reconnectAttempt++;
-  reconnectTimer = setTimeout(() => {
-    if (app.connectionStatus === "connected" || app.connectionStatus === "connecting") return;
-    app.log(`reconnecting to local socket (attempt ${reconnectAttempt})…`);
-    void autoConnect();
+function scheduleReconnect(connectionId: ConnectionId) {
+  const server = app.servers[connectionId];
+  if (!server || server.connectParams.mode !== "local") return;
+  let state = liveness.get(connectionId);
+  if (!state) {
+    state = { lastActivityAt: Date.now(), reconnectAttempt: 0 };
+    liveness.set(connectionId, state);
+  }
+  clearTimeout(state.reconnectTimer);
+  const delay = Math.min(RECONNECT_BASE_MS * 2 ** state.reconnectAttempt, RECONNECT_MAX_MS);
+  state.reconnectAttempt++;
+  state.reconnectTimer = setTimeout(() => {
+    const s = app.servers[connectionId];
+    if (!s || s.connectionStatus === "connected" || s.connectionStatus === "connecting") return;
+    app.log(`reconnecting to local socket (attempt ${state.reconnectAttempt})…`);
+    void redial(connectionId);
   }, delay);
 }
 
-function handleConnectionLost(reason: string) {
-  const mode = app.connectionMode;
-  stopLiveness();
-  activeConnectionId = null;
-  app.connectionStatus = "disconnected";
-  app.connectionError = reason;
+function handleConnectionLost(connectionId: ConnectionId, reason: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  const mode = server.connectParams.mode;
+  stopLiveness(connectionId);
+  server.connectionStatus = "disconnected";
+  server.connectionError = reason;
   app.log(`disconnected: ${reason}`);
-  app.clearAllSessionSyncing();
-  if (mode === "local") scheduleReconnect();
+  server.clearAllSessionSyncing();
+  if (mode === "local") scheduleReconnect(connectionId);
+}
+
+/** Redials a dropped local connection. Rust mints a brand-new ConnectionId
+ * per connect_unix call — there's no way to ask for the old one back — so a
+ * naive reconnect would mean dropping this server's ServerState (current
+ * session/project, nav history, caches) and starting a fresh one, which
+ * would be a real regression from today's single-connection behavior, where
+ * a brief drop-and-reconnect just quietly resyncs without resetting
+ * anything the user can see. Instead, re-key the *same* ServerState instance
+ * under the new id once the redial succeeds. */
+async function redial(oldConnectionId: ConnectionId) {
+  const server = app.servers[oldConnectionId];
+  if (!server || server.connectParams.mode !== "local") return;
+  const params = server.connectParams;
+  try {
+    const newConnectionId = await invoke<string>("connect_unix", { path: params.socketPath, ...peerIdentity() });
+    delete app.servers[oldConnectionId];
+    server.connectionId = newConnectionId;
+    server.connectionStatus = "connected";
+    server.connectionError = null;
+    app.servers[newConnectionId] = server;
+    if (app.activeConnectionId === oldConnectionId) app.activeConnectionId = newConnectionId;
+    afterConnect(newConnectionId);
+  } catch (err) {
+    server.connectionStatus = "error";
+    server.connectionError = String(err);
+    scheduleReconnect(oldConnectionId);
+  }
 }
 
 export function wireEvents() {
   if (wired || !isDesktop) return;
   wired = true;
 
-  // Every payload now carries the ConnectionId backend.rs's reader task
-  // tagged it with (see backend.rs's module doc). This client still only
-  // ever tracks one (activeConnectionId, above), so anything from a
-  // different/stale connection id is dropped rather than misapplied — this
-  // can only happen today from a superseded connection's last in-flight
-  // event landing just after a new one replaces it, not from genuine
-  // multi-connection use yet (that's phase 3+).
+  // Every payload carries the ConnectionId backend.rs's reader task tagged
+  // it with (see backend.rs's module doc) — this is the one dispatch point
+  // that routes each event to the right ServerState, rather than assuming
+  // "the one connection" the way pre-multi-server code did.
   listen<{ connectionId: string; envelope: Envelope }>("yoake-event", (e) => {
-    if (e.payload.connectionId !== activeConnectionId) return;
-    lastActivityAt = Date.now();
-    const env = e.payload.envelope;
+    const { connectionId, envelope: env } = e.payload;
+    const server = app.servers[connectionId];
+    if (!server) return; // stale event from a connection we no longer track
+    touchActivity(connectionId);
     if (env.type === "ping") {
       // Backend liveness check (§2a) — echo the nonce straight back.
-      void send({ type: "pong", data: { nonce: (env.data as { nonce?: string })?.nonce } });
+      void send(connectionId, { type: "pong", data: { nonce: (env.data as { nonce?: string })?.nonce } });
       return;
     }
-    app.handleEvent(env);
+    server.handleEvent(env);
 
     // provider_registered only carries {name} (§3.2), not the full roster —
     // refetch so a just-added provider actually shows up in the picker.
     if (env.type === "provider_registered") {
-      listProviders();
+      listProviders(connectionId);
     }
 
     // "Auto" mode is a client-side convenience the wire protocol has no
     // concept of: skip the modal and immediately approve, same as clicking
     // "Allow Once" ourselves.
     if (env.type === "permission_request" && env.sessionId && env.turnId && env.toolCallId) {
-      if (app.modeBySession[env.sessionId] === "auto") {
-        respondPermission(env.sessionId, env.turnId, env.toolCallId, true, false);
-        app.pendingPermission = null;
+      if (server.modeBySession[env.sessionId] === "auto") {
+        respondPermission(connectionId, env.sessionId, env.turnId, env.toolCallId, true, false);
+        server.pendingPermission = null;
       }
     }
-
   });
 
   listen<{ connectionId: string; message: string }>("yoake-log", (e) => app.log(e.payload.message));
 
   listen<{ connectionId: string; reason: string }>("yoake-disconnected", (e) => {
-    if (e.payload.connectionId !== activeConnectionId) return;
-    handleConnectionLost(e.payload.reason);
+    handleConnectionLost(e.payload.connectionId, e.payload.reason);
   });
 }
 
-export async function send(envelope: Envelope) {
-  if (!activeConnectionId) {
-    app.log("send failed: not connected");
-    return;
-  }
+export async function send(connectionId: ConnectionId, envelope: Envelope) {
   try {
-    await invoke("send_envelope", { connectionId: activeConnectionId, envelope });
+    await invoke("send_envelope", { connectionId, envelope });
   } catch (err) {
     // Most callers fire-and-forget (`void send(...)`) — a rejection here
     // (e.g. a stray pong racing a disconnect) would otherwise surface as an
@@ -188,25 +219,29 @@ async function spawnDetachedUnixServer(opts: SpawnUnixServerOpts) {
   });
 }
 
-function afterConnect() {
-  startLiveness();
-  listProjects();
-  listProviders();
-  detectCli();
+function afterConnect(connectionId: ConnectionId) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  startLiveness(connectionId);
+  listProjects(connectionId);
+  listProviders(connectionId);
+  detectCli(connectionId);
   // The sidebar's Active/Archive lists are grouped across every saved
   // project, not just whichever one is currently open — so every one of
   // them needs its own list_sessions, not just currentProjectPath's.
-  void listSessionsForProjects(app.recentProjects);
-  if (app.currentProjectPath) listFiles(app.currentProjectPath);
-  if (app.connectionMode === "local") listTokens();
+  void listSessionsForProjects(connectionId, server.recentProjects);
+  if (server.currentProjectPath) listFiles(connectionId, server.currentProjectPath);
+  if (server.connectionMode === "local") listTokens(connectionId);
   // Reconcile whatever session was open (restored from the local cache
   // before this connection existed) against the server's own history, so a
   // reconnect after being offline picks up anything that changed meanwhile.
-  if (app.currentSessionId) getSessionHistory(app.currentSessionId);
+  if (server.currentSessionId) getSessionHistory(connectionId, server.currentSessionId);
 }
 
 /** Self-reported identity sent on the opt-in `auth` frame (§2a) — same shape
- * for the unix-socket and TCP paths, sourced from Settings > Profile. */
+ * for the unix-socket and TCP paths, sourced from Settings > Profile. One
+ * identity, shared across every server this client connects to — not a
+ * per-connection setting, so this doesn't take a connectionId. */
 function peerIdentity() {
   return {
     name: app.settings.profileName || undefined,
@@ -215,7 +250,7 @@ function peerIdentity() {
   };
 }
 
-/** Key `app.settings.trustedCaByServer` is stored under for a given remote. */
+/** Key `app.settings.trustedCaByHostPort` is stored under for a given remote. */
 export function caServerKey(host: string, port: number): string {
   return `${host}:${port}`;
 }
@@ -230,21 +265,28 @@ export async function importCaCertFile(): Promise<string | null> {
   return invoke<string>("read_text_file", { path });
 }
 
-export async function connectTcp(host: string, port: number, token: string, caPem?: string) {
-  app.connectionStatus = "connecting";
-  app.connectionError = null;
+export async function connectTcp(host: string, port: number, token: string, caPem?: string): Promise<ConnectionId> {
+  app.setPendingConnect("connecting", "remote");
   try {
-    activeConnectionId = await invoke<string>("connect_tcp", { host, port, token, caPem: caPem || undefined, ...peerIdentity() });
-    app.connectionMode = "remote";
-    app.connectionStatus = "connected";
+    const connectionId = await invoke<string>("connect_tcp", {
+      host,
+      port,
+      token,
+      caPem: caPem || undefined,
+      ...peerIdentity(),
+    });
+    const server = new ServerState(connectionId, app, { mode: "remote", host, port, token, caPem });
+    app.servers[connectionId] = server;
+    app.activeConnectionId = connectionId;
+    app.setPendingConnect("disconnected");
     if (caPem) {
-      app.settings.trustedCaByServer[caServerKey(host, port)] = caPem;
+      app.settings.trustedCaByHostPort[caServerKey(host, port)] = caPem;
       app.applySettings();
     }
-    afterConnect();
+    afterConnect(connectionId);
+    return connectionId;
   } catch (err) {
-    app.connectionStatus = "error";
-    app.connectionError = String(err);
+    app.setPendingConnect("error", "remote", String(err));
     throw err;
   }
 }
@@ -259,9 +301,8 @@ export async function connectTcp(host: string, port: number, token: string, caPe
  * opened here: the server isn't bound to one (§4b), that happens per session
  * via openProjectAndStartSession/open_project.
  */
-export async function connectLocalUnix(opts: SpawnUnixServerOpts) {
-  app.connectionStatus = "connecting";
-  app.connectionError = null;
+export async function connectLocalUnix(opts: SpawnUnixServerOpts): Promise<ConnectionId> {
+  app.setPendingConnect("connecting", "local");
   try {
     const alreadyRunning = await probeUnix(opts.socketPath);
     if (!alreadyRunning) {
@@ -273,13 +314,19 @@ export async function connectLocalUnix(opts: SpawnUnixServerOpts) {
         if (await probeUnix(opts.socketPath)) break;
       }
     }
-    activeConnectionId = await invoke<string>("connect_unix", { path: opts.socketPath, ...peerIdentity() });
-    app.connectionMode = "local";
-    app.connectionStatus = "connected";
-    afterConnect();
+    const connectionId = await invoke<string>("connect_unix", { path: opts.socketPath, ...peerIdentity() });
+    const server = new ServerState(connectionId, app, {
+      mode: "local",
+      socketPath: opts.socketPath,
+      binPath: opts.binPath,
+    });
+    app.servers[connectionId] = server;
+    app.activeConnectionId = connectionId;
+    app.setPendingConnect("disconnected");
+    afterConnect(connectionId);
+    return connectionId;
   } catch (err) {
-    app.connectionStatus = "error";
-    app.connectionError = String(err);
+    app.setPendingConnect("error", "local", String(err));
     throw err;
   }
 }
@@ -319,27 +366,29 @@ export async function autoConnect() {
   }
 }
 
-export async function disconnect() {
-  stopLiveness();
-  if (activeConnectionId) {
-    await invoke("disconnect", { connectionId: activeConnectionId });
-    activeConnectionId = null;
+export async function disconnect(connectionId: ConnectionId) {
+  stopLiveness(connectionId);
+  await invoke("disconnect", { connectionId });
+  const server = app.servers[connectionId];
+  if (server) {
+    server.connectionStatus = "disconnected";
+    server.clearAllSessionSyncing();
   }
-  app.connectionStatus = "disconnected";
-  app.clearAllSessionSyncing();
 }
 
 // ---- Convenience wrappers for outbound events (§3.1) ----
 
-export function sendPrompt(sessionId: string, prompt: string): string {
+export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt: string): string {
   const turnId = `turn-${crypto.randomUUID().slice(0, 8)}`;
-  app.addUserMessage(sessionId, turnId, prompt);
+  const server = app.servers[connectionId];
+  if (!server) return turnId;
+  server.addUserMessage(sessionId, turnId, prompt);
   // Always included, not just on first use: a session is permanently bound
   // to one project on our side too, so this never conflicts (§4b) and saves
   // tracking "have we sent it yet" separately.
-  const projectPath = app.projectBySession[sessionId];
-  if (app.sessionById.get(sessionId)?.archived) setSessionArchived(sessionId, false);
-  void send({
+  const projectPath = server.projectBySession[sessionId];
+  if (server.sessionById.get(sessionId)?.archived) setSessionArchived(connectionId, sessionId, false);
+  void send(connectionId, {
     type: "user_prompt",
     sessionId,
     turnId,
@@ -370,16 +419,18 @@ export function sendPrompt(sessionId: string, prompt: string): string {
  * that repaints a session from truth rather than from the local cache. Fine
  * to call unconditionally on open: an id with no persisted history yet just
  * comes back with an empty `messages` list, not an error. */
-export function getSessionHistory(sessionId: string) {
-  app.setSessionSyncing(sessionId, true);
+export function getSessionHistory(connectionId: ConnectionId, sessionId: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  server.setSessionSyncing(sessionId, true);
   // projectPath for the same reason every other session-scoped call sends it
   // (see setProvider): the session→project binding lives in server memory
   // (§4b) and a restarted server has forgotten it, so without this a chat in
   // any project other than the server's default resolves against the default
   // project and comes back with an empty history — which this client then
   // repaints over the transcript, making a perfectly saved chat look gone.
-  const projectPath = app.projectBySession[sessionId];
-  void send({ type: "get_session_history", data: { sessionId, projectPath } });
+  const projectPath = server.projectBySession[sessionId];
+  void send(connectionId, { type: "get_session_history", data: { sessionId, projectPath } });
 }
 
 /** Re-sends a resumed session's own provider/model and plan-mode choice from
@@ -394,30 +445,35 @@ export function getSessionHistory(sessionId: string) {
  * session that never had `set_provider`/`set_plan_mode` called on it, or a
  * fresh app launch that never populated the cache to begin with — this
  * can't recover state the client itself no longer remembers). */
-function reassertSessionSettings(sessionId: string) {
-  const providerName = app.providerBySession[sessionId];
-  if (providerName) setProvider(sessionId, providerName, app.modelBySession[sessionId]);
-  const planMode = app.planModeBySession[sessionId];
-  if (planMode !== undefined) setPlanMode(sessionId, planMode);
+function reassertSessionSettings(connectionId: ConnectionId, sessionId: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  const providerName = server.providerBySession[sessionId];
+  if (providerName) setProvider(connectionId, sessionId, providerName, server.modelBySession[sessionId]);
+  const planMode = server.planModeBySession[sessionId];
+  if (planMode !== undefined) setPlanMode(connectionId, sessionId, planMode);
 }
 
 /** Opens `sessionId` as the main chat and refreshes it from the server so a
  * session opened cold — a second device, a fresh install, a reconnect after
  * being offline — shows its actual history instead of whatever (or nothing)
  * this client happens to have cached locally. Use this instead of calling
- * `app.openSession` directly.
+ * `ServerState.openSession` directly.
  *
  * This is also the single funnel that feeds the titlebar's back/forward
- * history (see app.pushNavHistory): every user-initiated switch goes through
- * here, so clicking between chats in the sidebar and stepping through them
- * with the arrows walk the same list. Re-clicking the already-open session
- * records nothing, so it can't fill the stack with duplicates of itself. */
-export function openChatSession(sessionId: string) {
-  if (sessionId !== app.currentSessionId) app.pushNavHistory(app.currentSessionId);
-  app.openSession(sessionId);
-  if (app.connectionStatus === "connected") {
-    getSessionHistory(sessionId);
-    reassertSessionSettings(sessionId);
+ * history (see ServerState.pushNavHistory): every user-initiated switch goes
+ * through here, so clicking between chats in the sidebar and stepping
+ * through them with the arrows walk the same list. Re-clicking the
+ * already-open session records nothing, so it can't fill the stack with
+ * duplicates of itself. */
+export function openChatSession(connectionId: ConnectionId, sessionId: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  if (sessionId !== server.currentSessionId) server.pushNavHistory(server.currentSessionId);
+  server.openSession(sessionId);
+  if (server.connectionStatus === "connected") {
+    getSessionHistory(connectionId, sessionId);
+    reassertSessionSettings(connectionId, sessionId);
   }
 }
 
@@ -426,21 +482,24 @@ export function openChatSession(sessionId: string) {
  * server exactly like a clicked one. No-op at either end of the history (the
  * buttons are disabled there, but a keyboard/rapid double-click can still get
  * here). */
-export function navigateSessionHistory(direction: "back" | "forward") {
-  const target = direction === "back" ? app.stepBack() : app.stepForward();
+export function navigateSessionHistory(connectionId: ConnectionId, direction: "back" | "forward") {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  const target = direction === "back" ? server.stepBack() : server.stepForward();
   if (!target) return;
-  app.openSession(target);
-  if (app.connectionStatus === "connected") {
-    getSessionHistory(target);
-    reassertSessionSettings(target);
+  server.openSession(target);
+  if (server.connectionStatus === "connected") {
+    getSessionHistory(connectionId, target);
+    reassertSessionSettings(connectionId, target);
   }
 }
 
-export function cancelTurn(sessionId: string, turnId: string) {
-  void send({ type: "cancel_turn", sessionId, turnId, data: { sessionId, turnId } });
+export function cancelTurn(connectionId: ConnectionId, sessionId: string, turnId: string) {
+  void send(connectionId, { type: "cancel_turn", sessionId, turnId, data: { sessionId, turnId } });
 }
 
 export function respondPermission(
+  connectionId: ConnectionId,
   sessionId: string,
   turnId: string,
   toolCallId: string,
@@ -448,7 +507,7 @@ export function respondPermission(
   remember: boolean,
   feedback?: string,
 ) {
-  void send({
+  void send(connectionId, {
     type: "permission_response",
     sessionId,
     turnId,
@@ -463,99 +522,105 @@ export function respondPermission(
  * than needing a follow-up prompt. This is the composer's "reject and tell it
  * what you want instead" action. */
 export function denyPermissionWithFeedback(
+  connectionId: ConnectionId,
   sessionId: string,
   turnId: string,
   toolCallId: string,
   feedback: string,
 ) {
-  respondPermission(sessionId, turnId, toolCallId, false, false, feedback.trim() || undefined);
-  app.pendingPermission = null;
+  respondPermission(connectionId, sessionId, turnId, toolCallId, false, false, feedback.trim() || undefined);
+  const server = app.servers[connectionId];
+  if (server) server.pendingPermission = null;
 }
 
-export function restoreSnapshot(sessionId: string, snapshotId: string) {
-  const projectPath = app.projectBySession[sessionId];
-  void send({ type: "restore_snapshot", sessionId, turnId: "", data: { snapshotId, projectPath } });
+export function restoreSnapshot(connectionId: ConnectionId, sessionId: string, snapshotId: string) {
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "restore_snapshot", sessionId, turnId: "", data: { snapshotId, projectPath } });
 }
 
-export function listSnapshots(projectPath: string) {
-  void send({ type: "list_snapshots", data: { projectPath } });
+export function listSnapshots(connectionId: ConnectionId, projectPath: string) {
+  void send(connectionId, { type: "list_snapshots", data: { projectPath } });
 }
 
 /** Derives a title from a session's first prompt (truncated/whitespace-
  * collapsed) and pushes it via set_session_title — the backend never
  * generates one itself (SPEC.md §3.1). Only meaningful the first time a
  * session gets a message; harmless to call again; the server just overwrites. */
-export function setSessionTitle(sessionId: string, title: string) {
-  const projectPath = app.projectBySession[sessionId];
-  void send({ type: "set_session_title", data: { sessionId, title, projectPath } });
+export function setSessionTitle(connectionId: ConnectionId, sessionId: string, title: string) {
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "set_session_title", data: { sessionId, title, projectPath } });
 }
 
 /** Optimistic: without this, the archive button in the chat list appeared to
  * do nothing until the server's session_updated (§3.2) round-tripped back —
  * this applies the flag locally right away, same shape as that handler in
  * state.svelte.ts, which still applies when the real response lands. */
-export function setSessionArchived(sessionId: string, archived: boolean) {
-  const project = app.projectBySession[sessionId];
-  if (project && app.sessionsByProject[project]) {
-    app.sessionsByProject[project] = app.sessionsByProject[project].map((s) =>
+export function setSessionArchived(connectionId: ConnectionId, sessionId: string, archived: boolean) {
+  const server = app.servers[connectionId];
+  const project = server?.projectBySession[sessionId];
+  if (server && project && server.sessionsByProject[project]) {
+    server.sessionsByProject[project] = server.sessionsByProject[project].map((s) =>
       s.sessionId === sessionId ? { ...s, archived } : s,
     );
   }
-  void send({ type: "set_session_archived", data: { sessionId, archived, projectPath: project } });
+  void send(connectionId, { type: "set_session_archived", data: { sessionId, archived, projectPath: project } });
 }
 
 /** Pairs (or, with `null`, unpairs) `sessionId`'s split/sidebar layout
  * (§3.1 set_session_layout) — server-persisted so it survives a reload or
  * shows up on another device, unlike the plain UI state in
- * app.showInSidePanel. Optimistic, same pattern as setSessionArchived. */
-export function setSessionLayout(sessionId: string, linkedSessionId: string | null) {
-  const project = app.projectBySession[sessionId];
-  if (project && app.sessionsByProject[project]) {
-    app.sessionsByProject[project] = app.sessionsByProject[project].map((s) =>
+ * ServerState.showInSidePanel. Optimistic, same pattern as setSessionArchived. */
+export function setSessionLayout(connectionId: ConnectionId, sessionId: string, linkedSessionId: string | null) {
+  const server = app.servers[connectionId];
+  const project = server?.projectBySession[sessionId];
+  if (server && project && server.sessionsByProject[project]) {
+    server.sessionsByProject[project] = server.sessionsByProject[project].map((s) =>
       s.sessionId === sessionId ? { ...s, linkedSessionId: linkedSessionId ?? undefined } : s,
     );
   }
-  void send({ type: "set_session_layout", data: { sessionId, linkedSessionId, projectPath: project } });
+  void send(connectionId, { type: "set_session_layout", data: { sessionId, linkedSessionId, projectPath: project } });
 }
 
 /** Permanently deletes a persisted session (§3.1 delete_session) — unlike
  * setSessionArchived this isn't reversible, so no optimistic local removal:
  * wait for the server's `session_deleted` (state.svelte.ts) before dropping
  * it from the UI. */
-export function deleteSession(sessionId: string) {
-  const projectPath = app.projectBySession[sessionId];
-  void send({ type: "delete_session", data: { sessionId, projectPath } });
+export function deleteSession(connectionId: ConnectionId, sessionId: string) {
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "delete_session", data: { sessionId, projectPath } });
 }
 
 /** Opens `sessionId` in the right sidebar (button on a session row — see
  * Sidebar.svelte / ProjectGroup.svelte) and, the first time these two
  * sessions are shown together, saves the pairing server-side (§3.1
  * set_session_layout) so it's still there — and auto-reopens (see
- * app.openSession) — after a reload or from another device. */
-export function openInSidePanel(sessionId: string) {
-  const main = app.currentSessionId;
-  if (main && main !== sessionId && app.splitPartnerFor(main)?.sessionId !== sessionId) {
-    setSessionLayout(main, sessionId);
+ * ServerState.openSession) — after a reload or from another device. */
+export function openInSidePanel(connectionId: ConnectionId, sessionId: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  const main = server.currentSessionId;
+  if (main && main !== sessionId && server.splitPartnerFor(main)?.sessionId !== sessionId) {
+    setSessionLayout(connectionId, main, sessionId);
   }
-  app.ensureSession(sessionId);
-  app.showInSidePanel(sessionId);
-  if (app.connectionStatus === "connected") {
-    getSessionHistory(sessionId);
-    reassertSessionSettings(sessionId);
+  server.ensureSession(sessionId);
+  server.showInSidePanel(sessionId);
+  if (server.connectionStatus === "connected") {
+    getSessionHistory(connectionId, sessionId);
+    reassertSessionSettings(connectionId, sessionId);
   }
 }
 
 /** Browses the *backend's* filesystem (§3.1) — the only correct way to pick a
  * project folder over a remote/TCP connection, where a native OS dialog on
  * this machine would browse the wrong disk entirely. */
-export function listDirectory(path?: string) {
-  void send({ type: "list_directory", data: { path: path ?? "" } });
+export function listDirectory(connectionId: ConnectionId, path?: string) {
+  void send(connectionId, { type: "list_directory", data: { path: path ?? "" } });
 }
 
 /** Opens (or reuses) a project on the server without starting a turn — e.g.
  * to validate a folder and list its threads before creating a new one. */
-export function openProject(path: string) {
-  void send({ type: "open_project", data: { path } });
+export function openProject(connectionId: ConnectionId, path: string) {
+  void send(connectionId, { type: "open_project", data: { path } });
 }
 
 /** Selects `path` as the current project everywhere in the UI and, if
@@ -570,14 +635,16 @@ export function openProject(path: string) {
  * round-trip to canonicalize/confirm this against, so it's remembered
  * locally as a best guess — reconciled the next time list_projects (or this
  * same open_project) succeeds. */
-export function selectProject(path: string) {
-  app.selectProject(path);
-  if (app.connectionStatus === "connected") {
-    openProject(path);
-    listSessionsForProject(path);
-    listFiles(path);
+export function selectProject(connectionId: ConnectionId, path: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  server.selectProject(path);
+  if (server.connectionStatus === "connected") {
+    openProject(connectionId, path);
+    listSessionsForProject(connectionId, path);
+    listFiles(connectionId, path);
   } else {
-    app.rememberProject(path);
+    server.rememberProject(path);
   }
 }
 
@@ -586,12 +653,17 @@ let directoryBrowserResolve: ((path: string | null) => void) | null = null;
 /** Opens the in-app folder browser (§3.1 `list_directory`), the only correct
  * way to pick a project folder over a remote/TCP connection — the backend's
  * filesystem isn't necessarily this machine's. Resolves with the chosen
- * path, or null if cancelled. */
-export function browseRemoteDirectory(): Promise<string | null> {
+ * path, or null if cancelled. Tags `app.browsingConnectionId` so a late
+ * response from an abandoned browse against a different server can't
+ * clobber a newer one (see ServerState.handleEvent's directory_list case) —
+ * only one browse flow is ever open at once, so this stays global rather
+ * than living per server. */
+export function browseRemoteDirectory(connectionId: ConnectionId): Promise<string | null> {
   return new Promise((resolve) => {
     directoryBrowserResolve = resolve;
     app.directoryListing = null;
-    listDirectory();
+    app.browsingConnectionId = connectionId;
+    listDirectory(connectionId);
     app.showDirectoryBrowser = true;
   });
 }
@@ -599,6 +671,7 @@ export function browseRemoteDirectory(): Promise<string | null> {
 /** Called by DirectoryBrowser.svelte when the user confirms or cancels. */
 export function resolveDirectoryBrowser(path: string | null) {
   app.showDirectoryBrowser = false;
+  app.browsingConnectionId = null;
   directoryBrowserResolve?.(path);
   directoryBrowserResolve = null;
 }
@@ -606,19 +679,20 @@ export function resolveDirectoryBrowser(path: string | null) {
 /** A native OS dialog only reflects the right filesystem for a local
  * unix-socket connection (§3.1 `list_directory`); anything else falls back
  * to browsing the backend's own filesystem in-app. */
-function pickFolder(title: string): Promise<string | null> {
-  if (app.connectionStatus === "connected" && app.connectionMode === "remote") {
-    return browseRemoteDirectory();
+function pickFolder(connectionId: ConnectionId, title: string): Promise<string | null> {
+  const server = app.servers[connectionId];
+  if (server?.connectionStatus === "connected" && server.connectionMode === "remote") {
+    return browseRemoteDirectory(connectionId);
   }
   return open({ directory: true, multiple: false, title }).then((dir) => (typeof dir === "string" ? dir : null));
 }
 
 /** Browse for a folder and select it. Returns the chosen path, or null if
  * the user cancelled. */
-export async function pickProjectFolder(): Promise<string | null> {
-  const dir = await pickFolder("Open project folder");
+export async function pickProjectFolder(connectionId: ConnectionId): Promise<string | null> {
+  const dir = await pickFolder(connectionId, "Open project folder");
   if (!dir) return null;
-  selectProject(dir);
+  selectProject(connectionId, dir);
   return dir;
 }
 
@@ -630,54 +704,56 @@ export async function pickProjectFolder(): Promise<string | null> {
  * locally here would never make it into `projects.json` and so would never
  * show up for another device, or survive this client forgetting its own
  * localStorage. Same connected/offline split as `selectProject`. */
-export async function browseAndAddProject(): Promise<string | null> {
-  const dir = await pickFolder("Add a project folder");
+export async function browseAndAddProject(connectionId: ConnectionId): Promise<string | null> {
+  const dir = await pickFolder(connectionId, "Add a project folder");
   if (!dir) return null;
-  if (app.connectionStatus === "connected") {
-    app.nextProjectOpenSwitches = false; // "adds without switching to it" — see state.svelte.ts's project_opened handler
-    openProject(dir);
+  const server = app.servers[connectionId];
+  if (server?.connectionStatus === "connected") {
+    server.nextProjectOpenSwitches = false; // "adds without switching to it" — see state.svelte.ts's project_opened handler
+    openProject(connectionId, dir);
   } else {
-    app.rememberProject(dir);
+    server?.rememberProject(dir);
   }
   return dir;
 }
 
-export function listProjects() {
-  void send({ type: "list_projects", data: {} });
+export function listProjects(connectionId: ConnectionId) {
+  void send(connectionId, { type: "list_projects", data: {} });
 }
 
 /** Drops a path from the server's persisted known-projects list (so it stops
  * coming back on the next list_projects) and cancels/evicts any session
  * still live in it server-side — real teardown, not just a client-side
  * "hide it" (SPEC.md §3.1 remove_project). Paired with the user removing it
- * locally (Settings > Connections) — see app.forgetProject. */
-export function removeProject(path: string) {
-  void send({ type: "remove_project", data: { path } });
+ * locally (Settings > Connections) — see ServerState.forgetProject. */
+export function removeProject(connectionId: ConnectionId, path: string) {
+  void send(connectionId, { type: "remove_project", data: { path } });
 }
 
-export function listSessionsForProject(projectPath: string) {
-  app.refreshingProjects[projectPath] = true;
-  void send({ type: "list_sessions", data: { projectPath } });
+export function listSessionsForProject(connectionId: ConnectionId, projectPath: string) {
+  const server = app.servers[connectionId];
+  if (server) server.refreshingProjects[projectPath] = true;
+  void send(connectionId, { type: "list_sessions", data: { projectPath } });
 }
 
-export function listSessionsForProjects(paths: string[]) {
-  for (const path of paths) listSessionsForProject(path);
+export function listSessionsForProjects(connectionId: ConnectionId, paths: string[]) {
+  for (const path of paths) listSessionsForProject(connectionId, path);
 }
 
 /** Fetches the project's file list (§3.1) for @file mention autocomplete. */
-export function listFiles(projectPath: string) {
-  void send({ type: "list_files", data: { projectPath } });
+export function listFiles(connectionId: ConnectionId, projectPath: string) {
+  void send(connectionId, { type: "list_files", data: { projectPath } });
 }
 
-export function listProviders() {
-  void send({ type: "list_providers", data: {} });
+export function listProviders(connectionId: ConnectionId) {
+  void send(connectionId, { type: "list_providers", data: {} });
 }
 
-export function detectCli() {
-  void send({ type: "detect_cli", data: {} });
+export function detectCli(connectionId: ConnectionId) {
+  void send(connectionId, { type: "detect_cli", data: {} });
 }
 
-export function setProvider(sessionId: string, providerName: string, model?: string) {
+export function setProvider(connectionId: ConnectionId, sessionId: string, providerName: string, model?: string) {
   // `projectPath` is included for the same reason setSessionTitle and friends
   // send it: a brand-new chat's session isn't bound to its project yet, and
   // the server keeps a *separate* session registry per project (§4b). Omitting
@@ -687,8 +763,8 @@ export function setProvider(sessionId: string, providerName: string, model?: str
   // turn then runs on an unconfigured session and comes back `no_provider`,
   // clearing this very selection. Sending the session's own project path
   // resolves set_provider into the same registry the prompt will use.
-  const projectPath = app.projectBySession[sessionId];
-  void send({ type: "set_provider", sessionId, data: { providerName, model, projectPath } });
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "set_provider", sessionId, data: { providerName, model, projectPath } });
 }
 
 /** Tunes the current provider's request shape for a session's next turn
@@ -697,40 +773,41 @@ export function setProvider(sessionId: string, providerName: string, model?: str
  * server-side, not reset, so callers only need to pass what they're
  * actually changing. */
 export function setModelOptions(
+  connectionId: ConnectionId,
   sessionId: string,
   options: { reasoningEffort?: string; thinkingBudget?: number; contextWindow?: number },
 ) {
   // projectPath for the same reason setProvider sends it — see there.
-  const projectPath = app.projectBySession[sessionId];
-  void send({ type: "set_model_options", sessionId, data: { sessionId, ...options, projectPath } });
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "set_model_options", sessionId, data: { sessionId, ...options, projectPath } });
 }
 
 /** Fetches one provider's available models (§3.1) — the model picker's per-
  * provider tabs call this lazily rather than resolving every provider up
  * front. */
-export function listModels(providerName: string) {
-  void send({ type: "list_models", data: { providerName } });
+export function listModels(connectionId: ConnectionId, providerName: string) {
+  void send(connectionId, { type: "list_models", data: { providerName } });
 }
 
 /** Replaces one provider's server-persisted favorite-model list (§3.1) — a
  * full replacement, not a single toggle, so callers must send the whole
  * updated set. */
-export function setFavoriteModels(providerName: string, models: string[]) {
-  void send({ type: "set_favorite_models", data: { providerName, models } });
+export function setFavoriteModels(connectionId: ConnectionId, providerName: string, models: string[]) {
+  void send(connectionId, { type: "set_favorite_models", data: { providerName, models } });
 }
 
-export function setPlanMode(sessionId: string, enabled: boolean) {
+export function setPlanMode(connectionId: ConnectionId, sessionId: string, enabled: boolean) {
   // projectPath for the same reason setProvider sends it — see there.
-  const projectPath = app.projectBySession[sessionId];
-  void send({ type: "set_plan_mode", sessionId, data: { sessionId, enabled, projectPath } });
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "set_plan_mode", sessionId, data: { sessionId, enabled, projectPath } });
 }
 
-export function registerProvider(data: Record<string, unknown>) {
-  void send({ type: "register_provider", data });
+export function registerProvider(connectionId: ConnectionId, data: Record<string, unknown>) {
+  void send(connectionId, { type: "register_provider", data });
 }
 
-export function removeProvider(name: string) {
-  void send({ type: "remove_provider", data: { name } });
+export function removeProvider(connectionId: ConnectionId, name: string) {
+  void send(connectionId, { type: "remove_provider", data: { name } });
 }
 
 // ---- Peer registry & server settings (§2a/§3.1) ----
@@ -738,8 +815,8 @@ export function removeProvider(name: string) {
 /** Pushes this connection's own display name live — every peer (including us)
  * sees it on the next `peer_list` push, so Profile settings and our own
  * roster row stay driven by the same underlying state. */
-export function setPeerName(name: string) {
-  void send({ type: "set_peer_name", data: { name } });
+export function setPeerName(connectionId: ConnectionId, name: string) {
+  void send(connectionId, { type: "set_peer_name", data: { name } });
 }
 
 /** Same live-push shape as setPeerName, for the profile picture — `avatar` is
@@ -747,52 +824,52 @@ export function setPeerName(name: string) {
  * `profileAvatar`); outgoingAvatarDataUrl (avatar.ts) normalizes either into
  * the 96x96 data URL the wire protocol expects, since the backend does no
  * image processing at all. */
-export function setPeerAvatar(avatar: string) {
-  void send({ type: "set_peer_avatar", data: { avatar: outgoingAvatarDataUrl(avatar) } });
+export function setPeerAvatar(connectionId: ConnectionId, avatar: string) {
+  void send(connectionId, { type: "set_peer_avatar", data: { avatar: outgoingAvatarDataUrl(avatar) } });
 }
 
 /** Force-closes another live connection. Any peer may disconnect any other
  * (§2a) — the confirm step belongs in the UI, not here. */
-export function disconnectPeer(peerId: string) {
-  void send({ type: "disconnect_peer", data: { peerId } });
+export function disconnectPeer(connectionId: ConnectionId, peerId: string) {
+  void send(connectionId, { type: "disconnect_peer", data: { peerId } });
 }
 
 /** Opens or closes the optional TCP listener live. Local-socket-only — the
  * server rejects this over TCP (§3.1). */
-export function setRemoteAccess(enabled: boolean) {
-  void send({ type: "set_remote_access", data: { enabled } });
+export function setRemoteAccess(connectionId: ConnectionId, enabled: boolean) {
+  void send(connectionId, { type: "set_remote_access", data: { enabled } });
 }
 
 /** Server-wide default for a first `user_prompt` that omits its own
  * `autoGenerateTitle` (§3.1 set_auto_generate_title). Broadcast back to every
  * peer as `auto_generate_title`, same push-only pattern as remote access. */
-export function setAutoGenerateTitle(enabled: boolean) {
-  void send({ type: "set_auto_generate_title", data: { enabled } });
+export function setAutoGenerateTitle(connectionId: ConnectionId, enabled: boolean) {
+  void send(connectionId, { type: "set_auto_generate_title", data: { enabled } });
 }
 
 /** Rotates the TCP listener's shared auth token. Local-socket-only. */
-export function setRemotePassword(password: string) {
-  void send({ type: "set_remote_password", data: { password } });
+export function setRemotePassword(connectionId: ConnectionId, password: string) {
+  void send(connectionId, { type: "set_remote_password", data: { password } });
 }
 
 /** Sets the server's own display name, broadcast to every peer immediately —
  * not a security boundary, so this works over any transport. */
-export function setServerIdentity(name: string) {
-  void send({ type: "set_server_identity", data: { name } });
+export function setServerIdentity(connectionId: ConnectionId, name: string) {
+  void send(connectionId, { type: "set_server_identity", data: { name } });
 }
 
 // ---- Per-person tokens (§3.1) — local-socket-only, like remote-access ----
 
 /** Mints a new named TCP auth credential. Response (`token_registered`)
  * carries the raw token — shown once, per SPEC.md §3.2. */
-export function registerToken(name: string, email?: string) {
-  void send({ type: "register_token", data: { name, email: email || undefined } });
+export function registerToken(connectionId: ConnectionId, name: string, email?: string) {
+  void send(connectionId, { type: "register_token", data: { name, email: email || undefined } });
 }
 
-export function listTokens() {
-  void send({ type: "list_tokens", data: {} });
+export function listTokens(connectionId: ConnectionId) {
+  void send(connectionId, { type: "list_tokens", data: {} });
 }
 
-export function removeToken(name: string) {
-  void send({ type: "remove_token", data: { name } });
+export function removeToken(connectionId: ConnectionId, name: string) {
+  void send(connectionId, { type: "remove_token", data: { name } });
 }

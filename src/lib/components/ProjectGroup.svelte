@@ -21,6 +21,16 @@
     onNewChat?: () => void;
   } = $props();
 
+  // Session state lives on the active connection's own ServerState now —
+  // see the multi-server-connections plan. `cid` is needed by every ipc.ts
+  // call now that they're threaded per connection.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
+  function statusOf(sessionId: string): "working" | "action" | "finished" | "idle" {
+    return server?.sessionStatus(sessionId) ?? "idle";
+  }
+
   // Native <details> can't be smoothly animated — a plain toggle + {#if}
   // lets the open/close use the same slide transition as the sidebar itself.
   // Starts expanded for every project, not just the current one — collapsing
@@ -52,13 +62,13 @@
     renameInput?.select();
   }
   function commitRename() {
-    if (renamingId && renameValue.trim())
-      setSessionTitle(renamingId, renameValue.trim());
+    if (cid && renamingId && renameValue.trim())
+      setSessionTitle(cid, renamingId, renameValue.trim());
     renamingId = null;
   }
 
   function menuItems(s: SessionSummary): ContextMenuItem[] {
-    const isCurrent = s.sessionId === app.currentSessionId;
+    const isCurrent = s.sessionId === server?.currentSessionId;
     return [
       { label: "Rename", icon: "pencil", onSelect: () => startRename(s) },
       ...(archived
@@ -68,13 +78,13 @@
               label: "Open in side panel",
               icon: "layout-columns",
               disabled: isCurrent,
-              onSelect: () => openInSidePanel(s.sessionId),
+              onSelect: () => cid && openInSidePanel(cid, s.sessionId),
             } satisfies ContextMenuItem,
           ]),
       {
         label: archived ? "Unarchive" : "Archive",
         icon: archived ? "restore" : "archive",
-        onSelect: () => setSessionArchived(s.sessionId, !archived),
+        onSelect: () => cid && setSessionArchived(cid, s.sessionId, !archived),
       },
       {
         label: "Copy session ID",
@@ -86,8 +96,8 @@
         icon: "trash",
         danger: true,
         onSelect: () => {
-          if (confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
-            deleteSession(s.sessionId);
+          if (cid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
+            deleteSession(cid, s.sessionId);
           }
         },
       },
@@ -131,20 +141,20 @@
     {/if}
   </button>
   {#if open}
-    <div class="rows" class:refreshing={app.refreshingProjects[projectPath]} transition:slide={{ duration: slideDuration }}>
+    <div class="rows" class:refreshing={server?.refreshingProjects[projectPath]} transition:slide={{ duration: slideDuration }}>
       {#if sessions.length === 0}
         <p class="empty">No chats yet</p>
       {/if}
       {#each sessions as s (s.sessionId)}
-        {@const paired = app.splitPartnerFor(s.sessionId)}
+        {@const paired = server?.splitPartnerFor(s.sessionId) ?? null}
         {#if paired}
           <SplitEntry primary={s} secondary={paired} />
         {:else}
-          <div class="chat-row" class:active={s.sessionId === app.currentSessionId}>
+          <div class="chat-row" class:active={s.sessionId === server?.currentSessionId}>
             {#if renamingId === s.sessionId}
               <div class="chat-item">
-                <span class="status-icon status-{app.sessionStatus(s.sessionId)}" aria-hidden="true">
-                  <Icon name={archived ? "archive" : statusIcon[app.sessionStatus(s.sessionId)]} size={13} />
+                <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
+                  <Icon name={archived ? "archive" : statusIcon[statusOf(s.sessionId)]} size={13} />
                 </span>
                 <form
                   class="rename-form"
@@ -168,25 +178,25 @@
                 <button
                   type="button"
                   class="chat-item"
-                  class:syncing={app.syncingSessions[s.sessionId]}
-                  disabled={app.syncingSessions[s.sessionId]}
-                  aria-label={`${sessionTitle(s)}, ${app.syncingSessions[s.sessionId] ? "syncing" : app.sessionStatus(s.sessionId)}`}
+                  class:syncing={server?.syncingSessions[s.sessionId]}
+                  disabled={server?.syncingSessions[s.sessionId]}
+                  aria-label={`${sessionTitle(s)}, ${server?.syncingSessions[s.sessionId] ? "syncing" : statusOf(s.sessionId)}`}
                   ondblclick={() => startRename(s)}
-                  onclick={() => openChatSession(s.sessionId)}
+                  onclick={() => cid && openChatSession(cid, s.sessionId)}
                 >
-                  <span class="status-icon status-{app.sessionStatus(s.sessionId)}" aria-hidden="true">
-                    <Icon name={statusIcon[app.sessionStatus(s.sessionId)]} size={13} />
+                  <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
+                    <Icon name={statusIcon[statusOf(s.sessionId)]} size={13} />
                   </span>
                   <span class="label">{sessionTitle(s)}</span>
                 </button>
               </ContextMenu>
             {/if}
-            {#if !archived && s.sessionId !== app.currentSessionId}
+            {#if !archived && s.sessionId !== server?.currentSessionId}
               <button
                 class="side-panel-btn"
                 title="Open in side panel"
                 aria-label="Open in side panel"
-                onclick={() => openInSidePanel(s.sessionId)}
+                onclick={() => cid && openInSidePanel(cid, s.sessionId)}
               >
                 <Icon name="layout-columns" size={13} />
               </button>
@@ -197,8 +207,8 @@
                 title="Delete"
                 aria-label="Delete"
                 onclick={() => {
-                  if (confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
-                    deleteSession(s.sessionId);
+                  if (cid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
+                    deleteSession(cid, s.sessionId);
                   }
                 }}
               >
@@ -211,7 +221,7 @@
                 class="archive"
                 title={archived ? "Unarchive" : "Archive"}
                 aria-label={archived ? "Unarchive" : "Archive"}
-                onclick={() => setSessionArchived(s.sessionId, !archived)}
+                onclick={() => cid && setSessionArchived(cid, s.sessionId, !archived)}
               >
                 <Icon name={archived ? "restore" : "archive"} size={13} />
               </button>

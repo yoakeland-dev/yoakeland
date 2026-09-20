@@ -37,7 +37,13 @@
     overlay?: boolean;
   } = $props();
 
-  const messages = $derived(app.messagesBySession[sessionId] ?? []);
+  // Per-server fields live on the active connection's own ServerState now —
+  // see the multi-server-connections plan. `cid` is needed by every ipc.ts
+  // call now that they're threaded per connection.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
+  const messages = $derived(server?.messagesBySession[sessionId] ?? []);
   const lastFinish = $derived(
     [...messages].reverse().find((m) => m.role === "assistant" && m.finish)
       ?.finish,
@@ -54,10 +60,10 @@
         )
       : 0,
   );
-  const takenOver = $derived(app.takenOverSessions[sessionId]);
-  const project = $derived(app.projectBySession[sessionId]);
+  const takenOver = $derived(server?.takenOverSessions[sessionId]);
+  const project = $derived(server?.projectBySession[sessionId]);
   const title = $derived(
-    (project ? app.sessionsByProject[project] : undefined)?.find(
+    (project ? server?.sessionsByProject[project] : undefined)?.find(
       (s) => s.sessionId === sessionId,
     )?.title || "New chat",
   );
@@ -99,7 +105,7 @@
     clearTimeout(outTimer);
   });
   const sandboxTier = $derived(
-    project ? app.sandboxTierByProject[project] : undefined,
+    project ? server?.sandboxTierByProject[project] : undefined,
   );
 </script>
 
@@ -127,8 +133,8 @@
           class="chrome-btn"
           title="Previous chat"
           aria-label="Previous chat"
-          disabled={!app.canGoBack}
-          onclick={() => navigateSessionHistory("back")}
+          disabled={!server?.canGoBack}
+          onclick={() => cid && navigateSessionHistory(cid, "back")}
         >
           <Icon name="chevron-left" size={13} />
         </button>
@@ -136,8 +142,8 @@
           class="chrome-btn"
           title="Next chat"
           aria-label="Next chat"
-          disabled={!app.canGoForward}
-          onclick={() => navigateSessionHistory("forward")}
+          disabled={!server?.canGoForward}
+          onclick={() => cid && navigateSessionHistory(cid, "forward")}
         >
           <Icon name="chevron-right" size={13} />
         </button>
@@ -189,7 +195,9 @@
         <button
           class="icon-btn"
           title="Snapshots"
-          onclick={() => (app.showSnapshots = true)}
+          onclick={() => {
+            if (server) server.showSnapshots = true;
+          }}
         >
           <Icon name="history" size={14} />
         </button>
@@ -197,7 +205,7 @@
       <button
         class="icon-btn"
         title="Close side panel"
-        onclick={() => app.closeSidePanel()}
+        onclick={() => server?.closeSidePanel()}
       >
         <Icon name="xmark" size={14} />
       </button>

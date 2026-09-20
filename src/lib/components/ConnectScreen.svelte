@@ -43,7 +43,7 @@
   let importingCa = $state(false);
   let caImportError = $state<string | null>(null);
   $effect(() => {
-    caPem = app.settings.trustedCaByServer[caServerKey(host, port)] ?? "";
+    caPem = app.settings.trustedCaByHostPort[caServerKey(host, port)] ?? "";
   });
 
   async function importCa() {

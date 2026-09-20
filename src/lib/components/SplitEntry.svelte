@@ -16,6 +16,16 @@
 
   let { primary, secondary }: { primary: SessionSummary; secondary: SessionSummary } = $props();
 
+  // Session state lives on the active connection's own ServerState now —
+  // see the multi-server-connections plan. `cid` is needed by every ipc.ts
+  // call now that they're threaded per connection.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
+  function statusOf(sessionId: string): "working" | "action" | "finished" | "idle" {
+    return server?.sessionStatus(sessionId) ?? "idle";
+  }
+
   const statusIcon = {
     working: "loader-2",
     action: "alert-circle",
@@ -35,8 +45,8 @@
      which is exactly what should get keyboard/AT focus for that action). -->
 <div
   class="split-entry"
-  class:active={primary.sessionId === app.currentSessionId ||
-    secondary.sessionId === app.currentSessionId}
+  class:active={primary.sessionId === server?.currentSessionId ||
+    secondary.sessionId === server?.currentSessionId}
 >
   {#each [primary, secondary] as s, i (s.sessionId)}
     <div
@@ -44,16 +54,16 @@
       class:secondary={i === 1}
       role="button"
       tabindex="0"
-      onclick={() => openChatSession(s.sessionId)}
+      onclick={() => cid && openChatSession(cid, s.sessionId)}
       onkeydown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          openChatSession(s.sessionId);
+          if (cid) openChatSession(cid, s.sessionId);
         }
       }}
     >
-      <span class="status-icon status-{app.sessionStatus(s.sessionId)}">
-        <Icon name={statusIcon[app.sessionStatus(s.sessionId)]} size={12} />
+      <span class="status-icon status-{statusOf(s.sessionId)}">
+        <Icon name={statusIcon[statusOf(s.sessionId)]} size={12} />
       </span>
       <span class="label">{sessionTitle(s)}</span>
       <button
@@ -63,8 +73,9 @@
         aria-label={`Maximize ${sessionTitle(s)}`}
         onclick={(e) => {
           e.stopPropagation();
-          setSessionLayout(primary.sessionId, null);
-          openChatSession(s.sessionId);
+          if (!cid) return;
+          setSessionLayout(cid, primary.sessionId, null);
+          openChatSession(cid, s.sessionId);
         }}
       >
         <Icon name="maximize" size={12} />
@@ -76,7 +87,7 @@
     class="ungroup-btn"
     title="Ungroup"
     aria-label="Ungroup"
-    onclick={() => setSessionLayout(primary.sessionId, null)}
+    onclick={() => cid && setSessionLayout(cid, primary.sessionId, null)}
   >
     <Icon name="unlink" size={12} />
   </button>

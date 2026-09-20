@@ -28,23 +28,32 @@
     idle: "message-circle",
   } as const;
 
+  // Every field below that used to read the flat, single-server `app.X` now
+  // reaches through the active connection's own ServerState instead — see
+  // the multi-server-connections plan. `server` (and `cid`, its connection
+  // id, needed by every ipc.ts call now that they're threaded per
+  // connection) are null whenever there's no active connection, so the
+  // sidebar just renders its offline/empty states.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
   // Doubles as both "which project new chats default to" (selectProject's
   // existing side effect — opens it, lists its sessions) and "which
   // project's chats the sidebar shows" (projectFilter below). Deliberately
-  // NOT re-synced from app.currentProjectPath elsewhere (e.g. opening a
+  // NOT re-synced from server.currentProjectPath elsewhere (e.g. opening a
   // session from a different project) — once the user picks "All projects"
   // that choice should stick until they pick something else, not get
   // silently narrowed back down by clicking into an unrelated chat.
-  let selectedProjectPath = $state<string>(app.currentProjectPath ?? ALL_PROJECTS);
+  let selectedProjectPath = $state<string>(app.active?.currentProjectPath ?? ALL_PROJECTS);
   $effect(() => {
-    if (selectedProjectPath !== ALL_PROJECTS && selectedProjectPath !== app.currentProjectPath) {
-      selectProject(selectedProjectPath);
+    if (cid && selectedProjectPath !== ALL_PROJECTS && selectedProjectPath !== server?.currentProjectPath) {
+      selectProject(cid, selectedProjectPath);
     }
   });
   const projectFilter = $derived(selectedProjectPath === ALL_PROJECTS ? null : selectedProjectPath);
   const projectItems = $derived([
     { value: ALL_PROJECTS, label: "All projects" },
-    ...app.recentProjects.map((p) => ({ value: p, label: basename(p) })),
+    ...(server?.recentProjects ?? []).map((p) => ({ value: p, label: basename(p) })),
   ]);
 
   let renamingId = $state<string | null>(null);
@@ -59,8 +68,8 @@
     renameInput?.select();
   }
   function commitRename() {
-    if (renamingId && renameValue.trim())
-      setSessionTitle(renamingId, renameValue.trim());
+    if (cid && renamingId && renameValue.trim())
+      setSessionTitle(cid, renamingId, renameValue.trim());
     renamingId = null;
   }
 
@@ -146,16 +155,16 @@
   }
 
   function menuItems(s: SessionSummary): ContextMenuItem[] {
-    const isCurrent = s.sessionId === app.currentSessionId;
+    const isCurrent = s.sessionId === server?.currentSessionId;
     return [
       { label: "Rename", icon: "pencil", onSelect: () => startRename(s) },
       {
         label: "Open in side panel",
         icon: "layout-columns",
         disabled: isCurrent,
-        onSelect: () => openInSidePanel(s.sessionId),
+        onSelect: () => cid && openInSidePanel(cid, s.sessionId),
       },
-      { label: "Archive", icon: "archive", onSelect: () => setSessionArchived(s.sessionId, true) },
+      { label: "Archive", icon: "archive", onSelect: () => cid && setSessionArchived(cid, s.sessionId, true) },
       {
         label: "Copy session ID",
         icon: "copy",
@@ -166,8 +175,8 @@
         icon: "trash",
         danger: true,
         onSelect: () => {
-          if (confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
-            deleteSession(s.sessionId);
+          if (cid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
+            deleteSession(cid, s.sessionId);
           }
         },
       },
@@ -175,14 +184,15 @@
   }
 
   async function newChat(projectPath?: string) {
-    const path = projectPath ?? app.currentProjectPath ?? (await browseAndAddProject());
+    if (!cid) return;
+    const path = projectPath ?? server?.currentProjectPath ?? (await browseAndAddProject(cid));
     if (path) {
-      if (path !== app.currentProjectPath) selectProject(path);
-      const current = app.currentSessionId;
-      if (current && (app.messagesBySession[current] ?? []).length === 0) {
-        app.discardUnsentSession(current);
+      if (path !== server?.currentProjectPath) selectProject(cid, path);
+      const current = server?.currentSessionId;
+      if (current && (server?.messagesBySession[current] ?? []).length === 0) {
+        server?.discardUnsentSession(current);
       }
-      app.newSessionInProject(path);
+      server?.newSessionInProject(path);
     }
   }
 
@@ -193,7 +203,11 @@
   // alone would miss any session this client hasn't opened yet (another
   // device, a fresh install, one only seen via session_list) — check both.
   function hasMessages(s: SessionSummary): boolean {
-    return s.messageCount > 0 || (app.messagesBySession[s.sessionId] ?? []).length > 0;
+    return s.messageCount > 0 || (server?.messagesBySession[s.sessionId] ?? []).length > 0;
+  }
+
+  function statusOf(sessionId: string): "working" | "action" | "finished" | "idle" {
+    return server?.sessionStatus(sessionId) ?? "idle";
   }
 
   function matchesSearch(s: SessionSummary): boolean {
@@ -206,9 +220,9 @@
   }
 
   function currentActivity(sessionId: string): string {
-    if (app.pendingPermission?.sessionId === sessionId)
+    if (server?.pendingPermission?.sessionId === sessionId)
       return "waiting on you…";
-    const msgs = app.messagesBySession[sessionId] ?? [];
+    const msgs = server?.messagesBySession[sessionId] ?? [];
     const last = [...msgs].reverse().find((m) => m.role === "assistant");
     const lastTool = last?.toolCalls[last.toolCalls.length - 1];
     return lastTool ? `${lastTool.name}…` : "thinking…";
@@ -218,22 +232,22 @@
 
   // Sessions that are the secondary ("b") half of a saved split are hidden
   // from their own natural spot — they render stacked under their partner
-  // instead (see SplitEntry / app.splitPartnerFor), wherever the partner
-  // naturally lands, even if that's a different section (Running vs a
-  // project's list) or a different project entirely.
+  // instead (see SplitEntry / ServerState.splitPartnerFor), wherever the
+  // partner naturally lands, even if that's a different section (Running vs
+  // a project's list) or a different project entirely.
   const running = $derived(
-    Object.entries(app.sessionsByProject)
+    Object.entries(server?.sessionsByProject ?? {})
       .filter(([project]) => !projectFilter || project === projectFilter)
       .flatMap(([, sessions]) => sessions)
       .filter(
         (s) =>
-          app.activeTurnBySession[s.sessionId] &&
-          !app.hiddenSplitSessionIds.has(s.sessionId),
+          server?.activeTurnBySession[s.sessionId] &&
+          !server?.hiddenSplitSessionIds.has(s.sessionId),
       ),
   );
 
   const activeGroups = $derived(
-    Object.entries(app.sessionsByProject)
+    Object.entries(server?.sessionsByProject ?? {})
       .filter(([project]) => !projectFilter || project === projectFilter)
       .map(
         ([project, sessions]) =>
@@ -242,11 +256,11 @@
             sessions
               .filter(
                 (s) =>
-                  !app.activeTurnBySession[s.sessionId] &&
+                  !server?.activeTurnBySession[s.sessionId] &&
                   !s.archived &&
                   Date.now() - new Date(s.updatedAt).getTime() <=
                     autoArchiveMs &&
-                  !app.hiddenSplitSessionIds.has(s.sessionId) &&
+                  !server?.hiddenSplitSessionIds.has(s.sessionId) &&
                   hasMessages(s) &&
                   matchesSearch(s),
               )
@@ -263,7 +277,7 @@
   );
 
   const archiveGroups = $derived(
-    Object.entries(app.sessionsByProject)
+    Object.entries(server?.sessionsByProject ?? {})
       .filter(([project]) => !projectFilter || project === projectFilter)
       .map(
         ([project, sessions]) =>
@@ -275,7 +289,7 @@
                   (s.archived ||
                     Date.now() - new Date(s.updatedAt).getTime() >
                       autoArchiveMs) &&
-                  !app.hiddenSplitSessionIds.has(s.sessionId) &&
+                  !server?.hiddenSplitSessionIds.has(s.sessionId) &&
                   hasMessages(s) &&
                   matchesSearch(s),
               )
@@ -316,13 +330,13 @@
     </div>
 
     <div class="project-row">
-      {#if app.recentProjects.length > 0}
+      {#if (server?.recentProjects.length ?? 0) > 0}
         <Dropdown
           items={projectItems}
           bind:value={selectedProjectPath}
           placeholder="Select a project…"
           triggerIcon="folder"
-          searchable={app.recentProjects.length > 6}
+          searchable={(server?.recentProjects.length ?? 0) > 6}
           searchPlaceholder="Search projects…"
           triggerClass="project-trigger"
         >
@@ -334,7 +348,7 @@
       {:else}
         <button
           class="project-trigger empty-cta"
-          onclick={() => browseAndAddProject().then((p) => p && selectProject(p))}
+          onclick={() => cid && browseAndAddProject(cid).then((p) => p && cid && selectProject(cid, p))}
         >
           <Icon name="folder-plus" size={13} />
           <span>Add your first project</span>
@@ -363,14 +377,14 @@
         {#if running.length > 0}
           <div class="section-label">Running</div>
           {#each running as s (s.sessionId)}
-            {@const paired = app.splitPartnerFor(s.sessionId)}
+            {@const paired = server?.splitPartnerFor(s.sessionId) ?? null}
             {#if paired}
               <SplitEntry primary={s} secondary={paired} />
             {:else if renamingId === s.sessionId}
-              <div class="chat-card" class:active={s.sessionId === app.currentSessionId}>
+              <div class="chat-card" class:active={s.sessionId === server?.currentSessionId}>
                 <div class="chat-card-top">
-                  <span class="status-icon status-{app.sessionStatus(s.sessionId)}" aria-hidden="true">
-                    <Icon name={statusIcon[app.sessionStatus(s.sessionId)]} size={13} />
+                  <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
+                    <Icon name={statusIcon[statusOf(s.sessionId)]} size={13} />
                   </span>
                   <form
                     class="rename-form"
@@ -396,19 +410,19 @@
                 <button
                   type="button"
                   class="chat-card"
-                  class:active={s.sessionId === app.currentSessionId}
-                  class:syncing={app.syncingSessions[s.sessionId]}
-                  disabled={app.syncingSessions[s.sessionId]}
-                  aria-label={`${sessionTitle(s)}, ${app.syncingSessions[s.sessionId] ? "syncing" : app.sessionStatus(s.sessionId)}`}
+                  class:active={s.sessionId === server?.currentSessionId}
+                  class:syncing={server?.syncingSessions[s.sessionId]}
+                  disabled={server?.syncingSessions[s.sessionId]}
+                  aria-label={`${sessionTitle(s)}, ${server?.syncingSessions[s.sessionId] ? "syncing" : statusOf(s.sessionId)}`}
                   ondblclick={() => startRename(s)}
-                  onclick={() => openChatSession(s.sessionId)}
+                  onclick={() => cid && openChatSession(cid, s.sessionId)}
                 >
                   <div class="chat-card-top">
-                    <span class="status-icon status-{app.sessionStatus(s.sessionId)}" aria-hidden="true">
-                      <Icon name={statusIcon[app.sessionStatus(s.sessionId)]} size={13} />
+                    <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
+                      <Icon name={statusIcon[statusOf(s.sessionId)]} size={13} />
                     </span>
                     <span class="label">{sessionTitle(s)}</span>
-                    {#if s.sessionId !== app.currentSessionId}
+                    {#if s.sessionId !== server?.currentSessionId}
                       <!-- Not a real <button>: this sits inside the .chat-card
                            button above it, and nested <button>s are invalid
                            HTML (the browser would silently split/hoist one out,
@@ -421,13 +435,13 @@
                         aria-label="Open in side panel"
                         onclick={(e) => {
                           e.stopPropagation();
-                          openInSidePanel(s.sessionId);
+                          if (cid) openInSidePanel(cid, s.sessionId);
                         }}
                         onkeydown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             e.stopPropagation();
-                            openInSidePanel(s.sessionId);
+                            if (cid) openInSidePanel(cid, s.sessionId);
                           }
                         }}
                       >

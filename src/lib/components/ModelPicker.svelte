@@ -18,6 +18,12 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
+  // Model/provider state lives on the active connection's own ServerState
+  // now — see the multi-server-connections plan. `cid` is needed by every
+  // ipc.ts call now that they're threaded per connection.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
   // Model options (§3.1 set_model_options) — mirror whichever upstream's own
   // capability shape close to verbatim (SPEC.md §3.2 model_list), so there's
   // no common schema to branch on. reasoningEffort/thinkingBudget are both
@@ -45,17 +51,17 @@
   let searchInput: HTMLInputElement | undefined = $state();
 
   const currentProvider = $derived(
-    app.providers.find((p) => p.name === app.providerBySession[sessionId]),
+    server?.providers.find((p) => p.name === server?.providerBySession[sessionId]),
   );
-  const currentModel = $derived(app.modelBySession[sessionId]);
+  const currentModel = $derived(server?.modelBySession[sessionId]);
 
   // Every (provider, model) pair we currently know about — models arrive
   // lazily per provider via list_models (see the $effect below), so a
   // provider with nothing cached yet just contributes no rows.
   const allEntries = $derived.by(() => {
     const entries: Entry[] = [];
-    for (const provider of app.providers) {
-      for (const model of app.modelsByProvider[provider.name] ?? []) {
+    for (const provider of server?.providers ?? []) {
+      for (const model of server?.modelsByProvider[provider.name] ?? []) {
         entries.push({ provider, model });
       }
     }
@@ -73,7 +79,7 @@
   );
 
   const cliProvidersPresent = $derived(
-    app.providers.filter(
+    (server?.providers ?? []).filter(
       (p) => isCli(p) && allEntries.some((e) => e.provider.name === p.name),
     ),
   );
@@ -138,15 +144,18 @@
   // session actually has that choice available.
   $effect(() => {
     if (
-      !app.providerBySession[sessionId] &&
-      !app.providerBlockedBySession[sessionId] &&
-      app.lastUsedProvider &&
-      app.providers.some((p) => p.name === app.lastUsedProvider)
+      cid &&
+      server &&
+      !server.providerBySession[sessionId] &&
+      !server.providerBlockedBySession[sessionId] &&
+      server.lastUsedProvider &&
+      server.providers.some((p) => p.name === server!.lastUsedProvider)
     ) {
       setProvider(
+        cid,
         sessionId,
-        app.lastUsedProvider,
-        app.lastUsedModel ?? undefined,
+        server.lastUsedProvider,
+        server.lastUsedModel ?? undefined,
       );
     }
   });
@@ -154,8 +163,9 @@
   // Fetch each registered provider's model list once, lazily, rather than
   // hardcoding a model set — never assumed stale, refetch by reopening.
   $effect(() => {
-    for (const p of app.providers) {
-      if (!app.modelsByProvider[p.name]) listModels(p.name);
+    if (!cid || !server) return;
+    for (const p of server.providers) {
+      if (!server.modelsByProvider[p.name]) listModels(cid, p.name);
     }
   });
 
@@ -193,7 +203,7 @@
   });
 
   function pick(entry: Entry) {
-    setProvider(sessionId, entry.provider.name, entry.model.id);
+    if (cid) setProvider(cid, sessionId, entry.provider.name, entry.model.id);
     open = false;
   }
 
@@ -226,16 +236,17 @@
    * replacement set, optimistically flipping the local copy first so the
    * star responds instantly. */
   function toggleFavorite(entry: Entry) {
-    const models = app.modelsByProvider[entry.provider.name] ?? [];
+    if (!cid || !server) return;
+    const models = server.modelsByProvider[entry.provider.name] ?? [];
     const nowFavorite = !entry.model.isFavorite;
-    app.setModelFavorite(entry.provider.name, entry.model.id, nowFavorite);
+    server.setModelFavorite(entry.provider.name, entry.model.id, nowFavorite);
     const favoriteIds = models
       .map((m) =>
         m.id === entry.model.id ? { ...m, isFavorite: nowFavorite } : m,
       )
       .filter((m) => m.isFavorite)
       .map((m) => m.id);
-    setFavoriteModels(entry.provider.name, favoriteIds);
+    setFavoriteModels(cid, entry.provider.name, favoriteIds);
   }
 </script>
 
@@ -274,7 +285,7 @@
       align="start"
       sideOffset={8}
     >
-      {#if app.providers.length === 0}
+      {#if (server?.providers.length ?? 0) === 0}
         <div class="empty">
           <p>No providers configured yet.</p>
           <button type="button" class="add-provider" onclick={manageProviders}>

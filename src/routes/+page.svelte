@@ -44,7 +44,6 @@
     wireEvents();
     app.applySettings();
     void autoConnect();
-    app.restoreLastSession();
 
     // "System" theme (Settings > Appearance) tracks this live instead of only
     // resolving once at startup.
@@ -62,7 +61,7 @@
   // a fresh session immediately; the composer disables sending until a
   // project is actually bound (PromptInput's projectPath check).
   $effect(() => {
-    if (!app.currentSessionId) app.ensureCurrentSession();
+    if (app.active && !app.active.currentSessionId) app.active.ensureCurrentSession();
   });
 </script>
 
@@ -80,9 +79,9 @@
       size={14}
     />
   </button>
-  {#if app.currentSessionId || win}
+  {#if app.active?.currentSessionId || win}
     <div class="chrome-surface right-island" data-tauri-drag-region>
-      {#if app.currentSessionId}
+      {#if app.active?.currentSessionId}
         <button
           class="chrome-btn"
           class:active={app.terminalOpen}
@@ -133,8 +132,8 @@
     <Sidebar />
     <div class="content-col">
       <div class="content-row">
-        {#if app.currentSessionId}
-          <ChatPanel sessionId={app.currentSessionId} />
+        {#if app.active?.currentSessionId}
+          <ChatPanel sessionId={app.active?.currentSessionId} />
         {/if}
         <RightSidebar />
       </div>

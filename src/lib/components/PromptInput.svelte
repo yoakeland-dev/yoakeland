@@ -21,6 +21,12 @@
   let { sessionId, floating }: { sessionId: string; floating: boolean } =
     $props();
 
+  // Session/provider/project state lives on the active connection's own
+  // ServerState now — see the multi-server-connections plan. `cid` is
+  // needed by every ipc.ts call now that they're threaded per connection.
+  let server = $derived(app.active);
+  let cid = $derived(app.activeConnectionId);
+
   let text = $state("");
   let textarea: HTMLTextAreaElement;
   let boxEl: HTMLFormElement | undefined = $state();
@@ -193,31 +199,32 @@
     return `--mode-rest: ${rest}; --mode-lit: ${lit}`;
   }
 
-  const currentMode = $derived(app.modeBySession[sessionId] ?? "auto");
+  const currentMode = $derived(server?.modeBySession[sessionId] ?? "auto");
   const currentModeMeta = $derived(MODE_BY_ID[currentMode]);
-  const turnId = $derived(app.activeTurnBySession[sessionId]);
-  const projectPath = $derived(app.projectBySession[sessionId]);
+  const turnId = $derived(server?.activeTurnBySession[sessionId]);
+  const projectPath = $derived(server?.projectBySession[sessionId]);
   const projectName = $derived(projectPath ? basename(projectPath) : null);
-  const hasProvider = $derived(!!app.providerBySession[sessionId]);
+  const hasProvider = $derived(!!server?.providerBySession[sessionId]);
 
   // A no_provider rejection (turn_completed, §3.2 — the selected provider
   // became unavailable between being picked and the turn actually running)
   // "unsends" the message server-state-side (state.svelte.ts removes it from
   // the transcript) and hands the original text back here to restore.
   $effect(() => {
-    const draft = app.restoredDraftBySession[sessionId];
-    if (draft === undefined) return;
+    const draft = server?.restoredDraftBySession[sessionId];
+    if (draft === undefined || !server) return;
     text = draft;
-    delete app.restoredDraftBySession[sessionId];
+    delete server.restoredDraftBySession[sessionId];
     requestAnimationFrame(() => textarea?.focus());
   });
 
   function setMode(m: ChatMode) {
-    const wasPlan = app.modeBySession[sessionId] === "plan";
-    app.modeBySession[sessionId] = m;
-    app.setLastUsedMode(m);
-    if (m === "plan" && !wasPlan) setPlanMode(sessionId, true);
-    else if (wasPlan && m !== "plan") setPlanMode(sessionId, false);
+    if (!cid || !server) return;
+    const wasPlan = server.modeBySession[sessionId] === "plan";
+    server.modeBySession[sessionId] = m;
+    server.setLastUsedMode(m);
+    if (m === "plan" && !wasPlan) setPlanMode(cid, sessionId, true);
+    else if (wasPlan && m !== "plan") setPlanMode(cid, sessionId, false);
   }
 
   /** Dropdown only deals in strings (`DropdownItem.value`), so the mode union
@@ -273,7 +280,7 @@
 
   const mentionMatches = $derived.by(() => {
     if (!mentionQuery || !projectPath) return [];
-    const files = app.filesByProject[projectPath] ?? [];
+    const files = server?.filesByProject[projectPath] ?? [];
     const q = mentionQuery.query.toLowerCase();
     return (q ? files.filter((f) => f.toLowerCase().includes(q)) : files).slice(
       0,
@@ -309,10 +316,10 @@
   const connected = $derived(app.connectionStatus === "connected");
 
   const projectItems = $derived(
-    app.recentProjects.map((p) => ({ value: p, label: basename(p) })),
+    (server?.recentProjects ?? []).map((p) => ({ value: p, label: basename(p) })),
   );
   function setProject(value: string | undefined) {
-    if (value) selectProject(value);
+    if (value && cid) selectProject(cid, value);
   }
 
   // While a permission_request is outstanding for this session, the composer
@@ -320,28 +327,31 @@
   // once/always allow), and the same text box repurposed as an optional
   // "reject and tell it what you want instead" note.
   const pending = $derived(
-    app.pendingPermission?.sessionId === sessionId
-      ? app.pendingPermission
+    server?.pendingPermission?.sessionId === sessionId
+      ? server.pendingPermission
       : null,
   );
 
   function respond(allowed: boolean, remember: boolean) {
-    if (!pending) return;
+    if (!pending || !cid || !server) return;
     respondPermission(
+      cid,
       pending.sessionId,
       pending.turnId,
       pending.toolCallId,
       allowed,
       remember,
     );
-    app.pendingPermission = null;
+    server.pendingPermission = null;
   }
 
   function submit(e?: Event) {
     e?.preventDefault();
     const value = text.trim();
+    if (!cid) return;
     if (pending) {
       denyPermissionWithFeedback(
+        cid,
         pending.sessionId,
         pending.turnId,
         pending.toolCallId,
@@ -351,7 +361,7 @@
       return;
     }
     if (!value || turnId || !connected || !projectPath || !hasProvider) return;
-    sendPrompt(sessionId, value);
+    sendPrompt(cid, sessionId, value);
     text = "";
   }
 
@@ -510,7 +520,7 @@
             <button
               type="button"
               class="stop"
-              onclick={() => cancelTurn(sessionId, turnId)}
+              onclick={() => cid && turnId && cancelTurn(cid, sessionId, turnId)}
             >
               <Icon name="pause" size={13} /> Stop
             </button>
@@ -570,7 +580,7 @@
         placeholder="Select a project…"
         triggerIcon="folder"
         triggerTitle="Switch project"
-        searchable={app.recentProjects.length > 6}
+        searchable={(server?.recentProjects.length ?? 0) > 6}
         searchPlaceholder="Search projects…"
         triggerClass="fc-pill"
       />
