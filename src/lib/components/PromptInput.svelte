@@ -587,7 +587,7 @@
       <button
         type="button"
         class="fc-pill"
-        title="Switch between a local and remote server"
+        title={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect to a server"}
         onclick={() => (app.showConnectModal = true)}
       >
         <Icon

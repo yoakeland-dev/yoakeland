@@ -13,6 +13,7 @@
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import DirectoryBrowser from "$lib/components/DirectoryBrowser.svelte";
   import SnapshotDialog from "$lib/components/SnapshotDialog.svelte";
+  import FirstServerPanel from "$lib/components/FirstServerPanel.svelte";
   import Icon from "$lib/components/Icon.svelte";
 
   // Window chrome lives here instead of a dedicated title bar row, as floating
@@ -133,7 +134,9 @@
     <div class="content-col">
       <div class="content-row">
         {#if app.active?.currentSessionId}
-          <ChatPanel sessionId={app.active?.currentSessionId} />
+          <ChatPanel sessionId={app.active.currentSessionId} />
+        {:else if !app.active}
+          <FirstServerPanel />
         {/if}
         <RightSidebar />
       </div>

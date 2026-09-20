@@ -6,7 +6,7 @@
   // config) — see the checklist. Their controls are inert on purpose rather
   // than pretending to work.
   import { Dialog, Tabs, Switch, Checkbox } from "bits-ui";
-  import { app } from "../state.svelte";
+  import { app, type ConnectionId } from "../state.svelte";
   import { basename } from "../format";
   import {
     browseAndAddProject,
@@ -33,12 +33,14 @@
   const QUICK_AVATARS = ["🐣", "🦊", "🐙", "🐢", "🐝", "🐺"];
 
   // Everything server-scoped (providers, peers, tokens, remote-access state,
-  // recent projects, ...) now lives on the active connection's own
-  // ServerState — see the multi-server-connections plan. `cid` is that
-  // connection's id, needed by every ipc.ts call now that they're threaded
-  // per connection.
-  let server = $derived(app.active);
-  let cid = $derived(app.activeConnectionId);
+  // recent projects, ...) now lives on a connection's own ServerState — see
+  // the multi-server-connections plan. Defaults to whichever connection the
+  // rest of the app is focused on, but the picker below (Phase 4 — shown
+  // only once there's more than one to pick from) can point these tabs at a
+  // different one without changing what the main window is showing.
+  let selectedConnectionId = $state<ConnectionId | null>(null);
+  let cid = $derived(selectedConnectionId ?? app.activeConnectionId);
+  let server = $derived(cid ? app.servers[cid] : null);
 
   // ---- Providers tab (credentials only — model selection lives in
   // ModelPicker.svelte, sourced from list_models) ----
@@ -100,7 +102,7 @@
     if (server?.serverIdentity != null) serverIdentityInput = server.serverIdentity;
   });
 
-  const isLocalConnection = $derived(app.connectionStatus === "connected" && app.connectionMode === "local");
+  const isLocalConnection = $derived(server?.connectionStatus === "connected" && server?.connectionMode === "local");
 
   function onProfileNameChange() {
     apply();
@@ -314,8 +316,23 @@
     update(params);
     return { update };
   }
-
 </script>
+
+{#snippet serverPicker()}
+  {#if Object.keys(app.servers).length > 1}
+    <div class="field">
+      <span class="label">Server</span>
+      <select
+        value={cid}
+        onchange={(e) => (selectedConnectionId = e.currentTarget.value)}
+      >
+        {#each Object.entries(app.servers) as [id, s] (id)}
+          <option value={id}>{s.serverIdentity ?? (s.connectionMode === "local" ? "Local" : "Remote")}</option>
+        {/each}
+      </select>
+    </div>
+  {/if}
+{/snippet}
 
 <Dialog.Root bind:open={app.showSettings}>
   <Dialog.Portal>
@@ -655,6 +672,7 @@
 
         <Tabs.Content value="providers" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "providers", query: settingsSearch }}>
+          {@render serverPicker()}
           <p class="hint">Registered once, available to every project and session on this server (§6c).</p>
 
           <div class="cli-cards">
@@ -750,6 +768,7 @@
 
         <Tabs.Content value="connections" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "connections", query: settingsSearch }}>
+          {@render serverPicker()}
           <p class="hint">
             Saved project paths, offered from the sidebar's project dropdown — no native file dialog for everyday
             switching. "Browse…" is the one place that still opens one, for adding a folder that isn't saved yet.
@@ -784,7 +803,8 @@
 
         <Tabs.Content value="network" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "network", query: settingsSearch }}>
-          {#if app.connectionStatus !== "connected"}
+          {@render serverPicker()}
+          {#if server?.connectionStatus !== "connected"}
             <p class="pending"><Icon name="warning" size={13} /> Not connected — connect to see the peer list.</p>
           {:else}
             <p class="hint">
@@ -824,7 +844,8 @@
 
         <Tabs.Content value="server" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "server", query: settingsSearch }}>
-          {#if app.connectionStatus !== "connected"}
+          {@render serverPicker()}
+          {#if server?.connectionStatus !== "connected"}
             <p class="pending"><Icon name="warning" size={13} /> Not connected.</p>
           {:else if !isLocalConnection}
             <p class="pending">

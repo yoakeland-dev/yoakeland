@@ -11,6 +11,7 @@
   import SplitEntry from "./SplitEntry.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import Dropdown from "./Dropdown.svelte";
+  import ServerSwitcher from "./ServerSwitcher.svelte";
 
   const ALL_PROJECTS = "__all__";
 
@@ -314,6 +315,7 @@
       <img class="brand-logo" src="logo.png" alt="" />
       <span class="brand">yoakeland</span>
     </div>
+    <ServerSwitcher />
     <div class="quick-row">
       <div class="search">
         <Icon name="search" size={13} />
@@ -496,16 +498,14 @@
           >{app.settings.profileName || "anonymous"}</span
         >
       </button>
-      {#if app.connectionStatus !== "connected"}
-        <button
-          class="icon-btn"
-          onclick={() => (app.showConnectModal = true)}
-          title="Connect"
-          aria-label="Connect"
-        >
-          <Icon name="log-in" size={14} />
-        </button>
-      {/if}
+      <button
+        class="icon-btn"
+        onclick={() => (app.showConnectModal = true)}
+        title={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect"}
+        aria-label={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect"}
+      >
+        <Icon name="log-in" size={14} />
+      </button>
     </div>
 
     {#if !app.sidebarCollapsed || resizing}

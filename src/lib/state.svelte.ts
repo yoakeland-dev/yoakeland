@@ -220,7 +220,10 @@ export interface KnownServer {
 
 const KNOWN_SERVERS_KEY = "yoake.knownServers";
 
-function loadKnownServers(): KnownServer[] {
+/** Read by ConnectScreen.svelte's "known servers" quick-reconnect list (Phase
+ * 4 of the multi-server-connections plan) — everything else about known
+ * servers stays internal to this module. */
+export function loadKnownServers(): KnownServer[] {
   try {
     const raw = localStorage.getItem(KNOWN_SERVERS_KEY);
     if (!raw) return [];
