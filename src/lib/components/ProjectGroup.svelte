@@ -8,6 +8,7 @@
   import Icon from "./Icon.svelte";
   import SplitEntry from "./SplitEntry.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
+  import { MODE_BY_ID } from "./ModePicker.svelte";
 
   let {
     projectPath,
@@ -188,6 +189,11 @@
                     <Icon name={statusIcon[statusOf(s.sessionId)]} size={13} />
                   </span>
                   <span class="label">{sessionTitle(s)}</span>
+                  {#if s.mode && s.mode !== "read_write"}
+                    <span class="mode-badge" title={MODE_BY_ID[s.mode].label}>
+                      <Icon name={MODE_BY_ID[s.mode].icon} size={12} />
+                    </span>
+                  {/if}
                 </button>
               </ContextMenu>
             {/if}
@@ -478,6 +484,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     user-select: none;
+  }
+  .mode-badge {
+    flex-shrink: 0;
+    display: inline-flex;
+    color: var(--text-dim);
   }
   .rename-form {
     flex: 1;

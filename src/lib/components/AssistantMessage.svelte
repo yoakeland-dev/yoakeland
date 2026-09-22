@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AssistantStep, ChatMessage, ToolCallEntry } from "../types";
   import { app } from "../state.svelte";
+  import { retryMessage } from "../ipc";
   import { vendorMetaFor, titleFor, type Entry } from "../modelVendor";
   import { relTime, shortNum } from "../format";
   import ToolCallGroup from "./ToolCallGroup.svelte";
@@ -9,8 +10,15 @@
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
+  import VersionCycle from "./VersionCycle.svelte";
 
-  let { message }: { message: ChatMessage } = $props();
+  let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
+
+  function retry() {
+    const cid = app.activeConnectionId;
+    if (!cid) return;
+    retryMessage(cid, sessionId, message.id);
+  }
 
   type Segment =
     | { key: string; kind: "text"; text: string }
@@ -266,6 +274,21 @@
       <span class="stat" title={new Date(message.createdAt).toLocaleString()}
         >{relTime(message.createdAt)}</span
       >
+
+      {#if !message.streaming}
+        <span class="dot">·</span>
+        <VersionCycle {message} {sessionId} />
+        <button
+          class="action"
+          onclick={retry}
+          title={message.toolCalls.length
+            ? "Retry — regenerates from here; doesn't undo the file changes this reply's tool calls made"
+            : "Retry — regenerates a fresh reply from here"}
+        >
+          <Icon name="refresh" size={12} />
+          Retry
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -352,5 +375,19 @@
     font-size: inherit;
     cursor: pointer;
     text-decoration: underline;
+  }
+  .action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.21rem;
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    padding: 0;
+  }
+  .action:hover {
+    color: var(--text);
   }
 </style>

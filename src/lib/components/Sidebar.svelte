@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Tabs } from "bits-ui";
   import { tick } from "svelte";
-  import { app, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from "../state.svelte";
-  import { selectProject, browseAndAddProject, setSessionTitle, setSessionArchived, deleteSession, openInSidePanel, openChatSession } from "../ipc";
+  import { app, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, type ConnectionId, type ServerState } from "../state.svelte";
+  import { selectProject, browseAndAddProject, setSessionTitle, setSessionArchived, deleteSession, openInSidePanel, openChatSession, listSessionsForProjects } from "../ipc";
   import { relTime, basename, sessionTitle } from "../format";
   import { isPhotoAvatar } from "../avatar";
   import type { SessionSummary } from "../types";
@@ -11,7 +11,6 @@
   import SplitEntry from "./SplitEntry.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import Dropdown from "./Dropdown.svelte";
-  import ServerSwitcher from "./ServerSwitcher.svelte";
 
   const ALL_PROJECTS = "__all__";
 
@@ -52,10 +51,74 @@
     }
   });
   const projectFilter = $derived(selectedProjectPath === ALL_PROJECTS ? null : selectedProjectPath);
-  const projectItems = $derived([
+
+  // A project can become known (recentProjects) without ever having been
+  // opened/selected here — added from Settings > Connections, or pushed by
+  // project_list from another connection (§4b) — in which case it has no
+  // sessionsByProject entry yet and would otherwise never show a group at
+  // all (see below). Fetch it the moment it's known, not only once picked.
+  $effect(() => {
+    if (!cid || !server) return;
+    const missing = server.recentProjects.filter((p) => !(p in server.sessionsByProject));
+    if (missing.length > 0) listSessionsForProjects(cid, missing);
+  });
+
+  // The sidebar's groups are keyed off every *known* project (server-
+  // persisted projects.json, via recentProjects) rather than just the ones
+  // sessionsByProject happens to have an entry for — otherwise a project
+  // that's known but not yet opened/fetched (see the effect above) simply
+  // has no group to render at all, which used to read as "added projects
+  // don't show up until you pick them".
+  const projectGroups = $derived(
+    (server?.recentProjects ?? []).map(
+      (project) => [project, server?.sessionsByProject[project] ?? []] as [string, SessionSummary[]],
+    ),
+  );
+  // Unified remote+project picker (replaces the old tabbed ServerSwitcher
+  // pill row): one dropdown listing every project across every connected
+  // remote, so picking a project under a different remote also switches to
+  // it — the picker itself is the only "which remote" control now. Values
+  // are encoded "connectionId::path" (or bare ALL_PROJECTS, the same
+  // sentinel selectedProjectPath already used, scoped to the active remote).
+  function remoteLabel(srv: ServerState): string {
+    return srv.serverIdentity ?? (srv.connectionMode === "local" ? "Local" : "Remote");
+  }
+  const multiRemote = $derived(Object.keys(app.servers).length > 1);
+  const remoteProjectItems = $derived([
     { value: ALL_PROJECTS, label: "All projects" },
-    ...(server?.recentProjects ?? []).map((p) => ({ value: p, label: basename(p) })),
+    ...Object.entries(app.servers).flatMap(([scid, srv]) =>
+      srv.recentProjects.map((p) => ({
+        value: `${scid}::${p}`,
+        label: multiRemote ? `${remoteLabel(srv)}: ${basename(p)}` : basename(p),
+      })),
+    ),
   ]);
+  let pickerValue = $state<string>(
+    app.activeConnectionId && app.active?.currentProjectPath
+      ? `${app.activeConnectionId}::${app.active.currentProjectPath}`
+      : ALL_PROJECTS,
+  );
+  // selectedProjectPath/cid -> pickerValue (e.g. a session opened from a
+  // different project narrows the underlying selection some other way).
+  $effect(() => {
+    pickerValue = cid && selectedProjectPath !== ALL_PROJECTS ? `${cid}::${selectedProjectPath}` : ALL_PROJECTS;
+  });
+  // pickerValue -> selectedProjectPath/cid (the user actually picked
+  // something) — switches the active connection first when the chosen
+  // project belongs to a different one, so the effect above (and the
+  // existing selectProject effect) both then act against the right remote.
+  $effect(() => {
+    if (pickerValue === ALL_PROJECTS) {
+      if (selectedProjectPath !== ALL_PROJECTS) selectedProjectPath = ALL_PROJECTS;
+      return;
+    }
+    const sep = pickerValue.indexOf("::");
+    if (sep === -1) return;
+    const newCid = pickerValue.slice(0, sep);
+    const path = pickerValue.slice(sep + 2);
+    if (newCid !== app.activeConnectionId) app.activeConnectionId = newCid;
+    if (selectedProjectPath !== path) selectedProjectPath = path;
+  });
 
   let renamingId = $state<string | null>(null);
   let renameValue = $state("");
@@ -155,17 +218,21 @@
     }
   }
 
-  function menuItems(s: SessionSummary): ContextMenuItem[] {
-    const isCurrent = s.sessionId === server?.currentSessionId;
+  // scid/srv default to the active connection so every existing call site
+  // (the Active/Archive sections, still single-connection) keeps working
+  // unchanged — only the Running section (aggregated across every connected
+  // remote, see the `running` derivation below) passes them explicitly.
+  function menuItems(s: SessionSummary, scid: string | null = cid, srv: typeof server = server): ContextMenuItem[] {
+    const isCurrent = s.sessionId === srv?.currentSessionId;
     return [
       { label: "Rename", icon: "pencil", onSelect: () => startRename(s) },
       {
         label: "Open in side panel",
         icon: "layout-columns",
         disabled: isCurrent,
-        onSelect: () => cid && openInSidePanel(cid, s.sessionId),
+        onSelect: () => scid && openInSidePanel(scid, s.sessionId),
       },
-      { label: "Archive", icon: "archive", onSelect: () => cid && setSessionArchived(cid, s.sessionId, true) },
+      { label: "Archive", icon: "archive", onSelect: () => scid && setSessionArchived(scid, s.sessionId, true) },
       {
         label: "Copy session ID",
         icon: "copy",
@@ -176,8 +243,8 @@
         icon: "trash",
         danger: true,
         onSelect: () => {
-          if (cid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
-            deleteSession(cid, s.sessionId);
+          if (scid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
+            deleteSession(scid, s.sessionId);
           }
         },
       },
@@ -207,8 +274,8 @@
     return s.messageCount > 0 || (server?.messagesBySession[s.sessionId] ?? []).length > 0;
   }
 
-  function statusOf(sessionId: string): "working" | "action" | "finished" | "idle" {
-    return server?.sessionStatus(sessionId) ?? "idle";
+  function statusOf(sessionId: string, srv: typeof server = server): "working" | "action" | "finished" | "idle" {
+    return srv?.sessionStatus(sessionId) ?? "idle";
   }
 
   function matchesSearch(s: SessionSummary): boolean {
@@ -220,10 +287,10 @@
     );
   }
 
-  function currentActivity(sessionId: string): string {
-    if (server?.pendingPermission?.sessionId === sessionId)
+  function currentActivity(sessionId: string, srv: typeof server = server): string {
+    if (srv?.pendingPermission?.sessionId === sessionId)
       return "waiting on you…";
-    const msgs = server?.messagesBySession[sessionId] ?? [];
+    const msgs = srv?.messagesBySession[sessionId] ?? [];
     const last = [...msgs].reverse().find((m) => m.role === "assistant");
     const lastTool = last?.toolCalls[last.toolCalls.length - 1];
     return lastTool ? `${lastTool.name}…` : "thinking…";
@@ -236,19 +303,33 @@
   // instead (see SplitEntry / ServerState.splitPartnerFor), wherever the
   // partner naturally lands, even if that's a different section (Running vs
   // a project's list) or a different project entirely.
-  const running = $derived(
-    Object.entries(server?.sessionsByProject ?? {})
-      .filter(([project]) => !projectFilter || project === projectFilter)
-      .flatMap(([, sessions]) => sessions)
-      .filter(
-        (s) =>
-          server?.activeTurnBySession[s.sessionId] &&
-          !server?.hiddenSplitSessionIds.has(s.sessionId),
-      ),
+  // Aggregated across every connected remote, not just the active one — a
+  // running chat stays visible (and pinned here) regardless of which remote
+  // the project/remote picker currently has selected. Only the active
+  // connection's own list respects projectFilter; the concept doesn't apply
+  // to another remote's sessions, which aren't scoped to "the selected
+  // project" at all here.
+  interface RunningEntry {
+    session: SessionSummary;
+    cid: ConnectionId;
+    server: ServerState;
+  }
+  const running = $derived<RunningEntry[]>(
+    Object.entries(app.servers).flatMap(([scid, srv]) => {
+      const sessions =
+        scid === cid
+          ? projectGroups
+              .filter(([project]) => !projectFilter || project === projectFilter)
+              .flatMap(([, sessions]) => sessions)
+          : Object.values(srv.sessionsByProject).flat();
+      return sessions
+        .filter((s) => srv.activeTurnBySession[s.sessionId] && !srv.hiddenSplitSessionIds.has(s.sessionId))
+        .map((s) => ({ session: s, cid: scid, server: srv }));
+    }),
   );
 
   const activeGroups = $derived(
-    Object.entries(server?.sessionsByProject ?? {})
+    projectGroups
       .filter(([project]) => !projectFilter || project === projectFilter)
       .map(
         ([project, sessions]) =>
@@ -278,7 +359,7 @@
   );
 
   const archiveGroups = $derived(
-    Object.entries(server?.sessionsByProject ?? {})
+    projectGroups
       .filter(([project]) => !projectFilter || project === projectFilter)
       .map(
         ([project, sessions]) =>
@@ -315,7 +396,6 @@
       <img class="brand-logo" src="logo.png" alt="" />
       <span class="brand">yoakeland</span>
     </div>
-    <ServerSwitcher />
     <div class="quick-row">
       <div class="search">
         <Icon name="search" size={13} />
@@ -332,18 +412,19 @@
     </div>
 
     <div class="project-row">
-      {#if (server?.recentProjects.length ?? 0) > 0}
+      {#if remoteProjectItems.length > 1}
         <Dropdown
-          items={projectItems}
-          bind:value={selectedProjectPath}
+          items={remoteProjectItems}
+          bind:value={pickerValue}
           placeholder="Select a project…"
           triggerIcon="folder"
-          searchable={(server?.recentProjects.length ?? 0) > 6}
+          searchable={remoteProjectItems.length > 6}
           searchPlaceholder="Search projects…"
           triggerClass="project-trigger"
         >
           {#snippet item({ value, label, selected })}
-            <span class="dropdown-item-label" title={value === ALL_PROJECTS ? undefined : value}>{label}</span>
+            {@const path = value === ALL_PROJECTS ? undefined : value.slice(value.indexOf("::") + 2)}
+            <span class="dropdown-item-label" title={path}>{label}</span>
             {#if selected}<Icon name="check" size={11} />{/if}
           {/snippet}
         </Dropdown>
@@ -378,15 +459,17 @@
       <Tabs.Content value="active" class="view-tab-content">
         {#if running.length > 0}
           <div class="section-label">Running</div>
-          {#each running as s (s.sessionId)}
-            {@const paired = server?.splitPartnerFor(s.sessionId) ?? null}
+          {#each running as entry (entry.cid + entry.session.sessionId)}
+            {@const s = entry.session}
+            {@const isActiveConn = entry.cid === cid}
+            {@const paired = isActiveConn ? (entry.server.splitPartnerFor(s.sessionId) ?? null) : null}
             {#if paired}
               <SplitEntry primary={s} secondary={paired} />
-            {:else if renamingId === s.sessionId}
-              <div class="chat-card" class:active={s.sessionId === server?.currentSessionId}>
+            {:else if isActiveConn && renamingId === s.sessionId}
+              <div class="chat-card" class:active={s.sessionId === entry.server.currentSessionId}>
                 <div class="chat-card-top">
-                  <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
-                    <Icon name={statusIcon[statusOf(s.sessionId)]} size={13} />
+                  <span class="status-icon status-{statusOf(s.sessionId, entry.server)}" aria-hidden="true">
+                    <Icon name={statusIcon[statusOf(s.sessionId, entry.server)]} size={13} />
                   </span>
                   <form
                     class="rename-form"
@@ -405,26 +488,37 @@
                     />
                   </form>
                 </div>
-                <span class="chat-card-status">{currentActivity(s.sessionId)}</span>
+                <span class="chat-card-status">{currentActivity(s.sessionId, entry.server)}</span>
               </div>
             {:else}
-              <ContextMenu items={menuItems(s)}>
+              <ContextMenu items={isActiveConn ? menuItems(s) : []}>
                 <button
                   type="button"
                   class="chat-card"
-                  class:active={s.sessionId === server?.currentSessionId}
-                  class:syncing={server?.syncingSessions[s.sessionId]}
-                  disabled={server?.syncingSessions[s.sessionId]}
-                  aria-label={`${sessionTitle(s)}, ${server?.syncingSessions[s.sessionId] ? "syncing" : statusOf(s.sessionId)}`}
-                  ondblclick={() => startRename(s)}
-                  onclick={() => cid && openChatSession(cid, s.sessionId)}
+                  class:active={isActiveConn && s.sessionId === entry.server.currentSessionId}
+                  class:syncing={entry.server.syncingSessions[s.sessionId]}
+                  disabled={entry.server.syncingSessions[s.sessionId]}
+                  aria-label={`${sessionTitle(s)}, ${entry.server.syncingSessions[s.sessionId] ? "syncing" : statusOf(s.sessionId, entry.server)}`}
+                  ondblclick={() => isActiveConn && startRename(s)}
+                  onclick={() => {
+                    if (!isActiveConn) app.activeConnectionId = entry.cid;
+                    openChatSession(entry.cid, s.sessionId);
+                  }}
                 >
                   <div class="chat-card-top">
-                    <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
-                      <Icon name={statusIcon[statusOf(s.sessionId)]} size={13} />
+                    <span class="status-icon status-{statusOf(s.sessionId, entry.server)}" aria-hidden="true">
+                      <Icon name={statusIcon[statusOf(s.sessionId, entry.server)]} size={13} />
                     </span>
                     <span class="label">{sessionTitle(s)}</span>
-                    {#if s.sessionId !== server?.currentSessionId}
+                    {#if !isActiveConn}
+                      <!-- Running on a remote other than the one currently
+                           selected in the picker — name it so "pinned
+                           regardless of remote" doesn't read as ambiguous
+                           about which server it'll open. -->
+                      <span class="remote-badge" title="Running on {entry.server.serverIdentity ?? (entry.server.connectionMode === 'local' ? 'Local' : 'Remote')}">
+                        {entry.server.serverIdentity ?? (entry.server.connectionMode === "local" ? "Local" : "Remote")}
+                      </span>
+                    {:else if s.sessionId !== entry.server.currentSessionId}
                       <!-- Not a real <button>: this sits inside the .chat-card
                            button above it, and nested <button>s are invalid
                            HTML (the browser would silently split/hoist one out,
@@ -451,7 +545,7 @@
                       </span>
                     {/if}
                   </div>
-                  <span class="chat-card-status">{currentActivity(s.sessionId)}</span>
+                  <span class="chat-card-status">{currentActivity(s.sessionId, entry.server)}</span>
                 </button>
               </ContextMenu>
             {/if}
@@ -847,6 +941,18 @@
   }
   .label {
     flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .remote-badge {
+    flex-shrink: 0;
+    font-size: var(--text-caption-size, 0.7rem);
+    color: var(--sidebar-fg-dim);
+    background: var(--sidebar-hover);
+    border-radius: var(--radius-pill);
+    padding: 0.07rem 0.43rem;
+    max-width: 6rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

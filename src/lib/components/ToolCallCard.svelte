@@ -12,6 +12,7 @@
   const statusLabel: Record<ToolCallEntry["status"], string> = {
     requested: "queued",
     awaiting_permission: "needs permission",
+    awaiting_answer: "needs an answer",
     running: "running",
     done: "done",
     denied: "denied",

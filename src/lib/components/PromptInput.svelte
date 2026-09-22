@@ -3,19 +3,20 @@
   import { app } from "../state.svelte";
   import {
     sendPrompt,
+    editMessage,
+    cancelEditingMessage,
     cancelTurn,
-    setPlanMode,
     respondPermission,
     denyPermissionWithFeedback,
+    askUserAnswer,
     selectProject,
   } from "../ipc";
   import { isDesktop } from "../platform";
   import { basename } from "../format";
-  import type { ChatMode } from "../types";
-  import type { ComponentProps } from "svelte";
   import Icon from "./Icon.svelte";
   import DiffView from "./DiffView.svelte";
   import ModelPicker from "./ModelPicker.svelte";
+  import ModePicker from "./ModePicker.svelte";
   import Dropdown from "./Dropdown.svelte";
 
   let { sessionId, floating }: { sessionId: string; floating: boolean } =
@@ -144,63 +145,7 @@
     return () => ro.disconnect();
   });
 
-  // One entry per mode drives both the dropdown's options and its trigger: the
-  // option list is derived off it (see modeItems) and the trigger reads its
-  // icon/hint off the active entry, so a mode is only ever described once.
-  type Mode = {
-    id: ChatMode;
-    label: string;
-    hint: string;
-    icon: ComponentProps<typeof Icon>["name"];
-    // Color this mode's trigger and menu row light up to on hover/open. Only
-    // Auto carries one: it's the mode that stops asking before each tool call,
-    // so it's the one worth flagging. Everything untinted lights up to --text.
-    tint?: string;
-  };
-
-  const modes: Mode[] = [
-    {
-      id: "ask",
-      label: "Ask",
-      hint: "Ask before every tool call",
-      icon: "question-mark",
-    },
-    {
-      id: "auto",
-      label: "Auto",
-      hint: "Auto-approve tool calls",
-      icon: "player-track-next",
-      tint: "var(--warning)",
-    },
-    {
-      id: "plan",
-      label: "Plan",
-      hint: "Draft a plan before acting — the model only gets read-only tools",
-      icon: "clipboard-list",
-    },
-  ];
-
-  const MODE_BY_ID = Object.fromEntries(modes.map((m) => [m.id, m])) as Record<
-    ChatMode,
-    Mode
-  >;
-  const modeItems = modes.map(({ id, label }) => ({ value: id, label }));
-
-  /** The two colors a mode's text/icon can be in — at rest, and lit (hovered,
-     keyboard-highlighted, or with the menu open). A tinted mode wears its tint
-     in *both* states, so Auto stays visibly amber until you switch away from
-     it; untinted modes stay quiet until something lights them. Emitted as
-     inline custom properties because the trigger element belongs to
-     Dropdown.svelte (reached by inheritance from .left) while each menu row
-     sets its own. */
-  function modeColors(mode: Mode): string {
-    const rest = mode.tint ?? "var(--text-dim)";
-    const lit = mode.tint ?? "var(--text)";
-    return `--mode-rest: ${rest}; --mode-lit: ${lit}`;
-  }
-
-  const currentMode = $derived(server?.modeBySession[sessionId] ?? "auto");
-  const currentModeMeta = $derived(MODE_BY_ID[currentMode]);
+  const currentMode = $derived(server?.modeBySession[sessionId] ?? "read_write");
   const turnId = $derived(server?.activeTurnBySession[sessionId]);
   const projectPath = $derived(server?.projectBySession[sessionId]);
   const projectName = $derived(projectPath ? basename(projectPath) : null);
@@ -217,21 +162,6 @@
     delete server.restoredDraftBySession[sessionId];
     requestAnimationFrame(() => textarea?.focus());
   });
-
-  function setMode(m: ChatMode) {
-    if (!cid || !server) return;
-    const wasPlan = server.modeBySession[sessionId] === "plan";
-    server.modeBySession[sessionId] = m;
-    server.setLastUsedMode(m);
-    if (m === "plan" && !wasPlan) setPlanMode(cid, sessionId, true);
-    else if (wasPlan && m !== "plan") setPlanMode(cid, sessionId, false);
-  }
-
-  /** Dropdown only deals in strings (`DropdownItem.value`), so the mode union
-   * is narrowed back here — the sole place a selected value crosses over. */
-  function setModeValue(value: string | undefined) {
-    if (value === "ask" || value === "auto" || value === "plan") setMode(value);
-  }
 
   // Attaching only works when this client's disk *is* the server's disk —
   // otherwise the path we'd insert wouldn't resolve to anything on the
@@ -345,10 +275,44 @@
     server.pendingPermission = null;
   }
 
+  // read_write forces every bash call to Ask and drops the remember cache key
+  // on that path (SPEC.md §4c) — offering "Always Allow" as if it persists is
+  // misleading, so it's disabled specifically for a bash card in this mode.
+  const bashAlwaysAllowDisabled = $derived(
+    currentMode === "read_write" && pending?.toolName === "bash",
+  );
+
+  // ask_user_question (§3.1/§3.2) — available in every mode, its own pending
+  // slot so it can't collide with a permission ask (state.svelte.ts). Renders
+  // instead of the permission card when both would otherwise apply, since the
+  // two can't be outstanding in the same session at once in practice.
+  const pendingQuestion = $derived(
+    server?.pendingQuestion?.sessionId === sessionId ? server.pendingQuestion : null,
+  );
+
+  function answerQuestion(answer: string) {
+    if (!pendingQuestion || !cid || !server) return;
+    askUserAnswer(cid, pendingQuestion.toolCallId, answer);
+    server.pendingQuestion = null;
+    text = "";
+  }
+
+  const editingId = $derived(server?.editingMessageId[sessionId]);
+
+  function cancelEdit() {
+    if (!cid) return;
+    cancelEditingMessage(cid, sessionId);
+    text = "";
+  }
+
   function submit(e?: Event) {
     e?.preventDefault();
     const value = text.trim();
     if (!cid) return;
+    if (pendingQuestion) {
+      answerQuestion(value);
+      return;
+    }
     if (pending) {
       denyPermissionWithFeedback(
         cid,
@@ -361,7 +325,11 @@
       return;
     }
     if (!value || turnId || !connected || !projectPath || !hasProvider) return;
-    sendPrompt(cid, sessionId, value);
+    if (editingId) {
+      editMessage(cid, sessionId, editingId, value);
+    } else {
+      sendPrompt(cid, sessionId, value);
+    }
     text = "";
   }
 
@@ -403,8 +371,23 @@
         >?{:else}What shall we build?{/if}
     </h2>
 
-    <form class="box" class:pending bind:this={boxEl} onsubmit={submit}>
-      {#if pending}
+    <form class="box" class:pending={pending || pendingQuestion} bind:this={boxEl} onsubmit={submit}>
+      {#if pendingQuestion}
+        <div class="permission">
+          <div class="permission-head">
+            <span class="permission-title">{pendingQuestion.question}</span>
+          </div>
+          {#if pendingQuestion.options}
+            <div class="question-options">
+              {#each pendingQuestion.options as option (option)}
+                <button type="button" class="ghost" onclick={() => answerQuestion(option)}
+                  >{option}</button
+                >
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else if pending}
         <div class="permission">
           <div class="permission-head">
             <span class="permission-title"
@@ -429,13 +412,26 @@
             <button
               type="button"
               class="allow"
-              onclick={() => respond(true, true)}>Always Allow</button
+              disabled={bashAlwaysAllowDisabled}
+              title={bashAlwaysAllowDisabled
+                ? "bash always asks in Read/Write mode — this can't be remembered"
+                : undefined}
+              onclick={() => respond(true, true)}
+              >{bashAlwaysAllowDisabled ? "Always Allow (unavailable for bash)" : "Always Allow"}</button
             >
           </div>
         </div>
       {/if}
 
-      <div class="input-area">
+      {#if editingId && !pending && !pendingQuestion}
+        <div class="editing-banner">
+          <Icon name="pencil" size={12} />
+          <span>Editing message — sending discards the reply that followed it</span>
+          <button type="button" class="link" onclick={cancelEdit}>Cancel</button>
+        </div>
+      {/if}
+
+      <div class="input-area" class:hidden={pendingQuestion?.options}>
         <textarea
           bind:this={textarea}
           bind:value={text}
@@ -446,13 +442,15 @@
             autosize();
             trackCursor();
           }}
-          placeholder={pending
-            ? "Optional — reject and tell it what to do instead…"
-            : !projectPath
-              ? "Pick a project in the sidebar to start chatting…"
-              : floating
-                ? "Ask anything about this project…"
-                : "Reply…"}
+          placeholder={pendingQuestion
+            ? "Type your answer…"
+            : pending
+              ? "Optional — reject and tell it what to do instead…"
+              : !projectPath
+                ? "Pick a project in the sidebar to start chatting…"
+                : floating
+                  ? "Ask anything about this project…"
+                  : "Reply…"}
           rows="1"
         ></textarea>
 
@@ -474,12 +472,8 @@
       </div>
 
       <div class="toolbar">
-        <!-- The mode trigger lives inside the Dropdown component, which owns its
-           own styles — so the active mode's colors reach it as inherited
-           custom properties from here rather than as a style on the trigger
-           itself (see the .mode-trigger rules below). -->
-        <div class="left" style={modeColors(currentModeMeta)}>
-          {#if !pending}
+        <div class="left">
+          {#if !pending && !pendingQuestion}
             <button
               type="button"
               class="icon-chip"
@@ -494,24 +488,18 @@
 
             <ModelPicker {sessionId} />
 
-            <Dropdown
-              items={modeItems}
-              bind:value={() => currentMode, setModeValue}
-              triggerIcon={currentModeMeta.icon}
-              triggerTitle={currentModeMeta.hint}
-              triggerClass="mode-trigger"
-            >
-              {#snippet item({ value, label, selected })}
-                {@const mode = MODE_BY_ID[value as ChatMode]}
-                <span class="mode-item" style={modeColors(mode)}>
-                  <Icon name={mode.icon} size={13} />
-                  <span class="dropdown-item-label" title={mode.hint}
-                    >{label}</span
-                  >
-                </span>
-                {#if selected}<Icon name="check" size={11} />{/if}
-              {/snippet}
-            </Dropdown>
+            <ModePicker {sessionId} />
+
+            {#if server?.planBySession[sessionId] && server.openPlanSessionId !== sessionId}
+              <button
+                type="button"
+                class="icon-chip"
+                title="Reopen this session's plan"
+                onclick={() => server && (server.openPlanSessionId = sessionId)}
+              >
+                <Icon name="clipboard-list" size={14} />
+              </button>
+            {/if}
           {/if}
         </div>
 
@@ -525,7 +513,13 @@
               <Icon name="pause" size={13} /> Stop
             </button>
           {/if}
-          {#if pending}
+          {#if pendingQuestion}
+            {#if !pendingQuestion.options}
+              <button type="submit" class="send" disabled={!connected || !text.trim()}>
+                <Icon name="send" size={13} /> Answer
+              </button>
+            {/if}
+          {:else if pending}
             <button
               type="submit"
               class="send"
@@ -875,6 +869,24 @@
     font-weight: 600;
     cursor: pointer;
   }
+  .editing-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.36rem;
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+    padding: 0.36rem 0.71rem 0;
+  }
+  .editing-banner .link {
+    margin-left: auto;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    font-size: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+  }
   .permission-actions .deny {
     background: var(--danger-dim);
     color: var(--danger);
@@ -889,6 +901,25 @@
   }
   .input-area {
     position: relative;
+  }
+  .input-area.hidden {
+    display: none;
+  }
+  .question-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-top: var(--space-1);
+  }
+  .question-options button {
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.93rem;
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text);
   }
   textarea {
     width: 100%;
@@ -998,42 +1029,6 @@
   .icon-chip:disabled {
     opacity: 0.4;
     cursor: default;
-  }
-  /* The mode dropdown is styled by Dropdown.svelte itself (its trigger is
-     element-agnostic there); these rules only bend it into this toolbar's row
-     — same height as the chips beside it, pill-shaped like the model picker
-     pill it sits next to, and no outline on hover/open. The rest/lit colors
-     come in as custom properties (see modeColors): a mode with a tint holds it
-     in both states, the others sit at --text-dim until hovered. Qualified with
-     .dropdown-trigger on purpose: at equal specificity the winner would
-     otherwise come down to stylesheet injection order between this file and
-     Dropdown.svelte, rather than anything declared here. */
-  :global(.dropdown-trigger.mode-trigger) {
-    height: 1.86rem;
-    border-radius: var(--radius-pill);
-    color: var(--mode-rest, var(--text-dim));
-  }
-  :global(.dropdown-trigger.mode-trigger:hover),
-  :global(.dropdown-trigger.mode-trigger:focus-visible),
-  :global(.dropdown-trigger.mode-trigger[data-state="open"]) {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: transparent;
-    color: var(--mode-lit, var(--text));
-  }
-  /* Icon + label as one leading cluster, so the row's own space-between
-     leaves the trailing check on the far edge where Dropdown puts it. The
-     cluster holds the row's color, so the icon and label dim and light up
-     together as the row is hovered/highlighted. */
-  .mode-item {
-    display: flex;
-    align-items: center;
-    gap: 0.43rem;
-    min-width: 0;
-    color: var(--mode-rest, var(--text-dim));
-    transition: color calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  :global(.dropdown-item[data-highlighted]) .mode-item {
-    color: var(--mode-lit, var(--text));
   }
   .send,
   .stop {

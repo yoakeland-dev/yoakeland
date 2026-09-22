@@ -1,4 +1,4 @@
-# Yoakeland Backend IPC Specification (v2.8)
+# Yoakeland Backend IPC Specification (v2.12)
 
 This document is the complete, authoritative specification for the `yoakeland` backend daemon. It provides all information necessary to build a graphical frontend (e.g., Tauri, Flutter, Electron) that communicates with `yoakeland` over any of **three** transports: a local Unix domain socket (**always available**, one server process, many local clients), an optional TCP socket (remote/multi-device access), or standard input/output (a single spawned subprocess, opt-in via `-stdio`).
 
@@ -181,6 +181,58 @@ Initiates a new conversational turn or prompt submission.
 }
 ```
 - **`autoGenerateTitle`** *(optional, default the server's own setting — itself `true` unless changed via `set_auto_generate_title`)*: only meaningful on a session's first prompt (the one that leaves it with an empty title) — see "Auto-generated titles" under `set_session_title` below. Ignored on every later prompt in the same session, the same way `projectPath` is.
+
+#### `edit_message`
+Replaces a past user message's content and regenerates a fresh response from that point — a turn, in every way `user_prompt` is: same `turnId`/`sessionId` correlation, the same `model_delta`/`tool_call_requested`/`permission_request`/`tool_result`/`turn_completed` stream, and the same `cancel_turn` semantics. See §4d for the branch model this and `retry_message`/`switch_branch` share.
+```json
+{
+  "type": "edit_message",
+  "sessionId": "session-main",
+  "turnId": "turn-7",
+  "data": {
+    "sessionId": "session-main",
+    "messageId": "m3",
+    "content": "Refactor the file reader to support streaming, and add tests",
+    "autoGenerateTitle": true
+  }
+}
+```
+- Unlike `user_prompt`, **`sessionId` is required** and must already have persisted history — same resolution rule as `set_session_title` below, not `user_prompt`'s envelope-correlated fallback chain. `projectPath` isn't accepted either: this acts on a session that's already bound.
+- `messageId`: required, must name a `user`-role message currently in the session's *active* history (i.e. one `session_history`, §3.2, would currently return) — `error` if it names an unknown id, or a message that isn't a user message. A message inside a branch that isn't currently active must be switched to first (`switch_branch`, below).
+- `content`: required, the message's new text, replacing the old.
+- `autoGenerateTitle` *(optional, same default as `user_prompt`)*: only meaningful when editing a session's very first message, which — like a brand-new chat's first prompt — leaves the session's title eligible for (re-)generation. Same "only fills in an empty title" rule as everywhere else: editing the first message of a session that already has a real title (a `set_session_title`, or an earlier generation) never overwrites it.
+- The message's old content, and everything that had been generated after it, are **archived, never deleted** — recoverable via `switch_branch`. This matters because that content may already have cost real money to generate; an edit only changes which branch is active. See §4d.
+- Errors: `"message not found"`, `"only a user message can be edited"`, plus the same `no_provider`/`budget_exceeded` `turn_completed` finish reasons `user_prompt` can produce.
+
+#### `retry_message`
+Discards a past assistant message and regenerates a fresh response from the same point — otherwise identical in shape to `edit_message` (same streaming/cancellation, same `sessionId` resolution rule).
+```json
+{
+  "type": "retry_message",
+  "sessionId": "session-main",
+  "turnId": "turn-8",
+  "data": {
+    "sessionId": "session-main",
+    "messageId": "m4"
+  }
+}
+```
+- `messageId`: required, must name an `assistant`-role message currently in the session's active history — `error` if it names an unknown id, or a message that isn't an assistant message. It doesn't have to be the *last* assistant message: retrying an earlier round-trip inside a multi-tool-call turn discards that round-trip and everything after it too, and regenerates from there.
+- Same archive-not-delete guarantee as `edit_message`, and the same error set (minus `"only a user message can be edited"`, replaced by `"only an assistant message can be retried"`).
+- **What this does not do**: retrying past a message that ran tool calls (files written, commands run) never undoes those side effects — only conversation history moves. `restore_snapshot` (above) is the orthogonal tool for reverting the filesystem itself.
+
+#### `switch_branch`
+Makes the branch containing `messageId` the active one, swapping out whatever was active at that branch point (which becomes recoverable in its place, exactly symmetric to what `edit_message`/`retry_message` themselves do). Pure navigation: **no model call, no cost** — this is the free side of branching.
+```json
+{
+  "type": "switch_branch",
+  "sessionId": "session-main",
+  "turnId": "",
+  "data": {"sessionId": "session-main", "messageId": "m3"}
+}
+```
+- `messageId`: required, the id of any message inside a branch reachable from the session's *current* active history (see §4d — a branch nested behind another branch point becomes reachable only after switching to that outer one first). `error` (`"message not found"`) if it names an unknown id, or one that isn't currently reachable this way.
+- Response: `session_history` (§3.2), same shape `get_session_history` returns — the point is to hand back the newly-active transcript immediately, not just acknowledge the switch.
 
 #### `permission_response`
 Answers an outstanding `permission_request` from the backend.
@@ -430,8 +482,16 @@ Opens (if not already open) and validates a project path, without starting any t
 - Response: `project_opened` on success, `error` if the path doesn't exist/isn't a directory/isn't accessible.
 
 #### `list_projects`
-Enumerates every project opened on this server process since it started (not a filesystem scan — see §4b). Takes no data (`{}` is fine).
+Enumerates every project this server has ever opened, most-recently-opened first — persisted server-side (not a filesystem scan — see §4b). Takes no data (`{}` is fine).
 - Response: `project_list`.
+
+#### `remove_project`
+Forgets a project: drops it from the server's known-projects list (so it stops appearing in `project_list`) and tears down its live state if it currently has any — every session bound to it is cancelled (as if `cancel_turn` had been sent for any turn in flight) and evicted, the same way `delete_session` evicts a single session. This is **not** a filesystem delete: nothing under `<path>/.yoake/` is touched, and the path can simply be `open_project`ed again later to pick up right where its on-disk state (permissions, sessions, snapshots) left off.
+```json
+{"type": "remove_project", "data": {"path": "/home/user/projects/my-repo"}}
+```
+- Response: `project_removed` on success, `error` if the path can't be resolved.
+- No other connected peer is notified in real time — same convention as `set_session_layout`/`session_updated` (§3.2): another connection picks up a removal on its own next `list_projects`.
 
 #### `list_files`
 Enumerates every regular file under **one project**'s root, for client-side `@file` mention autocomplete.
@@ -876,27 +936,33 @@ Response to `get_session_history`.
   "data": {
     "sessionId": "session-main",
     "messages": [
-      {"role": "user", "content": "Refactor the file reader to support streaming", "author": "aveline", "authorAvatar": "🐣", "createdAt": "2026-09-11T10:03:20Z"},
-      {"role": "assistant", "content": "I'll start by reading the current implementation.", "toolCalls": [{"id": "call_abc123", "name": "file_read", "args": {"path": "lib/reader.dart"}}], "provider": "my-anthropic", "model": "claude-sonnet-5", "createdAt": "2026-09-11T10:03:22Z", "generationMs": 1840, "usage": {"inputTokens": 1284, "outputTokens": 46, "totalTokens": 1330, "costUsd": 0.00097}},
-      {"role": "tool", "toolCallId": "call_abc123", "content": "class FileReader { ... }"}
+      {"id": "m1", "role": "user", "content": "Refactor the file reader to support streaming", "author": "aveline", "authorAvatar": "🐣"},
+      {"id": "m2", "role": "assistant", "content": "I'll start by reading the current implementation.", "toolCalls": [{"id": "call_abc123", "name": "file_read", "args": {"path": "lib/reader.dart"}}]},
+      {"id": "m3", "role": "tool", "toolCallId": "call_abc123", "content": "class FileReader { ... }"}
     ]
   }
 }
 ```
-*UI Action*: Repaint the session's transcript from `messages` before showing the composer — this is the one point where a client reconstructs prior turns rather than receiving them live. `messages` is the same shape yoakeland itself stores (role/content/toolCalls/toolCallId/author/authorAvatar/provider/model/createdAt/generationMs/usage per turn), not re-derived from `model_delta`/`tool_call_requested`/etc., so a tool call and its result appear as a single history entry each rather than the granular event sequence a *live* turn streams.
+*UI Action*: Repaint the session's transcript from `messages` before showing the composer — this is the one point where a client reconstructs prior turns rather than receiving them live. `messages` is the same shape yoakeland itself stores (id/role/content/toolCalls/toolCallId/author/authorAvatar per turn), not re-derived from `model_delta`/`tool_call_requested`/etc., so a tool call and its result appear as a single history entry each rather than the granular event sequence a *live* turn streams. This is also where a client's own record of a message's `id` comes from, for a later `edit_message`/`retry_message`/`switch_branch` (§3.1) — none of those ids are pushed any other way, including for the message a client itself just sent.
+- `id`: this message's stable address for `edit_message`/`retry_message`/`switch_branch` (§3.1). Empty only for a message persisted before this field existed and never since migrated (the migration runs the next time its session loads) — treat absence as "not addressable" rather than an error.
+- `alternateIds` *(optional)*: the *other* versions that exist at this point in the conversation — other edits of this same user message, or other retried responses to the same prompt (§4d) — each individually addressable via `switch_branch`. Omitted when this message has no alternates, which is the common case and always true for a message that was never edited or retried. *UI Action*: this is what tells a client to render "◀ 2 / 3 ▶"-style regenerate/edit-history arrows under a message at all — their absence means there's nothing to cycle through.
 - `author`: who actually sent this message. Set on a `user` message from a sender that identified itself — a token-authenticated TCP peer (`register_token`'s named ones, or the legacy shared `"default"` — §3.1), whose name is a real credential, or a client that declared `authorName` on its `user_prompt` (§3.1), which is what the local unix socket relies on since it has no credential to attribute to. Omitted for assistant/tool messages (no human author) and for a `user` message whose sender identified itself as nothing. *UI Action*: render as e.g. "aveline: ..." in a shared session; fall back to a generic label (or nothing) when absent, don't treat its absence as an error.
 - `authorAvatar`: that sender's picture, stored alongside the name — either a short emoji glyph or a data URL, whichever the sending client uses (§2a's avatar conventions). Omitted for assistant/tool messages and for a sender that never set one. *UI Action*: render it next to the message; fall back to a placeholder avatar client-side when absent, don't treat its absence as an error. Store it with the message rather than looking it up from the live peer roster: `peer_list` is per-connection and gone after a reload, whereas this is what a repainted transcript has to draw from.
-- `provider`/`model`: the registered provider name and model id that generated an `assistant` message, stamped once per round-trip and persisted with it — so a session's model footer stays correct in a repainted transcript even after the session's own provider/model selection has since changed, and survives a reload/second device/fresh install the way a client-side-only stamp can't. Omitted for `user`/`tool` messages, and for an `assistant` message stored before this field existed (older `.yoake/sessions/*.json`) or whose provider was the server's env-resolved default rather than one registered via `register_provider`/`set_provider` (§3.1) — in the latter case `provider` is that default's raw `-provider` flag value, which won't resolve against `list_providers`' names. *UI Action*: look `provider` up against the live provider list for an icon/display name (§3.2 `provider_list`); if it's missing or doesn't resolve, omit the model chip for that message rather than erroring.
-- `createdAt`: when this message was produced, RFC 3339. `generationMs`: how long the model round-trip that produced an `assistant` message took (the provider request/stream itself, not any tool execution before or after it in the same turn) — omitted for `user`/`tool` messages and for a message stored before this field existed. *UI Action*: show as a timestamp/duration in the message footer; treat either field's absence as "unknown", not an error.
-- `usage`: this **round-trip's own** token/cost accounting (assistant only), same shape as `turn_completed`'s `usage` (§3.2 above) — but per message, not per turn. `inputTokens` is already the entire conversation resent as this round-trip's request (how every stateless chat-completions API works), so it doubles as "tokens in, cumulative up to this point" with nothing extra to sum client-side; `outputTokens` is just this round-trip's own reply. A turn with tool calls in it produces one `assistant` message per round-trip, each with its own `usage` — summing every message's `outputTokens` in a turn (not `inputTokens`, which would double-count) reproduces `turn_completed`'s turn-level total. Omitted for `user`/`tool` messages and for a message stored before this field existed. *UI Action*: format `inputTokens`/`outputTokens` compactly (e.g. "1.2k"), with distinct in/out icons, and `costUsd` as currency; treat absence as "unknown", not zero.
 
 #### `project_opened`
 Confirms `open_project`.
 ```json
 {"type": "project_opened", "data": {"path": "/home/user/projects/my-repo", "sandboxTier": "bubblewrap"}}
 ```
-- `path` is the resolved absolute path, which may differ in form from whatever relative/unclean path was sent.
+- `path` is the resolved, **canonicalized** absolute path (symlinks resolved, same as the project's own `.yoake/` location) — every other project-scoped response (`session_list`, `file_list`, `snapshot_list`, `project_removed`) echoes this identical canonical form for the same root, so a client keying its own caches off `projectPath` never sees two different spellings for what the server treats as one project.
 - `sandboxTier`: one of `"bubblewrap"`, `"linux_namespaces"`, or `"local_restricted_fallback"` (§1) — the isolation level `bash` tool calls in this project actually get. *UI Action*: surface a warning (e.g. in a status bar) when this is `"local_restricted_fallback"`, mirroring the backend's own startup log line, rather than only relying on that log line being visible to whoever's running the server.
+
+#### `project_removed`
+Confirms `remove_project`.
+```json
+{"type": "project_removed", "data": {"path": "/home/user/projects/my-repo"}}
+```
+*UI Action*: Remove the corresponding entry from a project switcher/sidebar. If it was the currently-open project, navigate away — any session that was live in it has already been cancelled server-side (see `remove_project`, §3.1).
 
 #### `directory_list`
 Response to `list_directory`.
@@ -921,7 +987,8 @@ Response to `list_projects`.
 ```json
 {"type": "project_list", "data": {"paths": ["/home/user/projects/my-repo", "/home/user/projects/other-repo"]}}
 ```
-*UI Action*: Populate a project switcher — but see §4b's caveat: this reflects only what's been opened this run, not "everywhere the user has ever worked."
+- `paths` is sorted most-recently-opened first, and is backed by `<-state-dir>/projects.json` (§4b) — it survives a server restart, and (over the TCP/remote path, §2a) is visible to every device connected to this server, not just the one that opened a given project.
+*UI Action*: Populate a project switcher. A client's own local "recent projects" cache should treat this response as authoritative and reconcile against it, rather than the other way around — this is the one place a second device learns about a project another device added.
 
 #### `file_list`
 Response to `list_files`.
@@ -967,9 +1034,10 @@ Pushed to **every** connected peer whenever the connection roster changes (conne
 #### `server_identity`
 Pushed to a peer right after it connects, and to every peer whenever `set_server_identity` changes it.
 ```json
-{"type": "server_identity", "data": {"identity": "aveline's living room"}}
+{"type": "server_identity", "data": {"identity": "aveline's living room", "serverId": "a1b2c3d4e5f6..."}}
 ```
-*UI Action*: Show this as the server's display name (e.g. in a connection list or title bar) rather than a raw address.
+- `identity`: a mutable display name — *UI Action*: show this as the server's display name (e.g. in a connection list or title bar) rather than a raw address.
+- `serverId`: a stable identifier minted once, the first time this server's `-state-dir` is ever used, and never changed — there is no `set_server_id`. Unlike `identity`, its entire value is that it *doesn't* change: a client reaching this same daemon under two different addresses (a LAN IP one time, a VPN hostname another) sees the same `serverId` both times, and a client holding several simultaneous connections (to different servers) should key any per-server state it keeps by this, not by address. Omitted by a server that predates this field — treat that connection as unknown/legacy rather than erroring.
 
 #### `auto_generate_title`
 Pushed to a peer right after it connects, and to every peer whenever `set_auto_generate_title` changes it.
@@ -1087,10 +1155,11 @@ A single `yoakeland` process is **not** limited to one project. Every project (i
 - Sending a *different* `projectPath` for an already-bound session is a conflict, not a switch: the backend rejects it with an `error` rather than silently moving the session. A session's project never changes; if the user wants to work on a different folder, that's a new session.
 - If a session never specifies `projectPath` and the server has a default project (`-project`), it falls back to that — this is what keeps single-project usage exactly as simple as it's always been. If there's no explicit path *and* no default, the backend returns an `error` (there's nothing to resolve against). Unlike an explicit `projectPath`, this fallback does **not** bind the session: it's resolved fresh on every envelope that omits `projectPath`, so a session that only ever hit the default project this way is still free to bind to a different one the first time it *does* send an explicit `projectPath`. Only an explicit path (`user_prompt`'s, or one of the three above) is ever recorded as a binding.
 - `open_project` (§3.1) does the same "open if needed" step without starting a turn, e.g. to validate a folder before creating a session in it, or to call `list_sessions` against it to show existing threads first.
+- Every project path is canonicalized (made absolute, symlinks resolved) before it's used as this binding's key, as the project registry's own key, or as anything echoed back on the wire — `project_opened.path`, `session_list.projectPath`, `file_list.projectPath`, `snapshot_list.projectPath`, and `project_removed.path` all agree on the exact same canonical string for a given real directory, however it was originally spelled (relative, trailing slash, a symlink). A client keying its own local caches off a `projectPath` string can rely on it being stable across every call that touches the same project.
 
 **What this means for a frontend:** the flow described in the intro — "download the UI, pick a folder to work on, on the fly, from a list, and have multiple folders' sessions running at once against different models" — maps directly onto this. A client managing several open folders is not managing several server processes; it's opening several projects on **one** connection to **one** server, and routing UI state by `sessionId` (whose project is whatever it happens to be bound to) exactly as it already does for concurrent sessions in general.
 
-**What this does *not* do:** `list_projects` only reports what's been opened since the process started — it is not a filesystem scan, and it is not persisted, so a freshly restarted server has no memory of which projects a client cares about; a client that wants "reopen where I left off" needs to remember its own list of project paths and either call `open_project` or send a `user_prompt`/`list_sessions` with `projectPath` for each on reconnect.
+**What *is* persisted, and what isn't:** the *list of known project paths* is persisted server-side, at `<-state-dir>/projects.json` — `list_projects` (§3.1) reflects every project this server has ever opened, most-recently-used first, and survives a restart; this is what makes it safe for a client to treat the server as the authority on "which projects exist" rather than maintaining its own durable list (see `remove_project`/`project_list`, §3.1/§3.2). What is **not** persisted is everything *live* about a project — its in-memory `ProjectContext` (sandbox handle, session registry) is still built lazily on first reference each run and discarded on restart — and, within a project, a session's *binding* to it and a session's *runtime settings* (the provider/model `set_provider` selected, plan mode, model options) are server-memory-only, gone on restart or on that project's `remove_project`. A client resuming a session after either event must re-assert `set_provider`/`set_model_options`/`set_plan_mode` from its own cache before that session's next prompt — the same way it already unconditionally calls `get_session_history` to repaint a session's transcript on open, since the wire protocol never pushes past turns unprompted (§3.1 `get_session_history`). Treat this as the documented recovery contract for resuming a session, not an incidental side effect of how the client happens to cache things.
 
 ---
 
@@ -1103,6 +1172,22 @@ Plan mode lets a session investigate and propose an approach without being able 
 A backend safeguard still rejects a mutating tool call outright if one somehow arrives during plan mode (defense in depth against a misbehaving or stale provider integration) — but this is a backstop, not the primary mechanism, and a frontend should never rely on it being reached in normal operation.
 
 **What plan mode does not do:** it doesn't stop the model from *talking* — `model_delta` streams normally, so a plan can be narrated in prose. It also doesn't change permission behavior for tools it does expose: `file_read` has never required permission (§3.1's `permission_request` is tool-specific), so plan mode adds no new prompts, only removes capabilities. Exiting plan mode (`set_plan_mode` with `enabled: false`) restores the full tool set on the next turn — nothing about history, snapshots, or session state changes.
+
+---
+
+### 4d. Editing, retrying, and branches
+
+`edit_message`, `retry_message`, and `switch_branch` (§3.1) let a session's history move sideways as well as forward, without ever losing anything — every edit and every retry is recoverable, since the content it replaces may already have cost real money to generate.
+
+**The model.** A session's history is a tree, though the wire never exposes it as one directly: each message has an `id` (§3.2), and a *branch point* is the id of the message right before a divergence. Editing a user message or retrying an assistant message doesn't delete anything — it archives the old message and everything generated after it as an inactive alternate at that branch point, then starts a fresh one. `switch_branch` swaps a stored alternate back in, putting whatever was active in its place — so switching is always symmetric: nothing is ever the "real" version and nothing else the "backup," they just trade places.
+
+A branch point can only ever be a `user` message (`edit_message`'s target) or an `assistant` message (`retry_message`'s target, which may sit mid-turn after tool calls) — both are always valid places to resume a model conversation, so no edit or retry can ever produce a request with a dangling tool call the way naive truncation could (see `set_model_options`'s `contextWindow` note, §3.1, for the same concern elsewhere).
+
+**Cost.** `edit_message`/`retry_message` are turns — they call the model and are billed and budget-capped exactly like `user_prompt`. `switch_branch` is not: it never calls the model, so cycling between versions a client already generated is free, however many times.
+
+**Scope.** `edit_message`/`retry_message`/`switch_branch` only ever address a message currently reachable from the session's *active* history — the same one `get_session_history`/`session_history` returns. A branch nested behind another branch point (an edit made, then an earlier message also edited) becomes reachable only after `switch_branch` brings its parent branch back to active first — walking the tree one hop at a time. There's no way to address a deeply nested branch in one call; a client that wants to expose that navigates it the same way, one `switch_branch` at a time.
+
+**What this doesn't do.** None of this reverts real side effects a discarded branch's tool calls made — files written, commands run. Only conversation history moves between branches; the project's filesystem state is whatever it currently is, tracked (and revertible) separately via `restore_snapshot`/`list_snapshots` (§3.1). A client offering "regenerate" or "edit" next to a message that ran tools should make that distinction visible rather than implying a full undo.
 
 ---
 
@@ -1198,7 +1283,9 @@ Three provider kinds exist:
 
 **Why CLI-subprocess instead of OAuth token reuse**: Anthropic and OpenAI both prohibit third-party tools from using a Claude/ChatGPT *subscription* OAuth token directly against their APIs — that's billing-plan misuse, and Anthropic actively enforces it. Shelling out to the *official, already-authenticated CLI binary* is the sanctioned pattern instead (this is what tools like T3 Code do): the CLI owns its own auth end-to-end, yoakeland just drives it as a subprocess per turn. Both CLIs are themselves full autonomous coding agents with their own tool/sandbox systems, so yoakeland invokes them in a restricted, mutation-disabled mode — `claude -p --disallowedTools Bash,Read,Write,Edit,Glob,Grep,Task,NotebookEdit,TodoWrite,BashOutput,KillShell,SlashCommand`, `codex exec --sandbox read-only -c tools.web_search=true` — they act as pure text-completion backends plus (as of this manifest generation) their own server-side web search, and yoakeland's own permission-gated tool engine (§5, `.yoake/permissions.json`) remains the *only* thing that can actually read/write files or run shell commands. `WebFetch`/`WebSearch` are deliberately left off the claude CLI's disallow-list — read-only, run server-side on Anthropic's own account, no reason to reimplement them client-side. A frontend offering `cli_claude`/`cli_codex` should check the CLI is actually installed first — send `detect_cli` (§3.1) and gate on the `cli_availability` response (§3.2); this checks whichever machine the *backend* runs on, not the frontend's machine, if they differ.
 
-**Web search**: available with no extra setup on `anthropic` (Anthropic's native `web_search_20250305` server tool, added to every request unless `ANTHROPIC_DISABLE_WEB_SEARCH` is set — e.g. for an org that has it disabled in the Console, where including it makes the API reject the whole request with a 400) and `openrouter` (`openrouter:web_search`, opt out with `OPENROUTER_DISABLE_WEB_SEARCH`) — both resolved entirely server-side against the same credential already in use, invisible to yoakeland's own tool-call machinery. Plain `openai` gets none (Chat Completions has no general hosted search tool). Separately, a `web_search` *client* tool (in the same family as `file_read`/`bash`, §3.2's `tool_call_requested`) is registered whenever `BRAVE_API_KEY` is set, for providers/backends with no native option of their own.
+**Web search**: available with no extra setup on `anthropic` (Anthropic's native `web_search_20250305` server tool, added to every request unless `ANTHROPIC_DISABLE_WEB_SEARCH` is set — e.g. for an org that has it disabled in the Console, where including it makes the API reject the whole request with a 400) and `openrouter` (`openrouter:web_search`, opt out with `OPENROUTER_DISABLE_WEB_SEARCH`) — both resolved entirely server-side against the same credential already in use, invisible to yoakeland's own tool-call machinery. Plain `openai` gets none (Chat Completions has no general hosted search tool). Separately, a `web_search` *client* tool (in the same family as `file_read`/`bash`, §3.2's `tool_call_requested`) is always registered, for providers/backends with no native option of their own: with `BRAVE_API_KEY` set it queries Brave's JSON API (the reliable path); with no key it falls back to scraping DuckDuckGo's HTML results for free, which works but is best-effort — DuckDuckGo bot-checks non-browser/datacenter traffic, so this path can intermittently return an error instead of results, and a startup log line names which mode a project is running in.
+
+**Web fetch**: a `web_fetch` *client* tool is also always registered (no key needed, no native-provider equivalent to defer to) — it downloads a URL and extracts just the main readable text (title + body, via a Readability.js port) so a search result can be read without shipping raw page HTML through the model's context. Its dialer refuses to connect to loopback/private/link-local/multicast addresses, including on redirect, so a URL surfaced from search results or fetched page content can't be used to reach internal network services.
 
 **OpenRouter is the one case with real "sign in with your account" OAuth** (`openrouter_oauth_start`/`openrouter_oauth_complete`, §3.1/§3.2): OpenRouter's own PKCE flow is built for third-party apps, unlike Anthropic/OpenAI's consumer subscriptions. The resulting API key is registered as an ordinary `api_key`/`openrouter` provider with `authMethod: "oauth"` for display purposes only — functionally identical to one registered manually.
 
@@ -1404,6 +1491,7 @@ class YoakeBackend {
 - [ ] **Per-Person Tokens**: For a server more than one human connects to, build a "people with access" settings list around `register_token`/`list_tokens`/`remove_token` (§3.1) instead of sharing the one `-token`/`set_remote_password` secret — same local-socket-only restriction as above. Render `session_history`'s `author`/`authorAvatar` fields (§3.2) in a shared transcript, and know that a token-backed peer can't `set_peer_name` itself (its name is fixed at registration).
 - [ ] **Server Identity**: Show `server_identity` (§3.2, pushed on connect and on change) as the server's display name; let `set_server_identity` rename it from Settings.
 - [ ] **Plan Mode**: Reflect `set_plan_mode`/`plan_mode_set` (§3.1/§3.2/§4c) in the composer UI — the restriction is enforced backend-side (the model literally isn't given write tools), but the frontend still owns signaling the mode to the user.
+- [ ] **Editing, Retrying, Branches**: Store `session_history`'s per-message `id`/`alternateIds` (§3.2) — they're the only way to address a message for `edit_message`/`retry_message`/`switch_branch` (§3.1/§4d) later, including a message the client itself just sent. Render cycle controls under any message with a non-empty `alternateIds`, an edit affordance on `user` messages, and retry/regenerate on `assistant` messages (which may target a mid-turn round-trip, not just the last one). `switch_branch` is free navigation (no turn, no cost) — route its `session_history` response through the same repaint path `get_session_history` uses. Surface `edit_message`/`retry_message`'s `"message not found"`/`"only a user message can be edited"`/`"only an assistant message can be retried"` errors the same way as `no_provider`/`budget_exceeded` above, and disclose that neither undoes a discarded branch's file/command side effects — that's what `restore_snapshot` is for.
 - [ ] **Liveness**: Reply to unsolicited `ping` with `pong` (echoing `nonce`), and treat a connection that's gone quiet for a while as dead and worth reconnecting — see "Keeping a connection alive" in §2a.
 - [ ] **Local Connections**: For same-machine use, dial the always-on local unix socket (§2a) directly rather than spawning `yoakeland -stdio` as a subprocess or dialing `127.0.0.1` TCP — no token to manage, the OS enforces who can connect, and the daemon keeps running (and keeps other clients' sessions alive) independent of any one client's lifetime. Reserve `-stdio` for when a frontend genuinely wants to own the backend's whole process lifecycle itself; fall back to TCP+token only for remote/multi-device access.
 - [ ] **TLS Awareness**: The TCP listener is always TLS (an operator's own cert, or yoakeland's auto-managed CA — see §2a) — but a client dialing it must still trust the *right* CA rather than skip verification: for the auto-managed case, fetch/copy `<-state-dir>/tls/ca.pem` once during pairing and trust only that certificate (a non-default root-cert-pool), not the public trust store, and never fall back to disabling certificate verification.

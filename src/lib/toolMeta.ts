@@ -18,7 +18,14 @@ export const toolMeta: Record<string, { icon: ToolIconName; label: string }> = {
  * so a missing or malformed value here shouldn't be able to crash a card. */
 export function summaryFor(call: { args?: Record<string, unknown> }): string {
   const args = call.args ?? {};
-  if (typeof args.path === "string") return args.path;
+  if (typeof args.path === "string") {
+    const { startLine, endLine } = args;
+    if (typeof startLine === "number" || typeof endLine === "number") {
+      const range = startLine === endLine ? `${startLine}` : `${startLine ?? ""}-${endLine ?? ""}`;
+      return `${args.path}:${range}`;
+    }
+    return args.path;
+  }
   if (typeof args.command === "string") return args.command;
   if (typeof args.query === "string") return args.query;
   if (typeof args.url === "string") return args.url;

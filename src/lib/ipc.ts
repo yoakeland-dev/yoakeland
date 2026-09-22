@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Envelope } from "./types";
+import type { ChatMode, Envelope } from "./types";
 import { app, ServerState, type ConnectionId } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
 import { isDesktop } from "./platform";
@@ -154,16 +154,6 @@ export function wireEvents() {
     if (env.type === "provider_registered") {
       listProviders(connectionId);
     }
-
-    // "Auto" mode is a client-side convenience the wire protocol has no
-    // concept of: skip the modal and immediately approve, same as clicking
-    // "Allow Once" ourselves.
-    if (env.type === "permission_request" && env.sessionId && env.turnId && env.toolCallId) {
-      if (server.modeBySession[env.sessionId] === "auto") {
-        respondPermission(connectionId, env.sessionId, env.turnId, env.toolCallId, true, false);
-        server.pendingPermission = null;
-      }
-    }
   });
 
   listen<{ connectionId: string; message: string }>("yoake-log", (e) => app.log(e.payload.message));
@@ -278,7 +268,12 @@ export async function connectTcp(host: string, port: number, token: string, caPe
     });
     const server = new ServerState(connectionId, app, { mode: "remote", host, port, token, caPem });
     app.servers[connectionId] = server;
-    app.activeConnectionId = connectionId;
+    // Only takes the active slot if nothing else already holds it — adding
+    // a second/background server (e.g. "Add another server") shouldn't yank
+    // focus away from whatever the user is already looking at. This is also
+    // what keeps "always one server selected" true from the very first
+    // connection on, without ever stealing it back later.
+    if (!app.activeConnectionId) app.activeConnectionId = connectionId;
     app.setPendingConnect("disconnected");
     if (caPem) {
       app.settings.trustedCaByHostPort[caServerKey(host, port)] = caPem;
@@ -322,7 +317,10 @@ export async function connectLocalUnix(opts: SpawnUnixServerOpts): Promise<Conne
       binPath: opts.binPath,
     });
     app.servers[connectionId] = server;
-    app.activeConnectionId = connectionId;
+    // Local nearly always wins this race in practice — autoConnect() tries
+    // it first, before any remote connection could exist — but the same
+    // "only if nothing else is active" rule as connectTcp applies here too.
+    if (!app.activeConnectionId) app.activeConnectionId = connectionId;
     app.setPendingConnect("disconnected");
     afterConnect(connectionId);
     return connectionId;
@@ -415,6 +413,74 @@ export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt
   return turnId;
 }
 
+/** SPEC.md §3.1 edit_message — replaces a past user message's content and
+ * regenerates from there. A full turn, same turnId minting/streaming setup
+ * as sendPrompt (state.svelte.ts's beginBranchTurn), but unlike sendPrompt
+ * `sessionId` is required and no `projectPath` is sent (the session is
+ * already bound). */
+export function editMessage(
+  connectionId: ConnectionId,
+  sessionId: string,
+  messageId: string,
+  content: string,
+  autoGenerateTitle?: boolean,
+): string {
+  const turnId = `turn-${crypto.randomUUID().slice(0, 8)}`;
+  const server = app.servers[connectionId];
+  if (!server) return turnId;
+  server.beginEdit(sessionId, turnId, messageId, content);
+  void send(connectionId, {
+    type: "edit_message",
+    sessionId,
+    turnId,
+    data: {
+      sessionId,
+      messageId,
+      content,
+      ...(autoGenerateTitle !== undefined ? { autoGenerateTitle } : {}),
+    },
+  });
+  return turnId;
+}
+
+/** SPEC.md §3.1 retry_message — discards a past assistant message (which may
+ * sit mid-turn, after tool calls) and regenerates from that point. Same turn
+ * machinery as editMessage/sendPrompt. */
+export function retryMessage(connectionId: ConnectionId, sessionId: string, messageId: string): string {
+  const turnId = `turn-${crypto.randomUUID().slice(0, 8)}`;
+  const server = app.servers[connectionId];
+  if (!server) return turnId;
+  server.beginRetry(sessionId, turnId, messageId);
+  void send(connectionId, { type: "retry_message", sessionId, turnId, data: { sessionId, messageId } });
+  return turnId;
+}
+
+/** SPEC.md §3.1 switch_branch — pure navigation, no model call: swaps in the
+ * branch containing `messageId`. Its response is a full `session_history`,
+ * handled by the same `case "session_history"` get_session_history's
+ * response uses (state.svelte.ts), which also gets that handler's "skip
+ * while a turn is actively streaming" guard for free. */
+export function switchBranch(connectionId: ConnectionId, sessionId: string, messageId: string) {
+  void send(connectionId, { type: "switch_branch", sessionId, turnId: "", data: { sessionId, messageId } });
+}
+
+/** Puts `sessionId`'s composer into "editing" mode for `messageId`,
+ * prefilling its old text via the same restoredDraftBySession effect
+ * PromptInput already uses for a no_provider-restored draft (state.svelte.ts)
+ * — submit() there calls editMessage instead of sendPrompt while
+ * `editingMessageId` is set. */
+export function startEditingMessage(connectionId: ConnectionId, sessionId: string, messageId: string, text: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  server.editingMessageId[sessionId] = messageId;
+  server.restoredDraftBySession[sessionId] = text;
+}
+
+export function cancelEditingMessage(connectionId: ConnectionId, sessionId: string) {
+  const server = app.servers[connectionId];
+  if (server) delete server.editingMessageId[sessionId];
+}
+
 /** Fetches a session's server-persisted transcript (§3.2 get_session_history)
  * — chat history is server state, not client state, so this is the one call
  * that repaints a session from truth rather than from the local cache. Fine
@@ -434,25 +500,23 @@ export function getSessionHistory(connectionId: ConnectionId, sessionId: string)
   void send(connectionId, { type: "get_session_history", data: { sessionId, projectPath } });
 }
 
-/** Re-sends a resumed session's own provider/model and plan-mode choice from
- * this client's cache (`providerBySession`/`planModeBySession`) if it has
- * one. These are server-memory-only (SPEC.md §4b) — lost across a server
- * restart or a `remove_project` teardown, with no push telling the client it
- * happened — so a resumed session's next turn would otherwise silently run
- * on the registry's default provider instead of what the user picked. This
- * is the client-side half of that documented recovery contract: the same
- * cache that already renders the picker's current selection is replayed
- * back to the server, not just displayed. No-op if nothing's cached (a
- * session that never had `set_provider`/`set_plan_mode` called on it, or a
- * fresh app launch that never populated the cache to begin with — this
- * can't recover state the client itself no longer remembers). */
+/** Re-sends a resumed session's own provider/model choice from this client's
+ * cache (`providerBySession`) if it has one. This is server-memory-only
+ * (SPEC.md §4b) — lost across a server restart or a `remove_project`
+ * teardown, with no push telling the client it happened — so a resumed
+ * session's next turn would otherwise silently run on the registry's default
+ * provider instead of what the user picked. This is the client-side half of
+ * that documented recovery contract: the same cache that already renders the
+ * picker's current selection is replayed back to the server, not just
+ * displayed. No-op if nothing's cached. Mode is deliberately NOT reasserted
+ * here — it's server-persisted and pushed back via `session_history`'s
+ * `data.mode` (§4c), so replaying a client cache over it would race a more
+ * recently set value from another peer. */
 function reassertSessionSettings(connectionId: ConnectionId, sessionId: string) {
   const server = app.servers[connectionId];
   if (!server) return;
   const providerName = server.providerBySession[sessionId];
   if (providerName) setProvider(connectionId, sessionId, providerName, server.modelBySession[sessionId]);
-  const planMode = server.planModeBySession[sessionId];
-  if (planMode !== undefined) setPlanMode(connectionId, sessionId, planMode);
 }
 
 /** Opens `sessionId` as the main chat and refreshes it from the server so a
@@ -712,6 +776,7 @@ export async function browseAndAddProject(connectionId: ConnectionId): Promise<s
   if (server?.connectionStatus === "connected") {
     server.nextProjectOpenSwitches = false; // "adds without switching to it" — see state.svelte.ts's project_opened handler
     openProject(connectionId, dir);
+    listSessionsForProject(connectionId, dir); // so it shows a group immediately, not only once picked (see Sidebar.svelte's projectGroups)
   } else {
     server?.rememberProject(dir);
   }
@@ -797,10 +862,28 @@ export function setFavoriteModels(connectionId: ConnectionId, providerName: stri
   void send(connectionId, { type: "set_favorite_models", data: { providerName, models } });
 }
 
-export function setPlanMode(connectionId: ConnectionId, sessionId: string, enabled: boolean) {
+/** Switches a session between the four modes (§3.1/§4c), effective on that
+ * session's next turn. Sent on every transition — mode is server-persisted
+ * and broadcast to every peer, so this is the only place that needs to send
+ * it (see state.svelte.ts's `mode_set`/`session_history` handling for the
+ * other half: adopting a server-confirmed value, never re-asserting one). */
+export function setMode(connectionId: ConnectionId, sessionId: string, mode: ChatMode) {
   // projectPath for the same reason setProvider sends it — see there.
   const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
-  void send(connectionId, { type: "set_plan_mode", sessionId, data: { sessionId, enabled, projectPath } });
+  void send(connectionId, { type: "set_mode", sessionId, data: { mode, projectPath } });
+}
+
+/** Turns web_search/web_fetch on or off for an entire project (§3.1) —
+ * independent of mode, persisted server-side, and scoped by projectPath
+ * rather than sessionId. */
+export function setWebToolsEnabled(connectionId: ConnectionId, projectPath: string, enabled: boolean) {
+  void send(connectionId, { type: "set_web_tools_enabled", data: { projectPath, enabled } });
+}
+
+/** Answers an outstanding ask_user_question_requested (§3.1) — toolCallId is
+ * envelope-level, same correlation rule as permission_response. */
+export function askUserAnswer(connectionId: ConnectionId, toolCallId: string, answer: string) {
+  void send(connectionId, { type: "ask_user_answer", toolCallId, data: { answer } });
 }
 
 export function registerProvider(connectionId: ConnectionId, data: Record<string, unknown>) {

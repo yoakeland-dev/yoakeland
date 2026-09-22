@@ -1,10 +1,28 @@
 <script lang="ts">
   import { fade as fadeTransition } from "svelte/transition";
   import { isPhotoAvatar } from "../avatar";
+  import { app } from "../state.svelte";
+  import { startEditingMessage } from "../ipc";
+  import type { ChatMessage } from "../types";
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
+  import VersionCycle from "./VersionCycle.svelte";
 
-  let { text, author, authorAvatar }: { text: string; author?: string; authorAvatar?: string } = $props();
+  let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
+  const text = $derived(message.text);
+  const author = $derived(message.author);
+  const authorAvatar = $derived(message.authorAvatar);
+
+  // Editing discards whatever was generated after this message (archived,
+  // not deleted — SPEC.md §4d), which may have run tool calls; the composer
+  // doesn't currently reach into the following message to check, so the
+  // tooltip states the caveat unconditionally rather than only when it's
+  // known to apply.
+  function edit() {
+    const cid = app.activeConnectionId;
+    if (!cid) return;
+    startEditingMessage(cid, sessionId, message.id, message.text);
+  }
 
   // How tall the bubble is allowed to get before it clips, in px. Real height
   // (not a character count) so it clips correctly regardless of formatting —
@@ -74,6 +92,17 @@
         </div>
       {/if}
     </div>
+    <div class="footer">
+      <VersionCycle {message} {sessionId} />
+      <button
+        class="action"
+        onclick={edit}
+        title="Edit — regenerates from here; doesn't undo any file changes the discarded reply made"
+      >
+        <Icon name="pencil" size={12} />
+        Edit
+      </button>
+    </div>
   </div>
   <span class="avatar">
     {#if authorAvatar && isPhotoAvatar(authorAvatar)}
@@ -104,6 +133,28 @@
     font-size: 0.72rem;
     color: var(--text-dim);
     margin: 0 0.2rem 0.25rem;
+  }
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.25rem 0.2rem 0;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+  .action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.21rem;
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    padding: 0;
+  }
+  .action:hover {
+    color: var(--text);
   }
   .avatar {
     flex: none;

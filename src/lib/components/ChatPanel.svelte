@@ -3,6 +3,7 @@
   import ChatHeader from "./ChatHeader.svelte";
   import MessageList from "./MessageList.svelte";
   import PromptInput from "./PromptInput.svelte";
+  import PlanPanel from "./PlanPanel.svelte";
   import { wallpaperGL } from "../wallpaperGL";
 
   let { sessionId }: { sessionId: string } = $props();
@@ -34,6 +35,9 @@
     <div class="body" class:syncing={isSyncing} inert={isSyncing}>
       <MessageList {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
       <PromptInput {sessionId} floating={isEmpty} />
+      {#if app.active?.openPlanSessionId === sessionId}
+        <PlanPanel {sessionId} />
+      {/if}
     </div>
     {#if isSyncing}
       <div class="syncing-badge"><span class="spinner"></span> Syncing…</div>

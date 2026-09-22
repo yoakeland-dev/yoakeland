@@ -102,9 +102,9 @@
     <div class="msg-row" use:observeRow={message.id}>
       {#if message.streaming || eager || hydrated.has(message.id)}
         {#if message.role === "user"}
-          <MessageBubble text={message.text} author={message.author} authorAvatar={message.authorAvatar} />
+          <MessageBubble {message} {sessionId} />
         {:else}
-          <AssistantMessage {message} />
+          <AssistantMessage {message} {sessionId} />
         {/if}
       {:else}
         <div class="msg-placeholder"></div>

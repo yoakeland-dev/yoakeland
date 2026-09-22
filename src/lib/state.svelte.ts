@@ -1,4 +1,5 @@
 import type {
+  AskUserQuestionData,
   ChatMessage,
   ChatMode,
   DirectoryEntry,
@@ -54,9 +55,11 @@ const SESSION_SCOPED_EVENTS = new Set([
   "model_delta",
   "tool_call_requested",
   "permission_request",
+  "ask_user_question_requested",
   "tool_result",
   "turn_completed",
   "session_taken_over",
+  "plan_written",
 ]);
 
 // A path handler passed straight to `onclick` (instead of wrapped in an
@@ -65,6 +68,14 @@ const SESSION_SCOPED_EVENTS = new Set([
 // garbage shape wherever a path/project key is read back from storage.
 function looksLikePath(p: unknown): p is string {
   return typeof p === "string" && !/^\[object \w+\]$/.test(p);
+}
+
+/** A pre-upgrade install may have "ask"/"auto" persisted under this key —
+ * treated as invalid rather than migrated (ensureSession falls back to the
+ * "read_write" default), since it's a one-time cosmetic default, not data
+ * loss. */
+function isChatMode(m: unknown): m is ChatMode {
+  return m === "read_only" || m === "read_write" || m === "autonomous" || m === "plan";
 }
 
 interface ChatHistory {
@@ -489,9 +500,14 @@ export class ServerState {
   // from immediately re-selecting the same now-broken provider. Cleared the
   // moment the user (re)confirms a provider via provider_set.
   providerBlockedBySession = $state<Record<string, boolean>>({});
-  // The prompt text of a message "unsent" by a no_provider rejection, for
-  // PromptInput to restore into its composer — see the turn_completed case.
+  // Text PromptInput should restore into its composer — either a message
+  // "unsent" by a no_provider rejection (see the turn_completed case) or, via
+  // ipc.startEditingMessage, a message's old content while the user edits it.
   restoredDraftBySession = $state<Record<string, string>>({});
+  // Set by ipc.startEditingMessage while the composer holds a message's old
+  // content for editing — PromptInput's submit() calls editMessage instead of
+  // sendPrompt while this is set for its session, and clears it afterward.
+  editingMessageId = $state<Record<string, string | undefined>>({});
   // Reasoning effort / thinking budget / context-window override, per
   // session (§3.1 set_model_options). model_options_set only echoes what
   // that particular request changed — a left-unchanged field comes back
@@ -511,13 +527,23 @@ export class ServerState {
   lastUsedModel = $state<string | null>(null);
   lastUsedMode = $state<ChatMode | null>(null);
   modeBySession = $state<Record<string, ChatMode>>({});
-  // Server-confirmed plan-mode state (§4c) — distinct from modeBySession,
-  // which is optimistic UI state set the moment the user clicks "Plan".
-  planModeBySession = $state<Record<string, boolean>>({});
+  // Project-scoped web_search/web_fetch toggle (§3.1 set_web_tools_enabled) —
+  // independent of mode, persisted server-side.
+  webToolsEnabledByProject = $state<Record<string, boolean>>({});
+  // write_plan's output (§4c) — one plan file per session, keyed by session so
+  // a re-write lands "in place" rather than stacking. openPlanSessionId is
+  // which one (if any) the side panel is currently showing.
+  planBySession = $state<Record<string, { path: string; updatedAt: number }>>({});
+  openPlanSessionId = $state<string | null>(null);
 
   pendingPermission = $state<
     | (PermissionRequestData & { sessionId: string; turnId: string; toolCallId: string })
     | null
+  >(null);
+  // Own slot, not reused from pendingPermission — a permission ask and a
+  // question ask can be outstanding in different sessions at once.
+  pendingQuestion = $state<
+    (AskUserQuestionData & { sessionId: string; turnId: string; toolCallId: string }) | null
   >(null);
 
   // --- Chat history navigation (the titlebar island's back/forward arrows).
@@ -600,7 +626,7 @@ export class ServerState {
 
   sessionStatus(sessionId: string): "working" | "action" | "finished" | "idle" {
     if (this.takenOverSessions[sessionId]) return "idle";
-    if (this.pendingPermission?.sessionId === sessionId) return "action";
+    if (this.pendingPermission?.sessionId === sessionId || this.pendingQuestion?.sessionId === sessionId) return "action";
     if (this.activeTurnBySession[sessionId]) return "working";
     if (this.finishedSessions[sessionId]) return "finished";
     return "idle";
@@ -690,13 +716,12 @@ export class ServerState {
     }
     if (!this.modeBySession[sessionId]) {
       const lastMode = this.lastUsedMode;
-      this.modeBySession[sessionId] =
-        lastMode === "ask" || lastMode === "auto" || lastMode === "plan" ? lastMode : "auto";
+      this.modeBySession[sessionId] = isChatMode(lastMode) ? lastMode : "read_write";
     }
   }
 
   /** Persists the last mode a user picked on this server, so the next new
-   * chat starts there instead of always defaulting back to Auto (see
+   * chat starts there instead of always defaulting back to Read-Write (see
    * ensureSession). */
   setLastUsedMode(mode: ChatMode) {
     this.lastUsedMode = mode;
@@ -712,11 +737,24 @@ export class ServerState {
 
   /** Removes a saved path from the picker (Settings > Connections). Purely
    * the local half — the caller also sends remove_project so the server
-   * stops re-adding it via the next project_list (see ipc.removeProject). */
+   * stops re-adding it via the next project_list (see ipc.removeProject).
+   * Also drops its sessions from sessionsByProject/projectBySession —
+   * otherwise they keep showing in the sidebar's cross-project Active/
+   * Archive lists (see sessionById) and reopening one rebinds
+   * currentProjectPath to the "removed" path, which resurrects it server-side
+   * (Resolve -> Get -> Upsert) on that session's next request. */
   forgetProject(path: string) {
+    this.projects = this.projects.filter((p) => p !== path);
     this.recentProjects = this.recentProjects.filter((p) => p !== path);
     if (this.serverId) saveServerRecentProjects(this.serverId, this.recentProjects);
     if (this.currentProjectPath === path) this.currentProjectPath = null;
+    const orphaned = this.sessionsByProject[path] ?? [];
+    delete this.sessionsByProject[path];
+    for (const s of orphaned) {
+      delete this.projectBySession[s.sessionId];
+      if (this.currentSessionId === s.sessionId) this.currentSessionId = null;
+    }
+    this.saveChatHistory();
   }
 
   selectProject(path: string) {
@@ -812,6 +850,8 @@ export class ServerState {
   applySessionHistory(
     sessionId: string,
     messages: {
+      id?: string;
+      alternateIds?: string[];
       role: "user" | "assistant" | "tool";
       content: string;
       author?: string;
@@ -851,7 +891,13 @@ export class ServerState {
         // person's message never picks up this client's identity.
         const storedAuthor = m.author;
         out.push({
-          id: `${sessionId}-hist-${turnIndex}`,
+          // The server's own id (§3.2) when present — empty/absent means a
+          // message persisted before that field existed and never migrated
+          // (SPEC.md: "treat absence as 'not addressable'"), so it falls back
+          // to the old synthetic key rather than something edit/retry/
+          // switch_branch could be sent for.
+          id: m.id || `${sessionId}-hist-${turnIndex}`,
+          alternateIds: m.alternateIds,
           role: "user",
           text: m.content ?? "",
           toolCalls: [],
@@ -884,6 +930,14 @@ export class ServerState {
           };
           out.push(cur);
         }
+        // retryMessage's target can be any assistant message, including a
+        // mid-turn round-trip that this client merges into one bubble
+        // (id-per-round-trip mismatch, see the comment above) — v1 doesn't
+        // build per-round-trip granularity in the UI, so "Retry" on a merged
+        // bubble targets its *last* round-trip's id, which is also the id a
+        // fresh switch_branch's alternateIds most recently came with.
+        cur.id = m.id || cur.id;
+        cur.alternateIds = m.alternateIds ?? cur.alternateIds;
 
         // The backend has been observed persisting the same toolCallId twice
         // (see the live tool_call_requested handler below) — dedupe here too,
@@ -960,12 +1014,14 @@ export class ServerState {
     delete this.modelBySession[sessionId];
     delete this.providerBlockedBySession[sessionId];
     delete this.restoredDraftBySession[sessionId];
+    delete this.editingMessageId[sessionId];
     delete this.modelOptionsBySession[sessionId];
     delete this.modeBySession[sessionId];
-    delete this.planModeBySession[sessionId];
+    delete this.planBySession[sessionId];
     delete this.syncingSessions[sessionId];
     if (this.currentSessionId === sessionId) this.currentSessionId = null;
     if (this.sidebarSessionId === sessionId) this.sidebarSessionId = null;
+    if (this.openPlanSessionId === sessionId) this.openPlanSessionId = null;
   }
 
   /** It never reached the server, so there's nothing to ask it to delete —
@@ -1017,6 +1073,64 @@ export class ServerState {
     this.saveChatHistory();
   }
 
+  /** Shared setup for edit_message/retry_message (SPEC.md §3.1/§4d) — both
+   * are full turns like user_prompt, but resume history from a branch point
+   * instead of appending to its end: everything from `fromIndex` onward is
+   * cut locally (the server archives it, never deletes it — switch_branch is
+   * how it comes back) before the fresh streaming placeholder goes on. */
+  private beginBranchTurn(sessionId: string, turnId: string, fromIndex: number, replacement?: ChatMessage) {
+    this.ensureSession(sessionId);
+    const kept = (this.messagesBySession[sessionId] ?? []).slice(0, fromIndex);
+    this.messagesBySession[sessionId] = replacement ? [...kept, replacement] : kept;
+    this.activeTurnBySession[sessionId] = turnId;
+    const reply: ChatMessage = {
+      id: `${turnId}-reply`,
+      role: "assistant",
+      turnId,
+      text: "",
+      toolCalls: [],
+      streaming: true,
+      createdAt: Date.now(),
+      provider: this.providerBySession[sessionId],
+      model: this.modelBySession[sessionId],
+    };
+    this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], reply];
+    this.saveChatHistory();
+  }
+
+  /** SPEC.md §3.1 edit_message — replaces `messageId`'s content in place and
+   * discards everything generated after it, then starts a fresh turn. */
+  beginEdit(sessionId: string, turnId: string, messageId: string, content: string) {
+    delete this.editingMessageId[sessionId];
+    const list = this.messagesBySession[sessionId] ?? [];
+    const idx = list.findIndex((m) => m.id === messageId);
+    if (idx === -1) {
+      // No local bubble to show the server's own "message not found" error
+      // against (ipc.ts's editMessage still sends the request regardless —
+      // this only skips the optimistic local update) — surface it here
+      // instead of failing silently.
+      this.app.log(`error: can't edit message ${messageId} — not found in this session's local history`);
+      return;
+    }
+    // turnId (not the old message's own) so turn_completed's reconciliation
+    // (below) can find this bubble by turnId and stamp in the real id the
+    // server mints for the edited message — same as a brand-new user message.
+    this.beginBranchTurn(sessionId, turnId, idx, { ...list[idx], text: content, turnId });
+  }
+
+  /** SPEC.md §3.1 retry_message — discards `messageId` (an assistant message,
+   * possibly mid-turn after tool calls) and everything after it, then starts
+   * a fresh turn. */
+  beginRetry(sessionId: string, turnId: string, messageId: string) {
+    const list = this.messagesBySession[sessionId] ?? [];
+    const idx = list.findIndex((m) => m.id === messageId);
+    if (idx === -1) {
+      this.app.log(`error: can't retry message ${messageId} — not found in this session's local history`);
+      return;
+    }
+    this.beginBranchTurn(sessionId, turnId, idx);
+  }
+
   private findAssistantMessage(sessionId: string, turnId: string | undefined): ChatMessage | undefined {
     if (!turnId) return undefined;
     const list = this.messagesBySession[sessionId];
@@ -1031,15 +1145,23 @@ export class ServerState {
   private hydrateFromServerId(serverId: string) {
     migrateLegacyStateIfNeeded(serverId);
 
-    this.recentProjects = loadServerRecentProjects(serverId);
+    // server_identity is a push that races connect: afterConnect's own calls
+    // (and anything the user does) can create a session and land its first
+    // message in memory before this ever runs. Merge disk-loaded state UNDER
+    // whatever's already resident rather than overwriting it outright, or
+    // that first chat gets wiped the instant serverId arrives — this is the
+    // "first chat since the server starts isn't stored" bug: the message
+    // reached the server fine, but the client's own in-memory copy of it got
+    // clobbered here a moment later.
+    this.recentProjects = [...new Set([...this.recentProjects, ...loadServerRecentProjects(serverId)])];
     const history = loadServerChatHistory(serverId);
-    this.sessionsByProject = history.sessionsByProject;
-    this.projectBySession = history.projectBySession;
-    this.messagesBySession = history.messagesBySession;
+    this.sessionsByProject = { ...history.sessionsByProject, ...this.sessionsByProject };
+    this.projectBySession = { ...history.projectBySession, ...this.projectBySession };
+    this.messagesBySession = { ...history.messagesBySession, ...this.messagesBySession };
     this.lastUsedProvider = loadServerString(serverId, "lastUsedProvider");
     this.lastUsedModel = loadServerString(serverId, "lastUsedModel");
     const mode = loadServerString(serverId, "lastUsedMode");
-    this.lastUsedMode = mode === "ask" || mode === "auto" || mode === "plan" ? mode : null;
+    this.lastUsedMode = isChatMode(mode) ? mode : null;
 
     // The first time this particular server is seen under its real identity,
     // carry over a CA it was trusted under by address (see
@@ -1137,6 +1259,21 @@ export class ServerState {
         }
         break;
       }
+      case "ask_user_question_requested": {
+        const data = env.data as unknown as AskUserQuestionData;
+        const msg = this.findAssistantMessage(sessionId, env.turnId);
+        if (msg && env.toolCallId) {
+          const entry = msg.toolCalls.find((t) => t.toolCallId === env.toolCallId);
+          if (entry) {
+            entry.status = "awaiting_answer";
+            entry.question = data;
+          }
+        }
+        if (env.toolCallId && env.turnId) {
+          this.pendingQuestion = { ...data, sessionId, turnId: env.turnId, toolCallId: env.toolCallId };
+        }
+        break;
+      }
       case "tool_result": {
         const data = env.data as unknown as ToolResultData;
         const msg = this.findAssistantMessage(sessionId, env.turnId);
@@ -1150,6 +1287,9 @@ export class ServerState {
         }
         if (this.pendingPermission?.toolCallId === env.toolCallId) {
           this.pendingPermission = null;
+        }
+        if (this.pendingQuestion?.toolCallId === env.toolCallId) {
+          this.pendingQuestion = null;
         }
         break;
       }
@@ -1185,6 +1325,20 @@ export class ServerState {
         if (msg) {
           msg.streaming = false;
           msg.finish = data;
+        }
+        // Swap this turn's own optimistic placeholder ids (turnId / `${turnId}-reply`,
+        // see addUserMessage/beginBranchTurn) for the server's real ones the moment
+        // they're known — this is what makes retry/edit work immediately after a turn
+        // completes, without waiting on a session reopen to pick them up via
+        // applySessionHistory. See SPEC.md v2.13's turn_completed.userMessageId/messageId.
+        if (data.userMessageId) {
+          const userMsg = this.messagesBySession[sessionId]?.find(
+            (m) => m.turnId === env.turnId && m.role === "user",
+          );
+          if (userMsg) userMsg.id = data.userMessageId;
+        }
+        if (data.messageId && msg) {
+          msg.id = data.messageId;
         }
         delete this.activeTurnBySession[sessionId];
         this.activeTurnBySession = { ...this.activeTurnBySession };
@@ -1271,16 +1425,22 @@ export class ServerState {
         // given, so feeding it in server order would build the list
         // backwards — walk it in reverse so the end result matches.
         const data = env.data as { paths: string[] };
+        const known = new Set(data.paths ?? []);
         for (const p of [...(data.paths ?? [])].reverse()) this.rememberProject(p);
+        // As of backend v2.13 this can also arrive unprompted, pushed to
+        // every other connection whenever one opens a project (see
+        // project_removed's comment below for the same on removal) — prune
+        // anything this connection still has locally that's no longer in
+        // the authoritative list, the live-sync half of "deleted projects
+        // still show up in the sidebar".
+        for (const p of this.recentProjects.filter((p) => !known.has(p))) this.forgetProject(p);
         break;
       }
       case "project_removed": {
-        // Server-confirmed removal. There's no cross-connection push for
-        // this (SPEC.md §3.1 remove_project) — another peer that removed a
-        // shared project is picked up here on *this* connection's own next
-        // list_projects, same as any other shared-state change in this
-        // protocol; this case only ever fires as a direct response to our
-        // own removeProject call, not a live notification from elsewhere.
+        // Server-confirmed removal — and, as of backend v2.13, also pushed
+        // live to every other connection when removal happens elsewhere
+        // (SPEC.md §3.1 remove_project), not just a direct response to this
+        // connection's own removeProject call any more.
         const data = env.data as { path: string };
         this.forgetProject(data.path);
         break;
@@ -1380,9 +1540,24 @@ export class ServerState {
       case "session_history": {
         const data = env.data as {
           sessionId: string;
-          messages: { role: "user" | "assistant" | "tool"; content: string; author?: string; authorAvatar?: string; reasoning?: string; toolCalls?: { id: string; name: string; args: Record<string, unknown> }[]; toolCallId?: string }[];
+          mode?: ChatMode;
+          messages: {
+            id?: string;
+            alternateIds?: string[];
+            role: "user" | "assistant" | "tool";
+            content: string;
+            author?: string;
+            authorAvatar?: string;
+            reasoning?: string;
+            toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
+            toolCallId?: string;
+          }[];
         };
         this.applySessionHistory(data.sessionId, data.messages ?? []);
+        // The server is the source of truth for mode (§4c) — adopt it here
+        // rather than replaying a cached value via set_mode, which would race
+        // a more-recently-set value from another peer.
+        if (isChatMode(data.mode)) this.modeBySession[data.sessionId] = data.mode;
         this.setSessionSyncing(data.sessionId, false);
         break;
       }
@@ -1402,9 +1577,22 @@ export class ServerState {
         this.tokens = this.tokens.filter((t) => t.name !== data.name);
         break;
       }
-      case "plan_mode_set": {
-        const data = env.data as { sessionId: string; enabled: boolean };
-        this.planModeBySession[data.sessionId] = data.enabled;
+      case "mode_set": {
+        const data = env.data as { sessionId: string; mode: ChatMode };
+        this.modeBySession[data.sessionId] = data.mode;
+        this.lastUsedMode = data.mode;
+        if (this.serverId) saveServerString(this.serverId, "lastUsedMode", data.mode);
+        break;
+      }
+      case "web_tools_enabled_set": {
+        const data = env.data as { projectPath: string; enabled: boolean };
+        this.webToolsEnabledByProject = { ...this.webToolsEnabledByProject, [data.projectPath]: data.enabled };
+        break;
+      }
+      case "plan_written": {
+        const data = env.data as { path: string };
+        this.planBySession = { ...this.planBySession, [sessionId]: { path: data.path, updatedAt: Date.now() } };
+        if (sessionId === this.currentSessionId) this.openPlanSessionId = sessionId;
         break;
       }
       case "error": {

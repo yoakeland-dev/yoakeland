@@ -51,6 +51,15 @@ export interface ToolResultData {
 export interface TurnCompletedData {
   finishReason: "stop" | "length" | "cancelled" | "budget_exceeded" | "no_provider";
   sessionId: string;
+  /** The real server-assigned id of the prompt this turn was anchored to —
+   * the primary way a client learns a message's id, straight off the turn
+   * it just watched stream in, no get_session_history round trip needed
+   * (SPEC.md §3.2). Absent when the turn ended before any message existed
+   * to anchor to. */
+  userMessageId?: string;
+  /** The real server-assigned id of the last message this turn appended
+   * (normally the final assistant reply). Absent if nothing was appended. */
+  messageId?: string;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -124,6 +133,9 @@ export interface SessionSummary {
   /** Paired session for a client-side split/sidebar layout (SPEC.md §3.1
    * set_session_layout) — one-directional, set on the anchor session only. */
   linkedSessionId?: string | null;
+  /** Server-persisted mode (§4c) — carried by session_list/session_updated so
+   * a sidebar badge doesn't need the session open to know it. */
+  mode?: ChatMode;
 }
 
 export type SandboxTier = "bubblewrap" | "linux_namespaces" | "local_restricted_fallback";
@@ -169,17 +181,25 @@ export interface TokenInfo {
 
 // ---- Chat-side (frontend-only) message model, built up from the wire events ----
 
-export type ChatMode = "ask" | "auto" | "plan";
+export type ChatMode = "read_only" | "read_write" | "autonomous" | "plan";
+
+/** The model called `ask_user_question` (SPEC.md §3.1/§3.2) — free-form when
+ * `options` is absent, a picker otherwise. Available in every mode. */
+export interface AskUserQuestionData {
+  question: string;
+  options?: string[];
+}
 
 export interface ToolCallEntry {
   toolCallId: string;
   name: string;
   args: Record<string, unknown>;
-  status: "requested" | "awaiting_permission" | "running" | "done" | "denied" | "error";
+  status: "requested" | "awaiting_permission" | "awaiting_answer" | "running" | "done" | "denied" | "error";
   output?: string;
   error?: string;
   diff?: FileDiff | null;
   permission?: PermissionRequestData;
+  question?: AskUserQuestionData;
   /** `message.text.length` at the moment this call was requested — lets the
    * UI render the card inline at the point it actually happened in the
    * stream instead of stacking every call above the text. Undefined for
@@ -207,6 +227,11 @@ export type AssistantStep =
 
 export interface ChatMessage {
   id: string;
+  /** Other versions at this same point in the conversation — other edits of
+   * this user message, or other retried replies to the same prompt (§3.2
+   * `alternateIds`, §4d). Each is addressable via `switchBranch`. Absent (the
+   * common case) means nothing to cycle through. */
+  alternateIds?: string[];
   role: "user" | "assistant";
   turnId?: string;
   text: string;
