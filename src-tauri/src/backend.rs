@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{split, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::{TcpStream, UnixStream};
+use tokio::net::TcpStream;
 use tokio::process::Command;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
@@ -246,8 +246,14 @@ pub async fn probe_tcp(host: String, port: u16) -> bool {
 /// when launched with no `-socket` flag: `$XDG_RUNTIME_DIR/yoake/…`, then (on
 /// macOS, where XDG_RUNTIME_DIR usually isn't set) `$TMPDIR/yoake/…`,
 /// otherwise `~/.yoake/…`.
+///
+/// On Windows the local transport is a named pipe, not a socket file: the
+/// server's `\\.\pipe\yoakeland-<USERNAME>` (§2a).
 #[tauri::command]
 pub fn default_socket_path() -> String {
+    if cfg!(windows) {
+        return format!(r"\\.\pipe\yoakeland-{}", std::env::var("USERNAME").unwrap_or_default());
+    }
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         if !dir.is_empty() {
             return format!("{}/yoake/yoakeland.sock", dir.trim_end_matches('/'));
@@ -263,18 +269,106 @@ pub fn default_socket_path() -> String {
     expand_tilde("~/.yoake/yoakeland.sock")
 }
 
-/// Same idea as `probe_tcp`, for a Unix domain socket path (§2a).
+/// Opens the local transport (§2a): a Unix domain socket, or on Windows the
+/// server's named pipe.
+#[cfg(unix)]
+async fn open_local(path: &str) -> std::io::Result<tokio::net::UnixStream> {
+    tokio::net::UnixStream::connect(path).await
+}
+
+/// Windows: a named pipe. All server instances can be momentarily busy
+/// between the server accepting one client and opening the next instance,
+/// so ERROR_PIPE_BUSY is retried briefly. The pipe namespace is global, so
+/// the pipe is only trusted once it's confirmed to be owned by this user —
+/// otherwise another local user could create the name first and receive our
+/// prompts and credentials.
+#[cfg(windows)]
+async fn open_local(path: &str) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+    let mut tries = 0;
+    let client = loop {
+        match ClientOptions::new().open(path) {
+            Ok(c) => break c,
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) && tries < 40 => tries += 1,
+            Err(e) => return Err(e),
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    check_pipe_owner(&client)?;
+    Ok(client)
+}
+
+#[cfg(windows)]
+fn check_pipe_owner(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+    use windows_sys::Win32::Security::{
+        EqualSid, GetTokenInformation, TokenUser, OWNER_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    // SAFETY: plain Win32 calls on handles we own; `owner` points into `sd`,
+    // which is freed only after its last use, and `buf` is u64-aligned and
+    // large enough for a TOKEN_USER plus the largest possible SID.
+    unsafe {
+        let (mut owner, mut sd) = (null_mut(), null_mut());
+        let rc = GetSecurityInfo(
+            pipe.as_raw_handle(),
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut sd,
+        );
+        if rc != 0 {
+            return Err(std::io::Error::from_raw_os_error(rc as i32));
+        }
+        let mut token = null_mut();
+        let mut buf = [0u64; 32];
+        let mut len = 0;
+        let ok = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0
+            && GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), 256, &mut len) != 0;
+        let err = std::io::Error::last_os_error();
+        if !token.is_null() {
+            CloseHandle(token);
+        }
+        let same = ok && EqualSid(owner, (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid) != 0;
+        LocalFree(sd);
+        if !ok {
+            return Err(err);
+        }
+        if !same {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "pipe isn't owned by this user; refusing to connect",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Same idea as `probe_tcp`, for the local socket/pipe (§2a).
 #[tauri::command]
 pub async fn probe_unix(path: String) -> bool {
     let path = expand_tilde(&path);
-    tokio::time::timeout(PROBE_TIMEOUT, UnixStream::connect(&path))
+    tokio::time::timeout(PROBE_TIMEOUT, open_local(&path))
         .await
         .map(|r| r.is_ok())
         .unwrap_or(false)
 }
 
 async fn spawn_and_pipe_logs(app: AppHandle, bin_path: &str, args: &[String]) -> Result<(), String> {
-    let mut child = Command::new(bin_path)
+    let mut cmd = Command::new(bin_path);
+    // yoakeland is a console program: without this, launching it from the
+    // GUI on Windows pops up a console window that lives as long as it does.
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let mut child = cmd
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -422,6 +516,7 @@ pub async fn connect_tcp(
     name: Option<String>,
     device_type: Option<String>,
     avatar: Option<String>,
+    device_id: Option<String>,
 ) -> Result<ConnectionId, String> {
     // The TCP listener is TLS-only now (§2a) — no plaintext fallback exists
     // server-side any more, so this always negotiates TLS before the
@@ -466,6 +561,9 @@ pub async fn connect_tcp(
     if let Some(avatar) = avatar {
         auth_data["avatar"] = serde_json::Value::String(avatar);
     }
+    if let Some(device_id) = device_id {
+        auth_data["deviceId"] = serde_json::Value::String(device_id);
+    }
     let auth = serde_json::json!({"type": "auth", "data": auth_data});
     tx.send(auth.to_string())
         .map_err(|e| format!("failed to send auth frame: {e}"))?;
@@ -478,7 +576,7 @@ pub async fn connect_tcp(
 /// kernel already checked the connecting process's UID/GID against the
 /// socket file's permissions before the connection was even accepted. An
 /// `auth` frame is still sent, opt-in, purely to self-report identity for the
-/// peer list (§3.2 `peer_list`) when any of `name`/`device_type`/`avatar` is
+/// peer list (§3.2 `peer_list`) when any of `name`/`device_type`/`avatar`/`device_id` is
 /// given — `token` is omitted, since file permissions are already the
 /// boundary here, not a shared secret.
 #[tauri::command]
@@ -489,12 +587,13 @@ pub async fn connect_unix(
     name: Option<String>,
     device_type: Option<String>,
     avatar: Option<String>,
+    device_id: Option<String>,
 ) -> Result<ConnectionId, String> {
     let path = expand_tilde(&path);
-    let stream = UnixStream::connect(&path)
+    let stream = open_local(&path)
         .await
         .map_err(|e| format!("connect to {path} failed: {e}"))?;
-    let (read_half, write_half) = stream.into_split();
+    let (read_half, write_half) = split(stream);
     let connection_id = Uuid::new_v4().to_string();
 
     let (tx, rx) = mpsc::unbounded_channel();
@@ -507,7 +606,7 @@ pub async fn connect_unix(
         "connection closed",
     );
 
-    if name.is_some() || device_type.is_some() || avatar.is_some() {
+    if name.is_some() || device_type.is_some() || avatar.is_some() || device_id.is_some() {
         let mut auth_data = serde_json::Map::new();
         if let Some(name) = name {
             auth_data.insert("name".to_string(), serde_json::Value::String(name));
@@ -517,6 +616,9 @@ pub async fn connect_unix(
         }
         if let Some(avatar) = avatar {
             auth_data.insert("avatar".to_string(), serde_json::Value::String(avatar));
+        }
+        if let Some(device_id) = device_id {
+            auth_data.insert("deviceId".to_string(), serde_json::Value::String(device_id));
         }
         let auth = serde_json::json!({"type": "auth", "data": auth_data});
         tx.send(auth.to_string())
@@ -564,6 +666,19 @@ pub async fn disconnect(
 pub async fn read_text_file(path: String) -> Result<String, String> {
     tokio::fs::read_to_string(&path)
         .await
+        .map_err(|e| format!("failed to read {path}: {e}"))
+}
+
+/// Raw bytes of a local file dropped onto the composer, so it can be
+/// uploaded to a *remote* server as an attachment (SPEC.md §3.1
+/// upload_begin). Returned as a binary IPC response (an ArrayBuffer on the
+/// JS side) rather than a JSON number array, which would balloon a
+/// multi-megabyte file. Only ever called with paths from a native drop event.
+#[tauri::command]
+pub async fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    tokio::fs::read(&path)
+        .await
+        .map(tauri::ipc::Response::new)
         .map_err(|e| format!("failed to read {path}: {e}"))
 }
 

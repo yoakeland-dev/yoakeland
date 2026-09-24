@@ -1,4 +1,5 @@
 mod backend;
+mod credentials;
 
 use backend::BackendState;
 
@@ -20,6 +21,9 @@ pub fn run() {
             backend::send_envelope,
             backend::disconnect,
             backend::read_text_file,
+            backend::read_file_bytes,
+            credentials::load_credential,
+            credentials::store_credential,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

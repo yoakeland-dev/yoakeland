@@ -36,6 +36,10 @@ rustls-pemfile = "2"
 rustls-pki-types = "1"
 rustls-native-certs = "0.8"
 
+# Only for checking a local named pipe's owner before trusting it (§2a).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
