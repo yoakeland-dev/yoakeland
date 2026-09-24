@@ -30,11 +30,86 @@ function shell(): YoakeBridge {
 }
 
 export function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return shell().invoke(cmd, args) as Promise<T>;
+  return (bridge ? bridge.invoke(cmd, args) : webInvoke(cmd, args ?? {})) as Promise<T>;
 }
 
 export async function listen<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
-  return shell().listen(event, cb as (payload: unknown) => void);
+  const fn = cb as (payload: unknown) => void;
+  if (bridge) return bridge.listen(event, fn);
+  const set = webListeners.get(event) ?? webListeners.set(event, new Set()).get(event)!;
+  set.add(fn);
+  return () => set.delete(fn);
+}
+
+// Browser mode: remote servers only, over the WebSocket yoakeland serves at
+// /ws on its remote port (cmd/yoakeland/web.go). Same command and event names
+// as electron/backend.js.
+
+const webListeners = new Map<string, Set<(payload: unknown) => void>>();
+const webEmit = (event: string, payload: unknown) => webListeners.get(event)?.forEach((cb) => cb(payload));
+const webSockets = new Map<string, WebSocket>();
+// ponytail: saved tokens live in localStorage, where any script on the page
+// can read them. sessionStorage (pair again in each tab) is stricter if needed.
+const tokenKey = (serverId: unknown) => `yoake.token.${serverId}`;
+
+async function webInvoke(cmd: string, args: Record<string, unknown>): Promise<unknown> {
+  switch (cmd) {
+    case "connect_tcp": {
+      const { host, port, token, caPem: _ca, ...identity } = args;
+      const h = String(host).includes(":") ? `[${host}]` : host;
+      const ws = new WebSocket(`wss://${h}:${port}/ws`);
+      await new Promise((resolve, reject) => {
+        ws.onopen = resolve;
+        ws.onerror = () =>
+          reject(
+            `couldn't open a secure connection to ${host}:${port}. Is remote access on, and does this browser trust the server's certificate?`,
+          );
+      });
+      const connectionId = crypto.randomUUID();
+      webSockets.set(connectionId, ws);
+      ws.onmessage = (e) => {
+        for (const line of String(e.data).split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            webEmit("yoake-event", { connectionId, envelope: JSON.parse(line) });
+          } catch (err) {
+            webEmit("yoake-log", { connectionId, message: `bad frame: ${err}: ${line}` });
+          }
+        }
+      };
+      ws.onclose = (e) => {
+        // `disconnect` deletes the entry first, so only unexpected closes report.
+        if (webSockets.delete(connectionId)) {
+          webEmit("yoake-disconnected", { connectionId, reason: e.reason || "connection closed" });
+        }
+      };
+      ws.send(JSON.stringify({ type: "auth", data: { token, ...identity } }) + "\n");
+      return connectionId;
+    }
+    case "send_envelope": {
+      const ws = webSockets.get(String(args.connectionId));
+      if (!ws) throw "not connected";
+      ws.send(JSON.stringify(args.envelope) + "\n");
+      return;
+    }
+    case "disconnect": {
+      const ws = webSockets.get(String(args.connectionId));
+      webSockets.delete(String(args.connectionId));
+      ws?.close();
+      return;
+    }
+    case "load_credential":
+      return localStorage.getItem(tokenKey(args.key));
+    case "store_credential":
+      if (args.value == null) localStorage.removeItem(tokenKey(args.key));
+      else localStorage.setItem(tokenKey(args.key), String(args.value));
+      return;
+    case "probe_tcp":
+    case "probe_unix":
+      return false;
+    default:
+      throw `${cmd} isn't available in the browser`;
+  }
 }
 
 export const pickFiles = (opts: { title?: string; multiple?: boolean } = {}): Promise<string[]> =>

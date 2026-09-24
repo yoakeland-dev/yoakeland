@@ -7,7 +7,7 @@
   // multi-server-connections work — calling this a second time just adds
   // another entry to app.servers rather than replacing one — so this component itself needs no "is this the first
   // server" branching at all.
-  import { pickFiles } from "../platform";
+  import { isDesktop, pickFiles } from "../platform";
   import { tick, untrack } from "svelte";
   import { Tabs } from "bits-ui";
   import {
@@ -30,8 +30,14 @@
   let {
     onconnected,
     prefill,
-    showLocal = true,
+    showLocal: showLocalProp = true,
   }: { onconnected?: () => void; prefill?: { host?: string; port?: number }; showLocal?: boolean } = $props();
+  // In a browser, the page was most likely served by the server to connect to.
+  const showLocal = $derived(isDesktop && showLocalProp);
+  const pagePrefill =
+    !isDesktop && location.protocol === "https:"
+      ? { host: location.hostname, port: Number(location.port) || 443 }
+      : undefined;
 
   let tab = $state<"local" | "remote">(untrack(() => (showLocal && !prefill?.host ? "local" : "remote")));
 
@@ -52,8 +58,8 @@
   // dropdown — opening one of those still leaves you needing several Tabs to
   // actually reach the fields it revealed, which defeats the point) — see
   // remoteFormBody below for the Enter-advances/Backspace-retreats wiring.
-  let host = $state(untrack(() => prefill?.host ?? ""));
-  let port = $state(untrack(() => prefill?.port ?? 7890));
+  let host = $state(untrack(() => prefill?.host ?? pagePrefill?.host ?? ""));
+  let port = $state(untrack(() => prefill?.port ?? pagePrefill?.port ?? 7890));
   let token = $state("");
   let step = $state<"address" | "code" | "manual">("address");
   let hostInputEl = $state<HTMLInputElement | null>(null);
@@ -251,22 +257,26 @@
         Auth token
         <input bind:this={manualTokenEl} bind:value={token} onkeydown={onManualTokenKeydown} placeholder="shared secret from -token" type="password" />
       </label>
-      <label>
-        Server CA certificate
-        <div class="row">
-          <textarea
-            class="ca-input"
-            bind:value={caPem}
-            rows="3"
-            placeholder="Paste ca.pem contents, or import the file… — leave blank only if the server has a real, publicly-trusted certificate"
-          ></textarea>
-          <button class="ca-import" type="button" onclick={importCa} disabled={importingCa}>
-            {importingCa ? "Importing…" : "Import…"}
-          </button>
-        </div>
-      </label>
-      {#if caImportError}
-        <p class="error"><Icon name="alert-circle" size={14} /> {caImportError}</p>
+      {#if isDesktop}
+        <label>
+          Server CA certificate
+          <div class="row">
+            <textarea
+              class="ca-input"
+              bind:value={caPem}
+              rows="3"
+              placeholder="Paste ca.pem contents, or import the file… — leave blank only if the server has a real, publicly-trusted certificate"
+            ></textarea>
+            <button class="ca-import" type="button" onclick={importCa} disabled={importingCa}>
+              {importingCa ? "Importing…" : "Import…"}
+            </button>
+          </div>
+        </label>
+        {#if caImportError}
+          <p class="error"><Icon name="alert-circle" size={14} /> {caImportError}</p>
+        {/if}
+      {:else}
+        <p class="hint">Your browser checks the server's certificate itself. Trust the server's CA in your browser or OS once, or give the server a real certificate.</p>
       {/if}
       <div class="step-actions">
         <button type="button" class="back-step" onclick={goToCode} title="Back (Backspace)">

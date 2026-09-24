@@ -143,7 +143,7 @@ async function redial(oldConnectionId: ConnectionId) {
 export const reconnectServer = redial;
 
 export function wireEvents() {
-  if (wired || !isDesktop) return;
+  if (wired) return;
   wired = true;
 
   listen<{ connectionId: string; envelope: Envelope }>("yoake-event", (payload) => {
@@ -383,12 +383,14 @@ export async function getDefaultSocketPath(): Promise<string> {
  * If nothing at all connects, FirstServerPanel takes over.
  */
 export async function autoConnect() {
-  const socketPath = await getDefaultSocketPath();
-  await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
+  const socketPath = isDesktop ? await getDefaultSocketPath() : "";
+  if (isDesktop) await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
   await Promise.allSettled(
     loadKnownServers().map(async (k) => {
       if (k.mode === "local") {
-        if (k.socketPath && k.socketPath !== socketPath) await connectLocalUnix({ binPath: "yoakeland", socketPath: k.socketPath });
+        if (isDesktop && k.socketPath && k.socketPath !== socketPath) {
+          await connectLocalUnix({ binPath: "yoakeland", socketPath: k.socketPath });
+        }
         return;
       }
       const token = await loadServerToken(k.serverId);

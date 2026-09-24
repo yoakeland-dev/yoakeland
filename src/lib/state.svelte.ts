@@ -32,7 +32,7 @@ import type {
 /** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
 type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
 import { deriveTheme, deriveTerminalTheme, TERMINAL_THEME_PRESETS } from "./theme";
-import { invoke, isDesktop, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
+import { invoke, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 
@@ -296,11 +296,9 @@ export function forgetKnownServer(serverId: string) {
 /** A remote server's auth token, remembered so it can reconnect unattended
  * (startup and dropped connections alike). null deletes it. */
 export function storeServerToken(serverId: string, token: string | null): Promise<void> {
-  if (!isDesktop) return Promise.resolve();
   return invoke<void>("store_credential", { key: serverId, value: token }).catch(() => {});
 }
 export function loadServerToken(serverId: string): Promise<string | null> {
-  if (!isDesktop) return Promise.resolve(null);
   return invoke<string | null>("load_credential", { key: serverId }).catch(() => null);
 }
 
