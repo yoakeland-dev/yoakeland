@@ -2,6 +2,7 @@
   import { fade as fadeTransition } from "svelte/transition";
   import { isPhotoAvatar } from "../avatar";
   import { app } from "../state.svelte";
+  import { basename } from "../format";
   import { startEditingMessage } from "../ipc";
   import type { ChatMessage } from "../types";
   import Markdown from "./Markdown.svelte";
@@ -74,7 +75,7 @@
     <div class="bubble">
       <div class="clip" style="max-height: {maxHeight}; padding-bottom: {clipPadBottom}">
         <div bind:this={contentEl}>
-          <Markdown {text} />
+          <Markdown {text} mentions />
           {#if overflowing && expanded}
             <button class="toggle inline" transition:fadeTransition={{ duration: 120 }} onclick={() => (expanded = false)}>
               Show less
@@ -92,6 +93,13 @@
         </div>
       {/if}
     </div>
+    {#if message.attachments?.length}
+      <ul class="attachments">
+        {#each message.attachments as path (path)}
+          <li title={path}><Icon name="file" size={12} /> {basename(path)}</li>
+        {/each}
+      </ul>
+    {/if}
     <div class="footer">
       <VersionCycle {message} {sessionId} />
       <button
@@ -114,6 +122,25 @@
 </div>
 
 <style>
+  .attachments {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.29rem;
+    margin: 0.29rem 0 0;
+    padding: 0;
+  }
+  .attachments li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.29rem;
+    padding: 0.14rem 0.5rem;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+  }
   .row {
     display: flex;
     justify-content: flex-end;

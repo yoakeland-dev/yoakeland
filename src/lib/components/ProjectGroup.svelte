@@ -1,234 +1,170 @@
 <script lang="ts">
   import { slide } from "svelte/transition";
   import { tick } from "svelte";
-  import { app } from "../state.svelte";
-  import { setSessionArchived, setSessionTitle, deleteSession, openInSidePanel, openChatSession } from "../ipc";
-  import { relTime, basename, sessionTitle } from "../format";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
+  import { app, type ConnectionId } from "../state.svelte";
+  import { setSessionArchived, removeProject } from "../ipc";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
+  import ChatRow from "./ChatRow.svelte";
   import SplitEntry from "./SplitEntry.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
-  import { MODE_BY_ID } from "./ModePicker.svelte";
 
   let {
+    connectionId,
     projectPath,
     sessions,
     archived,
     onNewChat,
   }: {
+    connectionId: ConnectionId;
     projectPath: string;
     sessions: SessionSummary[];
     archived: boolean;
     onNewChat?: () => void;
   } = $props();
 
-  // Session state lives on the active connection's own ServerState now —
-  // see the multi-server-connections plan. `cid` is needed by every ipc.ts
-  // call now that they're threaded per connection.
-  let server = $derived(app.active);
-  let cid = $derived(app.activeConnectionId);
+  let server = $derived(app.servers[connectionId]);
+  const connected = $derived(server?.connectionStatus === "connected");
+  const projectName = $derived(server?.projectName(projectPath) ?? projectPath);
 
-  function statusOf(sessionId: string): "working" | "action" | "finished" | "idle" {
-    return server?.sessionStatus(sessionId) ?? "idle";
-  }
+  // Remembered per server and project (ServerState.collapsedProjects).
+  const open = $derived(!server?.collapsedProjects[projectPath]);
+  const toggle = () => server?.setProjectCollapsed(projectPath, open);
 
-  // Native <details> can't be smoothly animated — a plain toggle + {#if}
-  // lets the open/close use the same slide transition as the sidebar itself.
-  // Starts expanded for every project, not just the current one — collapsing
-  // is something the user does per project, not a default the sidebar picks.
-  let open = $state(true);
+  // Unsent drafts don't count — they're hidden from the list too.
+  const hasAnyChat = $derived(
+    (server?.sessionsByProject[projectPath] ?? []).some(
+      (s) => s.messageCount > 0 || (server?.messagesBySession[s.sessionId]?.length ?? 0) > 0,
+    ),
+  );
 
   const slideDuration = $derived(Math.round(180 * app.settings.animationSpeed));
 
-  const statusIcon = {
-    working: "loader-2",
-    action: "alert-circle",
-    finished: "circle-check",
-    idle: "message-circle",
-  } as const;
-
-  let renamingId = $state<string | null>(null);
+  let renaming = $state(false);
   let renameValue = $state("");
   let renameInput = $state<HTMLInputElement | null>(null);
-
-  async function startRename(s: SessionSummary) {
-    renamingId = s.sessionId;
-    renameValue = s.title || "";
+  async function startRename() {
+    renaming = true;
+    renameValue = projectName;
     await tick();
     renameInput?.focus();
     renameInput?.select();
   }
   function commitRename() {
-    if (cid && renamingId && renameValue.trim())
-      setSessionTitle(cid, renamingId, renameValue.trim());
-    renamingId = null;
+    if (renaming) server?.setProjectLabel(projectPath, renameValue);
+    renaming = false;
   }
 
-  function menuItems(s: SessionSummary): ContextMenuItem[] {
-    const isCurrent = s.sessionId === server?.currentSessionId;
-    return [
-      { label: "Rename", icon: "pencil", onSelect: () => startRename(s) },
-      ...(archived
-        ? []
-        : [
-            {
-              label: "Open in side panel",
-              icon: "layout-columns",
-              disabled: isCurrent,
-              onSelect: () => cid && openInSidePanel(cid, s.sessionId),
-            } satisfies ContextMenuItem,
-          ]),
-      {
-        label: archived ? "Unarchive" : "Archive",
-        icon: archived ? "restore" : "archive",
-        onSelect: () => cid && setSessionArchived(cid, s.sessionId, !archived),
-      },
-      {
-        label: "Copy session ID",
-        icon: "copy",
-        onSelect: () => void navigator.clipboard?.writeText(s.sessionId),
-      },
-      {
-        label: "Delete",
-        icon: "trash",
-        danger: true,
-        onSelect: () => {
-          if (cid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
-            deleteSession(cid, s.sessionId);
-          }
-        },
-      },
-    ];
+  function archiveOlder() {
+    const cutoff = Date.now() - app.settings.autoArchiveDays * 86400000;
+    const old = sessions.filter((s) => new Date(s.updatedAt).getTime() < cutoff);
+    if (!old.length || !confirm(`Archive ${old.length} chat${old.length === 1 ? "" : "s"} in ${projectName}?`)) return;
+    for (const s of old) setSessionArchived(connectionId, s.sessionId, true);
   }
+
+  const menuItems = $derived<ContextMenuItem[]>([
+    ...(onNewChat ? [{ label: "New chat", icon: "message-circle-plus", disabled: !connected, onSelect: onNewChat }] : []),
+    { label: open ? "Collapse" : "Expand", icon: open ? "chevron-up" : "chevron-down", onSelect: toggle },
+    { label: "Rename…", icon: "pencil", onSelect: startRename },
+    server?.connectionMode === "local"
+      ? { label: "Reveal in file manager", icon: "folder-open", onSelect: () => void revealItemInDir(projectPath) }
+      : { label: "Copy path", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(projectPath) },
+    ...(archived
+      ? []
+      : [
+          {
+            label: `Archive chats older than ${app.settings.autoArchiveDays}d`,
+            icon: "archive",
+            disabled: !connected,
+            onSelect: archiveOlder,
+          },
+        ]),
+    {
+      label: "Remove from list",
+      icon: "trash",
+      danger: true,
+      disabled: !connected,
+      onSelect: () => {
+        if (!confirm(`Remove ${projectName} from ${server?.label}? Its files aren't touched.`)) return;
+        server?.forgetProject(projectPath);
+        removeProject(connectionId, projectPath);
+      },
+    },
+  ]);
 </script>
 
 <div class="group">
-  <button class="summary" onclick={() => (open = !open)}>
-    <span class="chevron" class:open
-      ><Icon name="chevron-right" size={12} /></span
-    >
-    <span class="name">{basename(projectPath)}</span>
-    <span class="divider"></span>
-    {#if onNewChat}
-      <span class="count-slot">
-        <span class="count">{sessions.length}</span>
-        <span
-          role="button"
-          tabindex="0"
-          class="new-chat-btn"
-          title="New chat"
-          aria-label={`New chat in ${basename(projectPath)}`}
-          onclick={(e) => {
-            e.stopPropagation();
-            onNewChat();
-          }}
+  <ContextMenu items={menuItems}>
+    {#if renaming}
+      <form class="summary" onsubmit={(e) => (e.preventDefault(), commitRename())}>
+        <span class="lead"><Icon name="folder" size={13} /></span>
+        <input
+          class="rename-input"
+          bind:this={renameInput}
+          bind:value={renameValue}
+          placeholder={projectPath.split("/").pop()}
+          onblur={commitRename}
           onkeydown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              e.stopPropagation();
-              onNewChat();
-            }
+            if (e.key === "Escape") renaming = false;
           }}
-        >
-          <Icon name="message-circle-plus" size={13} />
-        </span>
-      </span>
+        />
+      </form>
     {:else}
-      <span class="count">{sessions.length}</span>
+      <button class="summary" onclick={toggle} title={projectPath} aria-expanded={open}>
+        <span class="lead">
+          <span class="face icon-face"><Icon name="folder" size={13} /></span>
+          <span class="face chevron-face" class:open><Icon name="chevron-right" size={12} /></span>
+        </span>
+        <span class="name">{projectName}</span>
+        <span class="divider"></span>
+        {#if server?.refreshingProjects[projectPath]}
+          <span class="spin" title="Refreshing chats…"><Icon name="loader-2" size={11} /></span>
+        {/if}
+        <span class="count-slot">
+          <span class="count">{sessions.length}</span>
+          {#if onNewChat && connected}
+            <span
+              role="button"
+              tabindex="0"
+              class="new-chat-btn"
+              title="New chat"
+              aria-label={`New chat in ${projectName}`}
+              onclick={(e) => {
+                e.stopPropagation();
+                onNewChat();
+              }}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onNewChat();
+                }
+              }}
+            >
+              <Icon name="message-circle-plus" size={13} />
+            </span>
+          {/if}
+        </span>
+      </button>
     {/if}
-  </button>
+  </ContextMenu>
   {#if open}
-    <div class="rows" class:refreshing={server?.refreshingProjects[projectPath]} transition:slide={{ duration: slideDuration }}>
-      {#if sessions.length === 0}
-        <p class="empty">No chats yet</p>
+    <div class="rows" transition:slide={{ duration: slideDuration }}>
+      <!-- Only when the project really has none — its chats may just be
+           shown higher up (Needs you / Running / Pinned). -->
+      {#if sessions.length === 0 && !hasAnyChat}
+        <p class="empty">
+          No chats yet{#if onNewChat && connected}&nbsp;
+            — <button class="link" onclick={onNewChat}>start one</button>{/if}
+        </p>
       {/if}
       {#each sessions as s (s.sessionId)}
         {@const paired = server?.splitPartnerFor(s.sessionId) ?? null}
         {#if paired}
-          <SplitEntry primary={s} secondary={paired} />
+          <SplitEntry primary={s} secondary={paired} {connectionId} />
         {:else}
-          <div class="chat-row" class:active={s.sessionId === server?.currentSessionId}>
-            {#if renamingId === s.sessionId}
-              <div class="chat-item">
-                <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
-                  <Icon name={archived ? "archive" : statusIcon[statusOf(s.sessionId)]} size={13} />
-                </span>
-                <form
-                  class="rename-form"
-                  onsubmit={(e) => (e.preventDefault(), commitRename())}
-                >
-                  <input
-                    class="rename-input"
-                    bind:this={renameInput}
-                    bind:value={renameValue}
-                    onclick={(e) => e.stopPropagation()}
-                    onblur={commitRename}
-                    onkeydown={(e) => {
-                      if (e.key === "Enter") commitRename();
-                      else if (e.key === "Escape") renamingId = null;
-                    }}
-                  />
-                </form>
-              </div>
-            {:else}
-              <ContextMenu items={menuItems(s)}>
-                <button
-                  type="button"
-                  class="chat-item"
-                  class:syncing={server?.syncingSessions[s.sessionId]}
-                  disabled={server?.syncingSessions[s.sessionId]}
-                  aria-label={`${sessionTitle(s)}, ${server?.syncingSessions[s.sessionId] ? "syncing" : statusOf(s.sessionId)}`}
-                  ondblclick={() => startRename(s)}
-                  onclick={() => cid && openChatSession(cid, s.sessionId)}
-                >
-                  <span class="status-icon status-{statusOf(s.sessionId)}" aria-hidden="true">
-                    <Icon name={statusIcon[statusOf(s.sessionId)]} size={13} />
-                  </span>
-                  <span class="label">{sessionTitle(s)}</span>
-                  {#if s.mode && s.mode !== "read_write"}
-                    <span class="mode-badge" title={MODE_BY_ID[s.mode].label}>
-                      <Icon name={MODE_BY_ID[s.mode].icon} size={12} />
-                    </span>
-                  {/if}
-                </button>
-              </ContextMenu>
-            {/if}
-            {#if !archived && s.sessionId !== server?.currentSessionId}
-              <button
-                class="side-panel-btn"
-                title="Open in side panel"
-                aria-label="Open in side panel"
-                onclick={() => cid && openInSidePanel(cid, s.sessionId)}
-              >
-                <Icon name="layout-columns" size={13} />
-              </button>
-            {/if}
-            {#if archived}
-              <button
-                class="delete-btn"
-                title="Delete"
-                aria-label="Delete"
-                onclick={() => {
-                  if (cid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
-                    deleteSession(cid, s.sessionId);
-                  }
-                }}
-              >
-                <Icon name="trash" size={13} />
-              </button>
-            {/if}
-            <span class="meta-slot">
-              <span class="meta">{relTime(s.updatedAt)}</span>
-              <button
-                class="archive"
-                title={archived ? "Unarchive" : "Archive"}
-                aria-label={archived ? "Unarchive" : "Archive"}
-                onclick={() => cid && setSessionArchived(cid, s.sessionId, !archived)}
-              >
-                <Icon name={archived ? "restore" : "archive"} size={13} />
-              </button>
-            </span>
-          </div>
+          <ChatRow {connectionId} session={s} variant={archived ? "archived" : "default"} />
         {/if}
       {/each}
     </div>
@@ -244,7 +180,7 @@
     display: flex;
     align-items: center;
     gap: 0.43rem;
-    padding: 0.24rem 0.26rem 0.24rem 0.57rem;
+    padding: 0.24rem 0.26rem 0.24rem calc(0.57rem + var(--project-indent, 0rem));
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 0.76rem;
@@ -254,16 +190,40 @@
     border: none;
     text-align: left;
     user-select: none;
+    min-height: 1.95rem;
   }
   .summary:hover {
     background: var(--sidebar-hover);
   }
-  .chevron {
-    display: inline-flex;
+  .lead {
+    position: relative;
     flex-shrink: 0;
-    transition: transform calc(0.15s * var(--anim-speed, 1));
+    width: 14px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .chevron.open {
+  .face {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      opacity calc(0.15s * var(--anim-speed, 1)) ease,
+      transform calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .chevron-face,
+  .summary:hover .icon-face,
+  .summary:focus-visible .icon-face {
+    opacity: 0;
+  }
+  .summary:hover .chevron-face,
+  .summary:focus-visible .chevron-face {
+    opacity: 1;
+  }
+  .chevron-face.open {
     transform: rotate(90deg);
   }
   .name {
@@ -273,6 +233,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .rename-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font: inherit;
+    padding: 0;
+  }
   .divider {
     flex: 1;
     min-width: 0.71rem;
@@ -280,27 +250,23 @@
     margin: 0 0.5rem;
     background: var(--panel-border);
   }
-  .count {
-    flex-shrink: 0;
-    font-size: 0.68rem;
-    color: var(--sidebar-fg-dim);
-    opacity: 0.7;
-  }
   .count-slot {
     position: relative;
     flex-shrink: 0;
     width: 1.5rem;
     height: 1.5rem;
   }
-  .count-slot .count {
+  .count {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    font-size: 0.68rem;
+    opacity: 0.7;
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
-  .summary:hover .count-slot .count {
+  .summary:hover .count-slot:has(.new-chat-btn) .count {
     opacity: 0;
   }
   .new-chat-btn {
@@ -309,8 +275,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: none;
-    border: none;
     border-radius: var(--radius-sm);
     color: var(--sidebar-fg-dim);
     cursor: pointer;
@@ -325,187 +289,26 @@
     background: var(--sidebar-hover);
   }
   .empty {
-    padding: 0.36rem 0.71rem;
+    margin: 0;
+    padding: 0.36rem 0.71rem 0.36rem calc(var(--row-indent) + 1.3rem);
     font-size: 0.72rem;
     color: var(--sidebar-fg-dim);
-    opacity: 0.7;
+  }
+  .link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
   }
   .rows {
+    --row-indent: calc(1.28rem + var(--project-indent, 0rem));
     display: flex;
     flex-direction: column;
     gap: 0.14rem;
-    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
-  }
-  .rows.refreshing {
-    opacity: 0.55;
-  }
-  .chat-row {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    border-radius: var(--radius-sm);
-    padding-right: 0.25rem;
-    transition: background calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  .chat-row:hover {
-    background: var(--sidebar-hover);
-  }
-  .chat-row.active {
-    background: var(--sidebar-active);
-  }
-  .chat-item {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    background: transparent;
-    border: none;
-    color: var(--sidebar-fg);
-    padding: 0.5rem 0.71rem 0.5rem 1rem;
-    cursor: pointer;
-    text-align: left;
-    font: inherit;
-    font-size: 0.8rem;
-    min-width: 0;
-  }
-  .chat-row.active .chat-item {
-    color: var(--text);
-  }
-  .chat-item.syncing {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .meta-slot {
-    position: relative;
-    flex-shrink: 0;
-    width: 1.5rem;
-    height: 1.5rem;
-  }
-  .archive,
-  .meta {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
-  }
-  .archive {
-    background: none;
-    border: none;
-    color: var(--sidebar-fg-dim);
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    opacity: 0;
-  }
-  .chat-row:hover .archive {
-    opacity: 1;
-  }
-  .chat-row:hover .meta {
-    opacity: 0;
-  }
-  .archive:hover {
-    color: var(--text);
-    background: var(--sidebar-hover);
-  }
-  .side-panel-btn {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--sidebar-fg-dim);
-    cursor: pointer;
-    opacity: 0;
-    transition:
-      opacity calc(0.15s * var(--anim-speed, 1)) ease,
-      color calc(0.12s * var(--anim-speed, 1)) ease,
-      background calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  .chat-row:hover .side-panel-btn {
-    opacity: 1;
-  }
-  .side-panel-btn:hover {
-    color: var(--text);
-    background: var(--sidebar-hover);
-  }
-  .delete-btn {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--sidebar-fg-dim);
-    cursor: pointer;
-    opacity: 0;
-    transition:
-      opacity calc(0.15s * var(--anim-speed, 1)) ease,
-      color calc(0.12s * var(--anim-speed, 1)) ease,
-      background calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  .chat-row:hover .delete-btn {
-    opacity: 1;
-  }
-  .delete-btn:hover {
-    color: var(--danger, #ff6b6b);
-    background: var(--sidebar-hover);
-  }
-  .status-icon {
-    flex-shrink: 0;
-    display: inline-flex;
-  }
-  .status-icon.status-idle {
-    color: var(--sidebar-fg-dim);
-  }
-  .status-icon.status-action {
-    color: var(--warning);
-  }
-  .status-icon.status-finished {
-    color: var(--success);
-  }
-  .status-icon.status-working {
-    color: var(--info);
-  }
-  .label {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    user-select: none;
-  }
-  .mode-badge {
-    flex-shrink: 0;
-    display: inline-flex;
-    color: var(--text-dim);
-  }
-  .rename-form {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-  }
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font: inherit;
-    font-size: 0.8rem;
-    padding: 0;
-    margin: 0;
-  }
-  .meta {
-    font-size: 0.68rem;
-    color: var(--sidebar-fg-dim);
-    pointer-events: none;
   }
 </style>

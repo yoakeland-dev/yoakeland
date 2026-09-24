@@ -72,6 +72,10 @@
         <Dialog.Title>Snapshots</Dialog.Title>
         <Dialog.Close class="snap-close"><Icon name="xmark" size={14} /></Dialog.Close>
       </div>
+      <Dialog.Description class="snap-note">
+        Restoring only undoes yoakeland's own edits. Changes made by a CLI agent (Claude, Codex, …) aren't
+        snapshotted — use git or the agent's own undo for those.
+      </Dialog.Description>
       <ul class="list">
         {#each snapshots as snap (snap.snapshotId)}
           <li>
@@ -187,6 +191,11 @@
     flex-direction: column;
     gap: 0.14rem;
     min-width: 0;
+  }
+  :global(.snap-note) {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
   }
   .desc {
     font-size: 0.82rem;

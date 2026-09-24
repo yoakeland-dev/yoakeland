@@ -464,3 +464,470 @@ pre {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* bits-ui Switch — one recipe for every on/off toggle (Settings, the mode
+   picker's tool rows). */
+.switch-root {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  width: 2rem;
+  height: 1.14rem;
+  padding: 0.14rem;
+  background: var(--sidebar-hover);
+  border: 1px solid var(--panel-border);
+  border-block-color: var(--panel-border-top) var(--panel-border-bottom);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background calc(0.15s * var(--anim-speed, 1)) ease;
+}
+.switch-root[data-state="checked"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch-root[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.switch-thumb {
+  width: 0.86rem;
+  height: 0.86rem;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform calc(0.15s * var(--anim-speed, 1)) ease;
+}
+.switch-thumb[data-state="checked"] {
+  transform: translateX(0.86rem);
+}
+
+/* The composer toolbar's pickers (ModelPicker, ModePicker): transparent at
+   rest, filled on hover/open. The leading icon and a chevron share one slot
+   and crossfade on hover/open — same treatment as Dropdown.svelte's
+   triggerIcon — so the chevron reads as "this opens a list" without
+   crowding the label. The border stays a real 1px box so hovering can't
+   shift the label. */
+.picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.43rem;
+  height: 1.86rem;
+  max-width: 12.86rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-pill);
+  padding: 0 0.71rem;
+  font-size: var(--text-label-size);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background calc(0.12s * var(--anim-speed, 1)) ease,
+    color calc(0.12s * var(--anim-speed, 1)) ease;
+}
+.picker-trigger:hover,
+.picker-trigger.open {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+.picker-trigger .trigger-icon {
+  position: relative;
+  width: 0.93rem;
+  height: 0.93rem;
+  flex-shrink: 0;
+}
+.picker-trigger .crossfade {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+}
+.picker-trigger .crossfade.b,
+.picker-trigger:hover .crossfade.a,
+.picker-trigger.open .crossfade.a {
+  opacity: 0;
+}
+.picker-trigger:hover .crossfade.b,
+.picker-trigger.open .crossfade.b {
+  opacity: 1;
+}
+.picker-trigger .trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Settings > Appearance > Main area = Flat: no gap around the chat area, so
+   everything derived from --chat-margin (the window chrome's inset included)
+   follows; ChatPanel squares its own corners. */
+:root[data-main="flat"] {
+  --chat-margin: 0px;
+}
+
+/* Shared spinner — `<span class="spin"><Icon name="loader-2" /></span>`. */
+@keyframes spin-global {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  display: inline-flex;
+  animation: spin-global 0.9s linear infinite;
+}
+
+/* Status-bar popups (UsageWidget, NotificationCenter, ServerHealthWidget,
+   GitWidget, TerminalsWidget, PeersWidget): one trigger, one floating panel,
+   one footer (title left, actions right). Content is either cards (a few
+   things with meters: usage, servers) or list rows (many things: repos,
+   terminals, peers). */
+.sb-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  height: 1.43rem;
+  padding: 0 0.43rem;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sb-trigger:hover,
+.sb-trigger[data-state="open"] {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+.sb-panel {
+  width: min(24rem, 92vw);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--float-bg);
+  backdrop-filter: var(--float-blur);
+  -webkit-backdrop-filter: var(--float-blur);
+  border: 1px solid var(--float-border);
+  border-block-color: var(--float-border-top) var(--float-border-bottom);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  z-index: var(--z-popover);
+  animation: floatIn var(--float-enter-duration) ease-out;
+}
+.sb-panel[data-side="top"][data-align="end"] {
+  transform-origin: bottom right;
+}
+.sb-panel[data-side="top"][data-align="start"] {
+  transform-origin: bottom left;
+}
+.sb-panel[data-state="closed"] {
+  animation: floatOut var(--float-exit-duration) ease-in;
+}
+.sb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.29rem;
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+.sb-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.43rem;
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+.sb-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.57rem;
+  min-height: 1.86rem;
+  padding: 0.36rem 0.5rem 0.43rem 0.71rem;
+  border-top: 1px solid var(--float-border);
+}
+.sb-foot-title {
+  font-size: var(--text-label-size);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.sb-foot-actions {
+  display: flex;
+  gap: 0.14rem;
+}
+.sb-foot-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.29rem;
+  padding: 0.14rem 0.43rem;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-label-size);
+  cursor: pointer;
+}
+.sb-foot-btn:hover {
+  color: var(--text);
+  background: var(--sidebar-hover);
+}
+/* Bare until hovered; selected is the app's usual active fill (sidebar
+   rows, model picker) plus a hairline, not an accent. */
+.sb-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.71rem;
+  min-width: 0;
+  padding: 0.64rem 0.71rem 0.71rem;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition:
+    background calc(0.12s * var(--anim-speed, 1)) ease,
+    box-shadow calc(0.12s * var(--anim-speed, 1)) ease;
+}
+button.sb-card {
+  cursor: pointer;
+}
+button.sb-card:hover {
+  background: var(--sidebar-hover);
+}
+.sb-card.selected,
+button.sb-card.selected:hover {
+  background: var(--sidebar-active);
+  box-shadow: inset 0 0 0 1px var(--panel-border);
+}
+.sb-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.sb-mark {
+  flex-shrink: 0;
+  display: flex;
+  color: var(--text-dim);
+}
+.sb-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.07rem;
+}
+.sb-card-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.36rem;
+  font-size: 0.66rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.57rem;
+}
+/* A labelled meter: name + note on top, bar + value below. */
+.sb-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.21rem;
+}
+.sb-meter-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.43rem;
+  font-size: 0.7rem;
+}
+.sb-meter-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-meter-note {
+  flex-shrink: 0;
+  font-size: 0.64rem;
+  color: var(--text-dim);
+}
+.sb-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.sb-bar {
+  position: relative;
+  flex: 1;
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+.sb-bar.mini {
+  flex: none;
+  width: 2.3rem;
+  height: 4px;
+}
+.sb-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width calc(0.3s * var(--anim-speed, 1)) ease;
+}
+.sb-value {
+  flex-shrink: 0;
+  min-width: 2.2rem;
+  text-align: right;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sb-fill.hot {
+  background: var(--warning);
+}
+.sb-fill.full {
+  background: var(--danger);
+}
+.sb-value.hot,
+.sb-level.hot {
+  color: var(--warning);
+}
+.sb-value.full,
+.sb-level.full {
+  color: var(--danger);
+}
+/* Small key/value facts under a card's meters. */
+.sb-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.21rem 0.71rem;
+  font-size: 0.68rem;
+}
+.sb-facts dt {
+  color: var(--text-dim);
+}
+.sb-facts dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* List rows: a main button (lead, text, trailing bits) and optional
+   hover-revealed actions beside it. */
+.sb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.21rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+/* Keeps an overlay scrollbar off the hover actions on the right, only while
+   there is one (markOverflow). */
+.sb-list[data-overflow] {
+  padding-right: calc(0.21rem + var(--scrollbar-size));
+}
+.sb-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+.sb-row:hover {
+  background: var(--sidebar-hover);
+}
+.sb-row.current {
+  background: var(--sidebar-active);
+}
+.sb-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.57rem;
+  padding: 0.36rem 0.5rem;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+button.sb-row-main {
+  cursor: pointer;
+}
+.sb-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.07rem;
+}
+.sb-row-name,
+.sb-row-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-row-name {
+  font-size: 0.8rem;
+}
+.sb-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.29rem;
+  font-size: var(--text-label-size);
+  color: var(--text-dim);
+}
+.sb-row-action {
+  flex-shrink: 0;
+  display: flex;
+  margin-right: 0.21rem;
+  padding: 0.29rem;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+}
+.sb-row:hover .sb-row-action,
+.sb-row-action:focus-visible {
+  opacity: 1;
+}
+.sb-row-action:hover {
+  color: var(--text);
+  background: var(--sidebar-hover);
+}
+.sb-row-action.danger:hover {
+  color: var(--danger);
+}
+.sb-foot-meta {
+  font-size: var(--text-label-size);
+  color: var(--text-dim);
+}
+.sb-empty {
+  margin: 0;
+  padding: 0.71rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}

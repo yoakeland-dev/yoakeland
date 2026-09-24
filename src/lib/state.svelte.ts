@@ -2,11 +2,18 @@ import type {
   AskUserQuestionData,
   ChatMessage,
   ChatMode,
+  CliKind,
   DirectoryEntry,
+  FileDiff,
+  GitStatus,
+  NativeToolFields,
+  ServerNotification,
+  ServerStatus,
   Envelope,
   PeerInfo,
   ModelInfo,
   ModelOptions,
+  PendingAsk,
   PermissionRequestData,
   ProviderInfo,
   SandboxTier,
@@ -19,8 +26,14 @@ import type {
   ToolCallRequestedData,
   ToolResultData,
   TurnCompletedData,
+  TerminalSummary,
 } from "./types";
-import { deriveTheme } from "./theme";
+import { invoke } from "@tauri-apps/api/core";
+
+/** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
+type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
+import { deriveTheme, deriveTerminalTheme, TERMINAL_THEME_PRESETS } from "./theme";
+import { isDesktop } from "./platform";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 
@@ -213,14 +226,10 @@ function migrateLegacyStateIfNeeded(serverId: string) {
   }
 }
 
-// --- Known servers (yoake.knownServers) — enough to offer a remembered
-// server back for reconnection without re-entering host/path. Deliberately
-// never includes the auth token itself (storing a bare TCP token client-side
-// without real OS credential storage isn't something to do silently, same
-// precedent as the reconnect-policy comment in ipc.ts) — a remembered remote
-// server still needs the token typed in again. Not yet read by anything
-// (that's phase 4's "reconnect to a remembered server" UI); populated here
-// so that UI has real data to work with once it exists. ---
+// --- Known servers (yoake.knownServers) — everything needed to reconnect
+// a remembered server on startup (ipc.ts's autoConnect) except a remote's
+// token, which lives outside localStorage in the backend's owner-only
+// credentials file (src-tauri/src/credentials.rs), keyed by serverId. ---
 
 export interface KnownServer {
   serverId: string;
@@ -234,10 +243,20 @@ export interface KnownServer {
 }
 
 const KNOWN_SERVERS_KEY = "yoake.knownServers";
+const SPEND_TODAY_KEY = "yoake.spendToday";
 
-/** Read by ConnectScreen.svelte's "known servers" quick-reconnect list (Phase
- * 4 of the multi-server-connections plan) — everything else about known
- * servers stays internal to this module. */
+function loadSpendToday(): { day: string; usd: number } {
+  try {
+    const v = JSON.parse(localStorage.getItem(SPEND_TODAY_KEY) ?? "null");
+    if (v && typeof v.day === "string" && typeof v.usd === "number") return v;
+  } catch {
+    // fall through
+  }
+  return { day: "", usd: 0 };
+}
+
+/** Read by the server lists in CommandPalette.svelte and SettingsPanel.svelte
+ * — everything else about known servers stays internal to this module. */
 export function loadKnownServers(): KnownServer[] {
   try {
     const raw = localStorage.getItem(KNOWN_SERVERS_KEY);
@@ -258,6 +277,32 @@ function upsertKnownServer(entry: KnownServer) {
   } catch {
     // best-effort only
   }
+}
+
+/** Drops one entry from the remembered-servers list — the other half of
+ * upsertKnownServer, so a server that showed up here (e.g. from a stray
+ * connect attempt, or one you just don't want offered for reconnect anymore)
+ * can actually be forgotten. Used by ipc.ts's removeServer for a currently
+ * live connection, and directly by CommandPalette's "known servers" list for
+ * one that isn't. */
+export function forgetKnownServer(serverId: string) {
+  try {
+    localStorage.setItem(KNOWN_SERVERS_KEY, JSON.stringify(loadKnownServers().filter((s) => s.serverId !== serverId)));
+  } catch {
+    // best-effort only
+  }
+  void storeServerToken(serverId, null);
+}
+
+/** A remote server's auth token, remembered so it can reconnect unattended
+ * (startup and dropped connections alike). null deletes it. */
+export function storeServerToken(serverId: string, token: string | null): Promise<void> {
+  if (!isDesktop) return Promise.resolve();
+  return invoke<void>("store_credential", { key: serverId, value: token }).catch(() => {});
+}
+export function loadServerToken(serverId: string): Promise<string | null> {
+  if (!isDesktop) return Promise.resolve(null);
+  return invoke<string | null>("load_credential", { key: serverId }).catch(() => null);
 }
 
 /** Stable key for a (provider, model) pair — used as a Svelte `#each` key in
@@ -306,12 +351,21 @@ export interface AppSettings {
    * changes (listener registered once in +page.svelte). */
   theme: "dark" | "light" | "system";
   accent: string;
+  /** Root font size in px — every rem-sized thing scales with it, so the UI
+   * presents it as an interface scale (14px = 100%). */
   uiFontSize: number;
   codeFontSize: number;
   uiFontFamily: string;
   codeFontFamily: string;
   codeWrapLines: boolean;
+  /** Code block syntax colors — same choice as the terminal's: derived from
+   * the accent, or one of TERMINAL_THEME_PRESETS. See highlight.ts. */
+  codeUseAppTheme: boolean;
+  codeColorTheme: string;
   animationSpeed: number;
+  /** "floating": the chat area is an inset rounded card. "flat": it fills
+   * its space edge to edge with square corners — see [data-main] in app.css. */
+  mainArea: "floating" | "flat";
   profileName: string;
   /** Either an emoji glyph or an uploaded 96x96 photo as a data URL — see
    * avatar.ts. Sent to every server this client connects to when
@@ -342,7 +396,7 @@ export interface AppSettings {
    * case, paired by importing its ca.pem once) or an operator-supplied real
    * certificate (left unpaired here, verified against the OS trust store
    * instead). Keyed by address rather than serverId because it has to be
-   * looked up *before* a connection succeeds (ConnectScreen's prefill) —
+   * looked up *before* a connection succeeds (palette's connect page prefill) —
    * before which no serverId is knowable. See trustedCaByServer for the
    * keyed-by-identity counterpart used once one is. */
   trustedCaByHostPort: Record<string, string>;
@@ -370,6 +424,9 @@ export interface AppSettings {
    * already padded (asymmetric) before this was configurable. */
   terminalMarginX: number;
   terminalMarginY: number;
+  /** Which provider the status bar's usage widget shows collapsed, as
+   * "<serverId>:<kind>" (UsageWidget.svelte). "" = the most-used one. */
+  usageFocus: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -380,7 +437,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   uiFontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   codeFontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
   codeWrapLines: true,
+  codeUseAppTheme: true,
+  codeColorTheme: "dracula",
   animationSpeed: 1,
+  mainArea: "floating",
   profileName: "",
   profileAvatar: "🐣",
   wallpaper: "",
@@ -395,6 +455,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   terminalSmoothScroll: false,
   terminalMarginX: 10,
   terminalMarginY: 5,
+  usageFocus: "",
 };
 
 function loadSettings(): AppSettings {
@@ -454,9 +515,33 @@ export class ServerState {
   // in-flight restore actually completed instead of closing optimistically.
   lastSnapshotRestored = $state<{ snapshotId: string; at: number } | null>(null);
 
+  // Shared notification feed (§3.2 `notification`) — replayed by
+  // list_notifications on connect, then kept live by pushes. `unseen` counts
+  // arrivals since the notification center was last opened.
+  notifications = $state<ServerNotification[]>([]);
+  unseenNotifications = $state(0);
+  // Last status snapshot from the heartbeat (§2a), for the status bar.
+  serverStatus = $state<ServerStatus | null>(null);
+
   // Peer registry & server identity (§2a/§3.2) — pushed live, never polled.
   peers = $state<PeerInfo[]>([]);
+  /** Our own peerId on this server (peer_list's `you`; null on older servers). */
+  selfPeerId = $state<string | null>(null);
   serverIdentity = $state<string | null>(null);
+  /** What the UI calls this server everywhere (lists, badges, avatars). */
+  get label(): string {
+    return this.serverIdentity ?? (this.connectionMode === "local" ? "Local" : "Remote");
+  }
+  /** A project's display name — qualified "server/project" for a remote,
+   * since the sidebar and palette list every server's projects together. */
+  projectLabel(path: string): string {
+    const name = this.projectName(path);
+    return this.connectionMode === "local" ? name : `${this.label}/${name}`;
+  }
+  /** Just the project's own name (a local rename, else its folder name). */
+  projectName(path: string): string {
+    return this.projectLabels[path] ?? path.split(/[/\\]/).filter(Boolean).pop() ?? path;
+  }
   // Last-known state of the optional TCP listener, from this connection's own
   // set_remote_access calls (there's no "get current state" event in the
   // wire protocol — see remote_access_set in §3.2).
@@ -470,7 +555,7 @@ export class ServerState {
   // holds the one-time raw token from token_registered so Settings can show
   // a "copy this now" reveal — cleared once acknowledged, never persisted.
   tokens = $state<TokenInfo[]>([]);
-  justRegisteredToken = $state<{ name: string; token: string } | null>(null);
+  justRegisteredToken = $state<{ name: string; token: string; caPem?: string } | null>(null);
 
   // Set while a session's transcript is being refetched from the server
   // (get_session_history, ipc.ts's openChatSession) — the chat view grays
@@ -549,7 +634,7 @@ export class ServerState {
   finishedSessions = $state<Record<string, boolean>>({});
 
   providers = $state<ProviderInfo[]>([]);
-  cliAvailability = $state<{ claude: boolean; codex: boolean }>({ claude: false, codex: false });
+  cliAvailability = $state<Partial<Record<CliKind, boolean>>>({});
   providerBySession = $state<Record<string, string | undefined>>({});
   modelBySession = $state<Record<string, string | undefined>>({});
   // Set when a turn comes back with finishReason "no_provider" (the selected
@@ -595,15 +680,112 @@ export class ServerState {
   planBySession = $state<Record<string, { path: string; updatedAt: number }>>({});
   openPlanSessionId = $state<string | null>(null);
 
-  pendingPermission = $state<
-    | (PermissionRequestData & { sessionId: string; turnId: string; toolCallId: string })
-    | null
-  >(null);
-  // Own slot, not reused from pendingPermission — a permission ask and a
-  // question ask can be outstanding in different sessions at once.
-  pendingQuestion = $state<
-    (AskUserQuestionData & { sessionId: string; turnId: string; toolCallId: string }) | null
-  >(null);
+  // Every unanswered permission/question ask on this server, oldest first —
+  // across all sessions, including ones this client never subscribed to.
+  // Replaced wholesale by each pending_asks snapshot (§3.2, sent on connect
+  // and after every change); the live permission_request/
+  // ask_user_question_requested events only append for instant feedback.
+  pendingAsks = $state<PendingAsk[]>([]);
+  // git_status (§3.2), per project. A project that never gets one isn't a
+  // git repo (or the server has no git) — absence means "no git".
+  gitStatusByProject = $state<Record<string, GitStatus>>({});
+
+  // --- Sidebar-only local state, persisted per server (see saveSidebarPrefs).
+  pinnedSessions = $state<string[]>([]);
+  collapsedProjects = $state<Record<string, boolean>>({});
+  // Manual drag order; projects not in it sort by most recent activity.
+  projectOrder = $state<string[]>([]);
+  // Local display names — never sent to the server.
+  projectLabels = $state<Record<string, string>>({});
+  // The session's server `updatedAt` as of the last time it was open here —
+  // a later updatedAt means something happened while you weren't looking.
+  // Server timestamps on both sides, so client clock skew can't matter.
+  lastViewedBySession = $state<Record<string, string>>({});
+  // Unsent composer text per chat (memory only) — PromptInput saves/restores
+  // it across chat switches, and the sidebar marks chats that have one.
+  composerDraftBySession = $state<Record<string, string>>({});
+
+  private saveSidebarPrefs() {
+    if (!this.serverId) return;
+    saveServerString(
+      this.serverId,
+      "sidebar",
+      JSON.stringify({
+        pinned: this.pinnedSessions,
+        collapsed: this.collapsedProjects,
+        order: this.projectOrder,
+        labels: this.projectLabels,
+        lastViewed: this.lastViewedBySession,
+      }),
+    );
+  }
+
+  private loadSidebarPrefs(serverId: string) {
+    try {
+      const p = JSON.parse(loadServerString(serverId, "sidebar") ?? "{}");
+      this.pinnedSessions = [...new Set([...(p.pinned ?? []), ...this.pinnedSessions])];
+      this.collapsedProjects = { ...p.collapsed, ...this.collapsedProjects };
+      this.projectOrder = this.projectOrder.length ? this.projectOrder : (p.order ?? []);
+      this.projectLabels = { ...p.labels, ...this.projectLabels };
+      this.lastViewedBySession = { ...p.lastViewed, ...this.lastViewedBySession };
+    } catch {
+      // corrupt prefs — start fresh
+    }
+  }
+
+  togglePin(sessionId: string) {
+    this.pinnedSessions = this.pinnedSessions.includes(sessionId)
+      ? this.pinnedSessions.filter((id) => id !== sessionId)
+      : [...this.pinnedSessions, sessionId];
+    this.saveSidebarPrefs();
+  }
+
+  setProjectCollapsed(path: string, collapsed: boolean) {
+    if (collapsed) this.collapsedProjects = { ...this.collapsedProjects, [path]: true };
+    else {
+      const { [path]: _, ...rest } = this.collapsedProjects;
+      this.collapsedProjects = rest;
+    }
+    this.saveSidebarPrefs();
+  }
+
+  setProjectOrder(paths: string[]) {
+    this.projectOrder = paths;
+    this.saveSidebarPrefs();
+  }
+
+  setProjectLabel(path: string, label: string) {
+    const { [path]: _, ...rest } = this.projectLabels;
+    this.projectLabels = label.trim() ? { ...rest, [path]: label.trim() } : rest;
+    this.saveSidebarPrefs();
+  }
+
+  /** Records `updatedAt` as seen — called for the open chat, and to seed
+   * chats seen for the first time (so a fresh install isn't all unread). */
+  markViewed(sessionId: string, updatedAt: string | undefined, save = true) {
+    if (!updatedAt || this.lastViewedBySession[sessionId] === updatedAt) return;
+    this.lastViewedBySession[sessionId] = updatedAt;
+    if (save) this.saveSidebarPrefs();
+  }
+
+  isUnread(s: SessionSummary): boolean {
+    if (s.sessionId === this.currentSessionId || this.activeTurnBySession[s.sessionId]) return false;
+    const seen = this.lastViewedBySession[s.sessionId];
+    return !!seen && Date.parse(s.updatedAt) > Date.parse(seen);
+  }
+
+  asksFor(sessionId: string): PendingAsk[] {
+    return this.pendingAsks.filter((a) => a.sessionId === sessionId);
+  }
+
+  removeAsk(toolCallId: string) {
+    this.pendingAsks = this.pendingAsks.filter((a) => a.toolCallId !== toolCallId);
+  }
+
+  private addAsk(ask: PendingAsk) {
+    if (this.pendingAsks.some((a) => a.toolCallId === ask.toolCallId)) return;
+    this.pendingAsks = [...this.pendingAsks, ask];
+  }
 
   // --- Chat history navigation (the titlebar island's back/forward arrows).
   // Two plain stacks, pushed by ipc.ts's openChatSession — the one funnel every
@@ -660,6 +842,17 @@ export class ServerState {
     return linkedId ? (this.sessionById.get(linkedId) ?? null) : null;
   }
 
+  /** Whether the current main chat can anchor a split: not an unstarted
+   * draft (nothing to persist the pairing on) and not archived — same
+   * archived rule as the sidebar's (explicit flag or auto-archive age). */
+  get canSplitCurrent(): boolean {
+    const id = this.currentSessionId;
+    if (!id || !(this.messagesBySession[id] ?? []).length) return false;
+    const s = this.sessionById.get(id);
+    if (!s) return false;
+    return !s.archived && this.app.now - new Date(s.updatedAt).getTime() <= this.app.settings.autoArchiveDays * 86400000;
+  }
+
   get currentSessions(): SessionSummary[] {
     if (!this.currentProjectPath) return [];
     return this.sessionsByProject[this.currentProjectPath] ?? [];
@@ -685,7 +878,7 @@ export class ServerState {
 
   sessionStatus(sessionId: string): "working" | "action" | "finished" | "idle" {
     if (this.takenOverSessions[sessionId]) return "idle";
-    if (this.pendingPermission?.sessionId === sessionId || this.pendingQuestion?.sessionId === sessionId) return "action";
+    if (this.pendingAsks.some((a) => a.sessionId === sessionId)) return "action";
     if (this.activeTurnBySession[sessionId]) return "working";
     if (this.finishedSessions[sessionId]) return "finished";
     return "idle";
@@ -794,7 +987,7 @@ export class ServerState {
     if (this.serverId) saveServerRecentProjects(this.serverId, this.recentProjects);
   }
 
-  /** Removes a saved path from the picker (Settings > Connections). Purely
+  /** Removes a saved path from the picker (Settings > Projects). Purely
    * the local half — the caller also sends remove_project so the server
    * stops re-adding it via the next project_list (see ipc.removeProject).
    * Also drops its sessions from sessionsByProject/projectBySession —
@@ -811,6 +1004,7 @@ export class ServerState {
     // project stays selected whenever one is still available; null only
     // when this really was the last one.
     if (this.currentProjectPath === path) this.currentProjectPath = this.recentProjects[0] ?? null;
+    delete this.gitStatusByProject[path];
     const orphaned = this.sessionsByProject[path] ?? [];
     delete this.sessionsByProject[path];
     for (const s of orphaned) {
@@ -870,6 +1064,7 @@ export class ServerState {
   openSession(sessionId: string) {
     this.ensureSession(sessionId);
     this.currentSessionId = sessionId;
+    app.showUsage = false;
     const partner = this.splitPartnerFor(sessionId);
     if (partner) {
       this.ensureSession(partner.sessionId);
@@ -885,6 +1080,7 @@ export class ServerState {
     }
     const project = this.projectBySession[sessionId];
     if (project) this.currentProjectPath = project;
+    this.markViewed(sessionId, this.sessionById.get(sessionId)?.updatedAt);
   }
 
   /** Shows `sessionId` in the right sidebar, un-collapsing it if needed —
@@ -1014,9 +1210,12 @@ export class ServerState {
       content: string;
       author?: string;
       authorAvatar?: string;
+      attachments?: string[];
       reasoning?: string;
-      toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
+      toolCalls?: HistoryToolCall[];
       toolCallId?: string;
+      diffs?: FileDiff[];
+      error?: string;
       provider?: string;
       model?: string;
       createdAt?: string;
@@ -1025,8 +1224,10 @@ export class ServerState {
     }[],
   ) {
     if (this.activeTurnBySession[sessionId]) return;
-    const toolResults = new Map<string, string>();
-    for (const m of messages) if (m.role === "tool" && m.toolCallId) toolResults.set(m.toolCallId, m.content);
+    const toolResults = new Map<string, { content: string; diffs?: FileDiff[]; error?: string }>();
+    for (const m of messages) {
+      if (m.role === "tool" && m.toolCallId) toolResults.set(m.toolCallId, { content: m.content, diffs: m.diffs, error: m.error });
+    }
 
     const base = Date.now();
     let turnIndex = 0;
@@ -1065,6 +1266,7 @@ export class ServerState {
           authorAvatar: storedAuthor
             ? m.authorAvatar
             : this.app.settings.profileAvatar || undefined,
+          attachments: m.attachments,
         });
       } else {
         // A turn with tool calls makes one round-trip per assistant entry
@@ -1100,22 +1302,32 @@ export class ServerState {
         // The backend has been observed persisting the same toolCallId twice
         // (see the live tool_call_requested handler below) — dedupe here too,
         // or a duplicate key crashes the keyed {#each} over toolCalls.
+        // A round-trip's text and reasoning stream *before* its tool calls,
+        // so append them first — the calls' offsets then land after them,
+        // matching the live render (text → call → result → text).
+        cur.text += m.content ?? "";
+        if (m.reasoning) cur.thinking = (cur.thinking ?? "") + m.reasoning;
         const seen = new Set(cur.toolCalls.map((t) => t.toolCallId));
         for (const tc of m.toolCalls ?? []) {
           if (seen.has(tc.id)) continue;
           seen.add(tc.id);
+          const result = toolResults.get(tc.id);
           cur.toolCalls.push({
             toolCallId: tc.id,
             name: tc.name,
             args: tc.args ?? {},
-            status: "done",
-            output: toolResults.get(tc.id) ?? "",
+            native: tc.native,
+            title: tc.title,
+            kind: tc.kind,
+            locations: tc.locations,
+            diffs: result?.diffs,
+            status: result?.error ? (result.error.includes("permission denied") ? "denied" : "error") : "done",
+            output: result?.content ?? "",
+            error: result?.error || undefined,
             textOffset: cur.text.length,
             thinkingOffset: cur.thinking?.length ?? 0,
           });
         }
-        cur.text += m.content ?? "";
-        if (m.reasoning) cur.thinking = (cur.thinking ?? "") + m.reasoning;
         // Provider/model/usage/duration are per round-trip; the merged
         // bubble's footer shows the turn's totals — provider/model as last
         // used (a mid-turn switch is the rare case), usage/duration summed.
@@ -1149,6 +1361,7 @@ export class ServerState {
     this.currentProjectPath = projectPath;
     this.currentSessionId = id;
     this.sidebarSessionId = null;
+    app.showUsage = false;
     return id;
   }
 
@@ -1177,6 +1390,12 @@ export class ServerState {
     delete this.modeBySession[sessionId];
     delete this.planBySession[sessionId];
     delete this.syncingSessions[sessionId];
+    delete this.composerDraftBySession[sessionId];
+    if (sessionId in this.lastViewedBySession || this.pinnedSessions.includes(sessionId)) {
+      delete this.lastViewedBySession[sessionId];
+      this.pinnedSessions = this.pinnedSessions.filter((id) => id !== sessionId);
+      this.saveSidebarPrefs();
+    }
     if (this.currentSessionId === sessionId) this.currentSessionId = null;
     if (this.sidebarSessionId === sessionId) this.sidebarSessionId = null;
     if (this.openPlanSessionId === sessionId) this.openPlanSessionId = null;
@@ -1205,13 +1424,14 @@ export class ServerState {
     this.forgetSessionState(sessionId);
   }
 
-  addUserMessage(sessionId: string, turnId: string, text: string) {
+  addUserMessage(sessionId: string, turnId: string, text: string, attachments?: string[]) {
     this.ensureSession(sessionId);
     const msg: ChatMessage = {
       id: turnId,
       role: "user",
       turnId,
       text,
+      attachments: attachments?.length ? attachments : undefined,
       toolCalls: [],
       streaming: false,
       createdAt: Date.now(),
@@ -1326,6 +1546,7 @@ export class ServerState {
     this.sessionsByProject = { ...history.sessionsByProject, ...this.sessionsByProject };
     this.projectBySession = { ...history.projectBySession, ...this.projectBySession };
     this.messagesBySession = { ...history.messagesBySession, ...this.messagesBySession };
+    this.loadSidebarPrefs(serverId);
     this.lastUsedProvider = loadServerString(serverId, "lastUsedProvider");
     this.lastUsedModel = loadServerString(serverId, "lastUsedModel");
     const mode = loadServerString(serverId, "lastUsedMode");
@@ -1345,6 +1566,7 @@ export class ServerState {
       }
     }
 
+    if (this.connectParams.mode === "remote") void storeServerToken(serverId, this.connectParams.token);
     upsertKnownServer({
       serverId,
       mode: this.connectionMode,
@@ -1360,6 +1582,36 @@ export class ServerState {
     // the equivalent moment: the first point after connecting that there's
     // actually a session history to restore into.
     this.restoreLastSession();
+  }
+
+  /** Replaces sessionId's tabs with a server listing (terminal_list, or one
+   * chat's slice of terminal_index). */
+  private applyTerminalList(sid: string, terminals: TerminalSummary[]) {
+    const ids: string[] = [];
+    const nextById = { ...this.terminalById };
+    for (const t of terminals) {
+      ids.push(t.terminalId);
+      const existing = nextById[t.terminalId];
+      nextById[t.terminalId] = {
+        terminalId: t.terminalId,
+        sessionId: sid,
+        cwd: t.cwd,
+        status: t.status,
+        label: t.label,
+        title: existing?.title,
+        cols: existing?.cols ?? 80,
+        rows: existing?.rows ?? 24,
+        sequence: existing?.sequence ?? 0,
+        exitCode: t.status === "exited" ? (t.exitCode ?? existing?.exitCode) : undefined,
+        pid: existing?.pid,
+        sandboxTier: existing?.sandboxTier,
+      };
+    }
+    this.terminalById = nextById;
+    this.terminalsBySession[sid] = ids;
+    this.terminalsListedBySession[sid] = true;
+    const active = this.activeTerminalBySession[sid];
+    if (!active || !ids.includes(active)) this.activeTerminalBySession[sid] = ids[0];
   }
 
   handleEvent(env: Envelope) {
@@ -1394,14 +1646,19 @@ export class ServerState {
           // the {#each ... (call.toolCallId)} keyed block in ToolCallCard's
           // parent and freezes the whole message list mid-render.
           const existing = msg.toolCalls.find((t) => t.toolCallId === env.toolCallId);
+          // Native calls (cli_* agents, §6b) carry title/kind/locations so
+          // they render without knowing the agent's own tool names.
+          const native = { native: data.native, title: data.title, kind: data.kind, locations: data.locations };
           if (existing) {
             existing.name = data.name;
             existing.args = data.args ?? {};
+            Object.assign(existing, native);
           } else {
             const entry: ToolCallEntry = {
               toolCallId: env.toolCallId,
               name: data.name,
               args: data.args ?? {},
+              ...native,
               status: "requested",
               textOffset: msg.text.length,
               thinkingOffset: msg.thinking?.length ?? 0,
@@ -1423,7 +1680,15 @@ export class ServerState {
           }
         }
         if (env.toolCallId && env.turnId) {
-          this.pendingPermission = { ...data, sessionId, turnId: env.turnId, toolCallId: env.toolCallId };
+          this.addAsk({
+            ...data,
+            kind: "permission",
+            sessionId,
+            projectPath: this.projectBySession[sessionId],
+            turnId: env.turnId,
+            toolCallId: env.toolCallId,
+            createdAt: new Date().toISOString(),
+          });
         }
         break;
       }
@@ -1438,7 +1703,15 @@ export class ServerState {
           }
         }
         if (env.toolCallId && env.turnId) {
-          this.pendingQuestion = { ...data, sessionId, turnId: env.turnId, toolCallId: env.toolCallId };
+          this.addAsk({
+            ...data,
+            kind: "question",
+            sessionId,
+            projectPath: this.projectBySession[sessionId],
+            turnId: env.turnId,
+            toolCallId: env.toolCallId,
+            createdAt: new Date().toISOString(),
+          });
         }
         break;
       }
@@ -1451,18 +1724,15 @@ export class ServerState {
             entry.status = data.error ? (data.error.includes("permission denied") ? "denied" : "error") : "done";
             entry.output = data.output;
             entry.error = data.error;
+            if (data.diffs?.length) entry.diffs = data.diffs;
           }
         }
-        if (this.pendingPermission?.toolCallId === env.toolCallId) {
-          this.pendingPermission = null;
-        }
-        if (this.pendingQuestion?.toolCallId === env.toolCallId) {
-          this.pendingQuestion = null;
-        }
+        if (env.toolCallId) this.removeAsk(env.toolCallId);
         break;
       }
       case "turn_completed": {
         const data = env.data as unknown as TurnCompletedData;
+        if (data.finishReason !== "no_provider") this.app.recordSpend(data.usage?.costUsd ?? 0);
         if (data.finishReason === "no_provider") {
           // The composer only lets you send with a provider selected, so
           // this should only be reachable if it became unavailable between
@@ -1617,8 +1887,29 @@ export class ServerState {
         const data = env.data as { projectPath?: string; sessions: SessionSummary[] };
         const project = data.projectPath || this.currentProjectPath;
         if (project) {
-          this.sessionsByProject[project] = data.sessions ?? [];
-          for (const s of data.sessions ?? []) this.projectBySession[s.sessionId] = project;
+          const listed = new Set((data.sessions ?? []).map((x) => x.sessionId));
+          // A chat that was never prompted doesn't exist server-side (even
+          // after a mode change, §4b), so it's never listed. Keep the one
+          // that's open locally until its first prompt; prune every other
+          // unlisted, empty one — the ghosts older builds left in the cache.
+          const keep: SessionSummary[] = [];
+          for (const [id, p] of Object.entries(this.projectBySession)) {
+            if (p !== project || listed.has(id) || (this.messagesBySession[id] ?? []).length > 0) continue;
+            if (id === this.currentSessionId || id === this.sidebarSessionId || this.activeTurnBySession[id]) {
+              const local = this.sessionsByProject[project]?.find((x) => x.sessionId === id);
+              if (local) keep.push(local);
+            } else {
+              this.forgetSessionState(id);
+            }
+          }
+          this.sessionsByProject[project] = [...keep, ...(data.sessions ?? [])];
+          for (const s of data.sessions ?? []) {
+            this.projectBySession[s.sessionId] = project;
+            if (!this.lastViewedBySession[s.sessionId] || s.sessionId === this.currentSessionId) {
+              this.markViewed(s.sessionId, s.updatedAt, false);
+            }
+          }
+          this.saveSidebarPrefs();
           delete this.refreshingProjects[project];
           this.refreshingProjects = { ...this.refreshingProjects };
           this.saveChatHistory();
@@ -1632,6 +1923,7 @@ export class ServerState {
           this.sessionsByProject[project] = this.sessionsByProject[project].map((s) =>
             s.sessionId === data.sessionId ? { ...s, ...data } : s,
           );
+          if (data.sessionId === this.currentSessionId) this.markViewed(data.sessionId, data.updatedAt);
           this.saveChatHistory();
         }
         break;
@@ -1661,18 +1953,31 @@ export class ServerState {
         break;
       }
       case "directory_list": {
-        // directoryListing/showDirectoryBrowser stay global on AppState
+        // directoryListing stays global on AppState
         // (only one browse flow is ever open at once) — only apply this if
         // it's still this connection's browse in flight, so a late response
         // from an abandoned browse against a different server can't clobber
         // a newer one.
         if (this.app.browsingConnectionId === this.connectionId) {
-          this.app.directoryListing = env.data as { path: string; entries: DirectoryEntry[] };
+          this.app.directoryListing = env.data as { path: string; entries: DirectoryEntry[]; error?: string };
         }
         break;
       }
+      case "git_status": {
+        const data = env.data as unknown as GitStatus;
+        if (data?.projectPath) this.gitStatusByProject = { ...this.gitStatusByProject, [data.projectPath]: data };
+        break;
+      }
+      case "pending_asks": {
+        const data = env.data as { asks?: PendingAsk[] };
+        this.pendingAsks = data?.asks ?? [];
+        break;
+      }
       case "cli_availability": {
-        this.cliAvailability = env.data as { claude: boolean; codex: boolean };
+        // `agents` covers every cli_* kind (§3.2); claude/codex booleans are
+        // the pre-v2.15 shape, kept as a fallback for older servers.
+        const data = env.data as { claude?: boolean; codex?: boolean; agents?: Partial<Record<CliKind, boolean>> };
+        this.cliAvailability = data.agents ?? { cli_claude: !!data.claude, cli_codex: !!data.codex };
         break;
       }
       case "file_list": {
@@ -1681,9 +1986,28 @@ export class ServerState {
         if (project) this.filesByProject[project] = data.files ?? [];
         break;
       }
+      case "notification": {
+        const n = env.data as unknown as ServerNotification;
+        this.notifications = [...this.notifications, n];
+        this.unseenNotifications++;
+        this.app.toast(this.connectionId, n);
+        break;
+      }
+      case "notification_list": {
+        const data = env.data as { notifications: ServerNotification[] };
+        this.notifications = data.notifications ?? [];
+        break;
+      }
+      case "notification_dismissed": {
+        const { id } = (env.data ?? {}) as { id?: string };
+        this.notifications = id ? this.notifications.filter((n) => n.id !== id) : [];
+        if (!this.notifications.length) this.unseenNotifications = 0;
+        break;
+      }
       case "peer_list": {
-        const data = env.data as { peers: PeerInfo[] };
+        const data = env.data as { peers: PeerInfo[]; you?: string };
         this.peers = data.peers ?? [];
+        this.selfPeerId = data.you ?? null;
         break;
       }
       case "server_identity": {
@@ -1717,8 +2041,9 @@ export class ServerState {
             author?: string;
             authorAvatar?: string;
             reasoning?: string;
-            toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
+            toolCalls?: HistoryToolCall[];
             toolCallId?: string;
+            diffs?: FileDiff[];
           }[];
         };
         this.applySessionHistory(data.sessionId, data.messages ?? []);
@@ -1730,8 +2055,8 @@ export class ServerState {
         break;
       }
       case "token_registered": {
-        const data = env.data as { name: string; token: string; email?: string };
-        this.justRegisteredToken = { name: data.name, token: data.token };
+        const data = env.data as { name: string; token: string; email?: string; caPem?: string };
+        this.justRegisteredToken = { name: data.name, token: data.token, caPem: data.caPem };
         this.tokens = [...this.tokens.filter((t) => t.name !== data.name), { name: data.name, email: data.email, hasAvatar: false }];
         break;
       }
@@ -1781,7 +2106,12 @@ export class ServerState {
           const msg = this.findAssistantMessage(sessionId, env.turnId);
           if (msg) {
             msg.streaming = false;
-            msg.text = msg.text || `⚠ ${data.message}`;
+            // A cli_* agent that isn't logged in fails the turn with an
+            // error (§6b) — say what to do instead of just echoing it.
+            const note = /sign in|log ?in|not logged|unauthenticated|authenticat/i.test(data.message)
+              ? `⚠ This agent isn't signed in on the server. Run it once in a terminal there and sign in, then retry.\n\n> ${data.message}`
+              : `⚠ ${data.message}`;
+            msg.text = msg.text ? `${msg.text}\n\n${note}` : note;
           }
           delete this.activeTurnBySession[sessionId];
           this.activeTurnBySession = { ...this.activeTurnBySession };
@@ -1795,37 +2125,25 @@ export class ServerState {
       // resolved at the top of this method, which for these would just be
       // whatever chat happens to be open right now.
       case "terminal_list": {
-        const data = env.data as {
-          sessionId: string;
-          terminals: { terminalId: string; cwd?: string; status: TerminalStatus; label: string }[];
-        };
-        const sid = data.sessionId;
-        if (!sid) break;
-        const ids: string[] = [];
-        const nextById = { ...this.terminalById };
+        const data = env.data as { sessionId: string; terminals: TerminalSummary[] };
+        if (data.sessionId) this.applyTerminalList(data.sessionId, data.terminals ?? []);
+        break;
+      }
+      // Every terminal on the server (§3.2 terminal_index): a terminal_list
+      // for every chat at once, so terminals opened from another device or
+      // in a chat never opened here are known too.
+      case "terminal_index": {
+        const data = env.data as { terminals: (TerminalSummary & { sessionId: string })[] };
+        const bySession: Record<string, TerminalSummary[]> = {};
         for (const t of data.terminals ?? []) {
-          ids.push(t.terminalId);
-          const existing = nextById[t.terminalId];
-          nextById[t.terminalId] = {
-            terminalId: t.terminalId,
-            sessionId: sid,
-            cwd: t.cwd,
-            status: t.status,
-            label: t.label,
-            title: existing?.title,
-            cols: existing?.cols ?? 80,
-            rows: existing?.rows ?? 24,
-            sequence: existing?.sequence ?? 0,
-            exitCode: existing?.exitCode,
-            pid: existing?.pid,
-            sandboxTier: existing?.sandboxTier,
-          };
+          (bySession[t.sessionId] ??= []).push(t);
+          // A chat in a project this client never listed: enough to open it.
+          if (t.projectPath) this.projectBySession[t.sessionId] ??= t.projectPath;
         }
-        this.terminalById = nextById;
-        this.terminalsBySession[sid] = ids;
-        this.terminalsListedBySession[sid] = true;
-        const active = this.activeTerminalBySession[sid];
-        if (!active || !ids.includes(active)) this.activeTerminalBySession[sid] = ids[0];
+        for (const sid of Object.keys(this.terminalsBySession)) {
+          if (!bySession[sid] && this.terminalsBySession[sid]?.length) bySession[sid] = [];
+        }
+        for (const [sid, ts] of Object.entries(bySession)) this.applyTerminalList(sid, ts);
         break;
       }
       case "terminal_snapshot": {
@@ -1915,7 +2233,7 @@ class AppState {
     return this.activeConnectionId ? (this.servers[this.activeConnectionId] ?? null) : null;
   }
 
-  // Transient, global: tracks a connect attempt (ConnectScreen / autoConnect)
+  // Transient, global: tracks a connect attempt (CommandPalette connect page / autoConnect)
   // before any ServerState exists to hold it — there's no ConnectionId yet at
   // this point (Rust only mints one once connect_tcp/connect_unix actually
   // succeeds), so it can't live per-server the way a *lost* connection's
@@ -1945,12 +2263,10 @@ class AppState {
     return this.active?.connectionError ?? this.pendingConnectError;
   }
 
-  // The connect flow is a dismissible overlay, not a gate — the UI underneath
-  // is fully explorable without ever connecting. Starts closed: connecting
-  // is automatic (see autoConnect in ipc.ts), and this only opens itself if
-  // that fails with nowhere else to fall back to.
-  showConnectModal = $state(false);
   showSettings = $state(false);
+  /** The usage page, shown in the chat panel's place (UsagePanel.svelte);
+   * opening any chat closes it. */
+  showUsage = $state(false);
   settingsTab = $state("appearance");
 
   /** Providers live under Settings now, not a standalone modal — this is the
@@ -1958,6 +2274,17 @@ class AppState {
   openProviderSettings() {
     this.showSettings = true;
     this.settingsTab = "providers";
+  }
+
+  /** Adding a server is a form, so it lives in Settings → Servers rather
+   * than the palette — the palette's "Add server…" lands here, optionally
+   * prefilled with a remembered remote's address when it has to pair again
+   * (see connectServerRow). SettingsPanel consumes and clears it. */
+  addServerRequest = $state<{ host?: string; port?: number } | null>(null);
+  openAddServer(host?: string, port?: number) {
+    this.addServerRequest = { host, port };
+    this.settingsTab = "servers";
+    this.showSettings = true;
   }
 
   // Layout: both sidebars slide off-screen when collapsed rather than
@@ -2010,9 +2337,66 @@ class AppState {
   // flight, so a late directory_list from an abandoned browse can't clobber
   // a newer one against a different server (see ServerState.handleEvent's
   // directory_list case).
-  directoryListing = $state<{ path: string; entries: DirectoryEntry[] } | null>(null);
-  showDirectoryBrowser = $state(false);
+  directoryListing = $state<{ path: string; entries: DirectoryEntry[]; error?: string } | null>(null);
   browsingConnectionId = $state<ConnectionId | null>(null);
+
+  // Ctrl+K command palette (CommandPalette.svelte). Each openPalette() is a
+  // fresh request: it opens on that page, or pushes it if already open; the
+  // palette keeps its own back-stack from there.
+  paletteOpen = $state(false);
+  paletteRequest = $state<{ page: "root" | "projects" | "browse" | "servers"; at: number }>({ page: "root", at: 0 });
+  openPalette(page: "root" | "projects" | "browse" | "servers" = "root") {
+    this.paletteRequest = { page, at: performance.now() };
+    this.paletteOpen = true;
+  }
+
+  // ModelPicker instances watch this to open themselves on request (the
+  // palette's "Open model picker"): one picker per visible chat, so the
+  // request names which chat's.
+  modelPickerRequest = $state<{ sessionId: string; at: number } | null>(null);
+
+  notificationsOpen = $state(false);
+  // Transient pop-ups for live notifications, bottom-right. Only the active
+  // server's, and not for the chat the user is already looking at.
+  // Spend across every server today, tallied from the turn_completed events
+  // this app sees (any peer's turns on a connected server). Resets at local
+  // midnight; kept in localStorage so a restart doesn't zero it.
+  spendToday = $state<{ day: string; usd: number }>(loadSpendToday());
+  recordSpend(usd: number) {
+    if (!usd) return;
+    const day = new Date().toDateString();
+    this.spendToday = { day, usd: (this.spendToday.day === day ? this.spendToday.usd : 0) + usd };
+    try {
+      localStorage.setItem(SPEND_TODAY_KEY, JSON.stringify(this.spendToday));
+    } catch {
+      // best-effort only
+    }
+  }
+
+  toasts = $state<(ServerNotification & { connectionId: ConnectionId; action?: { label: string; run: () => void } })[]>([]);
+  /** A client-side toast with an action button (e.g. "Archived — Undo"). */
+  toastAction(connectionId: ConnectionId, title: string, action: { label: string; run: () => void }) {
+    const id = `local-${Date.now()}`;
+    this.toasts = [
+      ...this.toasts.slice(-2),
+      { id, level: "info", kind: "local", title, createdAt: new Date().toISOString(), connectionId, action },
+    ];
+    setTimeout(() => this.dropToast(id), 6_000);
+  }
+
+  // Ticks once a minute so relative times ("3m") re-render instead of
+  // freezing at whatever they were when their row last rendered.
+  now = $state(Date.now());
+  private nowTimer = typeof window !== "undefined" ? setInterval(() => (this.now = Date.now()), 30_000) : undefined;
+  toast(connectionId: ConnectionId, n: ServerNotification) {
+    if (connectionId !== this.activeConnectionId || this.notificationsOpen) return;
+    if (n.sessionId && n.sessionId === this.active?.currentSessionId && document.hasFocus()) return;
+    this.toasts = [...this.toasts.slice(-2), { ...n, connectionId }];
+    setTimeout(() => this.dropToast(n.id), n.level === "error" || n.level === "warning" ? 10_000 : 5_000);
+  }
+  dropToast(id: string) {
+    this.toasts = this.toasts.filter((t) => t.id !== id);
+  }
 
   logs = $state<string[]>([]);
 
@@ -2136,9 +2520,25 @@ class AppState {
     root.style.setProperty("--ui-font-family", this.settings.uiFontFamily);
     root.style.setProperty("--code-font-family", this.settings.codeFontFamily);
     root.style.setProperty("--anim-speed", String(this.settings.animationSpeed));
+    root.style.setProperty("--code-wrap", this.settings.codeWrapLines ? "pre-wrap" : "pre");
+    // Code blocks borrow the terminal palette's ANSI slots for token colors
+    // (see Markdown.svelte's .hljs-* rules).
+    const code =
+      (!this.settings.codeUseAppTheme && TERMINAL_THEME_PRESETS.find((p) => p.id === this.settings.codeColorTheme)?.colors) ||
+      deriveTerminalTheme(this.settings.accent, resolved);
+    root.style.setProperty("--code-bg", code.background);
+    root.style.setProperty("--code-fg", code.foreground);
+    root.style.setProperty("--syn-comment", code.brightBlack);
+    root.style.setProperty("--syn-keyword", code.magenta);
+    root.style.setProperty("--syn-string", code.green);
+    root.style.setProperty("--syn-number", code.yellow);
+    root.style.setProperty("--syn-function", code.blue);
+    root.style.setProperty("--syn-type", code.cyan);
+    root.style.setProperty("--syn-variable", code.red);
     // The frosted/opaque switch is entirely CSS — the --float-* tokens hang off
     // this attribute, so nothing else here has to know about it.
     root.dataset.surface = this.settings.surface;
+    root.dataset.main = this.settings.mainArea;
   }
 }
 

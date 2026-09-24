@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade } from "svelte/transition";
   import type { ToolCallEntry } from "../types";
-  import { toolMeta, summaryFor } from "../toolMeta";
+  import { metaFor, summaryFor } from "../toolMeta";
   import DiffView from "./DiffView.svelte";
   import Icon from "./Icon.svelte";
 
@@ -19,7 +19,7 @@
     error: "error",
   };
 
-  const meta = $derived(toolMeta[call.name]);
+  const meta = $derived(metaFor(call));
   const summary = $derived(summaryFor(call));
   const isBusy = $derived(call.status === "running" || call.status === "requested");
   const isError = $derived(call.status === "error" || call.status === "denied");
@@ -66,10 +66,20 @@
   <div class="accordion" class:open={expanded}>
     <div class="accordion-inner">
       <div class="body">
+        {#if call.locations?.length}
+          <div class="locations">
+            {#each call.locations as loc (loc)}
+              <span class="chip selectable" title={loc}>{loc.split("/").pop()}</span>
+            {/each}
+          </div>
+        {/if}
         <pre class="args selectable">{JSON.stringify(call.args, null, 2)}</pre>
         {#if call.diff}
           <DiffView diff={call.diff} />
         {/if}
+        {#each call.diffs ?? [] as d, i (i)}
+          <DiffView diff={d} />
+        {/each}
         {#if call.output}
           <pre class="output selectable">{call.output}</pre>
         {/if}
@@ -82,6 +92,18 @@
 </div>
 
 <style>
+  .locations {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.29rem;
+  }
+  .chip {
+    font-size: 0.75rem;
+    padding: 0.07rem 0.43rem;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-dim);
+  }
   .card {
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);

@@ -34,10 +34,22 @@ export interface PermissionRequestData {
   description: string;
   requiresAsk: boolean;
   cacheKey: string;
-  diff: FileDiff | null;
+  diff?: FileDiff | null;
 }
 
-export interface ToolCallRequestedData {
+/** ACP's tool kinds — what a `cli_*` agent's native tool call does (§3.2). */
+export type NativeToolKind = "read" | "edit" | "delete" | "move" | "search" | "execute" | "think" | "fetch" | "other";
+
+/** Fields a native (`cli_*` agent) tool call carries on top of name/args, so
+ * it can be rendered without knowing each agent's own tool names (§3.2). */
+export interface NativeToolFields {
+  native?: boolean;
+  title?: string;
+  kind?: NativeToolKind;
+  locations?: string[];
+}
+
+export interface ToolCallRequestedData extends NativeToolFields {
   name: string;
   args: Record<string, unknown>;
 }
@@ -46,6 +58,8 @@ export interface ToolResultData {
   toolName: string;
   output: string;
   error: string;
+  /** Native tool calls only: the file changes the agent made (§3.2). */
+  diffs?: FileDiff[];
 }
 
 export interface TurnCompletedData {
@@ -77,7 +91,16 @@ export interface TurnCompletedData {
   durationMs: number;
 }
 
-export type ProviderKind = "api_key" | "cli_claude" | "cli_codex";
+export type CliKind =
+  | "cli_claude"
+  | "cli_codex"
+  | "cli_cursor"
+  | "cli_kimi"
+  | "cli_opencode"
+  | "cli_gemini"
+  | "cli_grok"
+  | "cli_deepseek";
+export type ProviderKind = "api_key" | CliKind;
 export type HttpProvider = "anthropic" | "openai" | "openrouter";
 
 export interface ProviderInfo {
@@ -156,6 +179,92 @@ export interface DirectoryEntry {
   isDir: boolean;
 }
 
+/** One entry of the server's shared notification feed (SPEC.md §3.2
+ * `notification`). */
+export interface ServerNotification {
+  id: string;
+  level: "info" | "success" | "warning" | "error";
+  kind: string;
+  title: string;
+  body?: string;
+  sessionId?: string;
+  projectPath?: string;
+  createdAt: string;
+}
+
+/** Health snapshot riding on every server-sent ping (SPEC.md §2a). */
+export interface ServerStatus {
+  uptimeSec: number;
+  activeTurns: number;
+  peers: number;
+  openProjects: number;
+  load1?: number;
+  cpus: number;
+  memTotalBytes?: number;
+  memAvailBytes?: number;
+  heapBytes: number;
+  version?: string;
+  // v2.15 — see SPEC.md §3.1 ping.
+  queuedTurns?: number;
+  rateLimits?: Record<string, ProviderRateLimits>;
+  spend?: { todayUsd: number; monthUsd: number };
+  budgets?: SpendBudget[];
+}
+
+export interface RateWindow {
+  usedPct: number;
+  resetsAt?: string;
+  windowMins?: number;
+  /** A bucket narrower than the whole plan ("Opus", a Codex limitName). */
+  label?: string;
+}
+
+export interface ProviderRateLimits {
+  /** "cli_claude" | "cli_codex" — which agent these numbers belong to. */
+  kind?: string;
+  /** Subscription tier as the CLI reports it ("pro", "max", "plus", "free"…). */
+  plan?: string;
+  /** When the server last read these (RFC 3339). */
+  updatedAt?: string;
+  fiveHour?: RateWindow;
+  sevenDay?: RateWindow;
+  other?: RateWindow[];
+}
+
+export interface SpendBudget {
+  scope: "session" | "server" | "project";
+  period: "total" | "day" | "month";
+  limitUsd: number;
+  usedUsd?: number;
+  projectPath?: string;
+}
+
+/** One project's git state (§3.2 git_status). */
+export interface GitStatus {
+  projectPath: string;
+  branch: string | null;
+  detached: boolean;
+  dirtyFiles: number;
+  ahead: number;
+  behind: number;
+  hasUpstream: boolean;
+  /** First 50 changed paths (newer servers); `dirtyFiles` is the full count. */
+  files?: { path: string; status: string }[];
+}
+
+/** One unanswered ask from a `pending_asks` snapshot (§3.2) — the original
+ * event's data flattened in, plus the ids needed to answer it. */
+export type PendingAsk = {
+  sessionId: string;
+  projectPath?: string;
+  turnId: string;
+  toolCallId: string;
+  createdAt?: string;
+} & (
+  | ({ kind: "permission" } & PermissionRequestData)
+  | ({ kind: "question" } & AskUserQuestionData)
+);
+
 export type DeviceType = "web" | "desktop" | "server";
 
 export interface PeerInfo {
@@ -165,6 +274,11 @@ export interface PeerInfo {
   deviceType: DeviceType;
   avatar?: string;
   connectedAt: string;
+  /** Stable per-install id (newer clients); groups a device's rows. */
+  deviceId?: string;
+  /** The chat this connection last opened. */
+  sessionId?: string;
+  projectPath?: string;
 }
 
 export interface ProjectListData {
@@ -187,6 +301,18 @@ export type TerminalStatus = "starting" | "running" | "exited" | "error";
  * terminal_list/terminal_snapshot/terminal_output/terminal_exited. The pty
  * bytes themselves never live here (see terminalBus.ts); this is just what
  * the tab strip renders off. */
+/** One row of terminal_list / terminal_index (§3.2). */
+export interface TerminalSummary {
+  terminalId: string;
+  cwd?: string;
+  status: TerminalStatus;
+  label: string;
+  exitCode?: number;
+  /** terminal_index only. */
+  sessionId?: string;
+  projectPath?: string;
+}
+
 export interface TerminalTab {
   terminalId: string;
   sessionId: string;
@@ -221,7 +347,7 @@ export interface AskUserQuestionData {
   options?: string[];
 }
 
-export interface ToolCallEntry {
+export interface ToolCallEntry extends NativeToolFields {
   toolCallId: string;
   name: string;
   args: Record<string, unknown>;
@@ -229,14 +355,15 @@ export interface ToolCallEntry {
   output?: string;
   error?: string;
   diff?: FileDiff | null;
+  /** Native tool calls: the file changes the agent's tool made (§3.2 tool_result). */
+  diffs?: FileDiff[];
   permission?: PermissionRequestData;
   question?: AskUserQuestionData;
   /** `message.text.length` at the moment this call was requested — lets the
    * UI render the card inline at the point it actually happened in the
-   * stream instead of stacking every call above the text. Undefined for
-   * calls rebuilt from session history (no position was ever recorded for
-   * them), which renders them before the text, matching pre-existing
-   * behavior for reloaded transcripts. */
+   * stream instead of stacking every call above the text. Calls rebuilt
+   * from session history get the merged text length at the end of their
+   * round-trip, which lands them in the same place. */
   textOffset?: number;
   /** `message.thinking?.length` at the same moment — lets AssistantMessage
    * slice `message.thinking` back into the reasoning chunk that occurred
@@ -281,6 +408,8 @@ export interface ChatMessage {
    * `authorAvatar`) — an emoji glyph or a data URL, whichever the sending
    * client uses. */
   authorAvatar?: string;
+  /** Server-side paths a `user` message attached (§3.1 user_prompt). */
+  attachments?: string[];
   /** Provider name / model id that generated this assistant reply —
    * initially stamped client-side at send time (state.svelte.ts's
    * addUserMessage, whatever the session is about to run with) and then

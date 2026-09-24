@@ -1,44 +1,107 @@
 <script lang="ts">
-  import { app } from "../state.svelte";
-  import { basename } from "../format";
+  // App-wide, never "the current server": every server is live at once and
+  // chats run on several simultaneously, so this only shows what spans all
+  // of them — and only when there's something to show. Per-chat numbers
+  // (context, session cost) live in the chat header instead.
+  //   left:  servers and their health (ServerHealthWidget), who else is
+  //          connected (PeersWidget), every repo's git state (GitWidget)
+  //   right: terminals (TerminalsWidget), chats waiting on you, chats
+  //          running, queued turns, subscription usage (UsageWidget), spend
+  //          today, notifications
+  import { app, type ConnectionId } from "../state.svelte";
+  import { openChatSession } from "../ipc";
+  import Icon from "./Icon.svelte";
+  import NotificationCenter from "./NotificationCenter.svelte";
+  import UsageWidget from "./UsageWidget.svelte";
+  import ServerHealthWidget from "./ServerHealthWidget.svelte";
+  import GitWidget from "./GitWidget.svelte";
+  import TerminalsWidget from "./TerminalsWidget.svelte";
+  import PeersWidget from "./PeersWidget.svelte";
 
-  // Per-server fields live on the active connection's own ServerState now —
-  // see the multi-server-connections plan.
-  let server = $derived(app.active);
+  const servers = $derived(Object.values(app.servers));
 
-  const lastFinish = $derived(
-    [...(server?.currentMessages ?? [])].reverse().find((m) => m.role === "assistant" && m.finish)?.finish,
+  type Ref = { cid: ConnectionId; sessionId: string };
+  const waiting = $derived(
+    servers.flatMap((s) =>
+      [...new Set(s.pendingAsks.map((a) => a.sessionId))].map((sessionId) => ({ cid: s.connectionId, sessionId })),
+    ),
   );
-  const projectName = $derived(server?.currentProjectPath ? basename(server.currentProjectPath) : null);
+  const running = $derived(
+    servers.flatMap((s) =>
+      Object.entries(s.activeTurnBySession)
+        .filter(([, turn]) => !!turn)
+        .map(([sessionId]) => ({ cid: s.connectionId, sessionId })),
+    ),
+  );
+  const localSpend = $derived(app.spendToday.day === new Date().toDateString() ? app.spendToday.usd : 0);
+  // Servers that report spend (v2.15 ping status) count every client's
+  // turns; older ones fall back to what this app has seen itself.
+  const reporting = $derived(servers.filter((s) => s.serverStatus?.spend));
+  const spend = $derived(
+    reporting.length
+      ? {
+          today: reporting.reduce((n, s) => n + (s.serverStatus!.spend!.todayUsd ?? 0), 0),
+          month: reporting.reduce((n, s) => n + (s.serverStatus!.spend!.monthUsd ?? 0), 0),
+        }
+      : { today: localSpend, month: undefined },
+  );
+  const queued = $derived(servers.reduce((n, s) => n + (s.serverStatus?.queuedTurns ?? 0), 0));
+
+  // Clicking a count jumps to the next chat in it, cycling on repeat clicks.
+  let cursor = 0;
+  function jump(list: Ref[]) {
+    if (!list.length) return;
+    const r = list[cursor++ % list.length];
+    openChatSession(r.cid, r.sessionId);
+  }
+  function titleOf(r: Ref): string {
+    const s = app.servers[r.cid];
+    const summary = Object.values(s?.sessionsByProject ?? {})
+      .flat()
+      .find((x) => x.sessionId === r.sessionId);
+    return summary?.title || "Untitled chat";
+  }
 </script>
 
 <footer class="statusbar">
   <div class="left">
-    <span class="item" class:live={app.connectionStatus === "connected"}>
-      ● {app.connectionStatus}
-    </span>
-    <span class="item">{app.connectionMode}</span>
-    {#if server?.serverIdentity}
-      <span class="item" title="Server identity">{server.serverIdentity}</span>
-    {/if}
-    {#if projectName}
-      <span class="item" title={server?.currentProjectPath}>{projectName}</span>
-    {/if}
-    {#if server?.isCurrentTurnActive}
-      <span class="item busy">turn in progress…</span>
-    {/if}
+    <ServerHealthWidget />
+    <PeersWidget />
+    <GitWidget />
   </div>
   <div class="right">
-    {#if lastFinish?.spend}
-      <span class="item">project ${(lastFinish.spend.projectTotalUsd ?? 0).toFixed(2)}</span>
+    <TerminalsWidget />
+    {#if waiting.length}
+      <button
+        class="item attention"
+        title={"Waiting on you:\n" + waiting.map(titleOf).join("\n")}
+        onclick={() => jump(waiting)}
+      >
+        <Icon name="alert-circle" size={12} /> {waiting.length} waiting
+      </button>
     {/if}
-    {#if server?.cliAvailability.claude || server?.cliAvailability.codex}
-      <span class="item">
-        CLI: {server.cliAvailability.claude ? "claude" : ""}{server.cliAvailability.claude && server.cliAvailability.codex ? ", " : ""}{server.cliAvailability.codex ? "codex" : ""}
+    {#if running.length}
+      <button class="item busy" title={"Running:\n" + running.map(titleOf).join("\n")} onclick={() => jump(running)}>
+        <span class="spin"><Icon name="loader-2" size={12} /></span> {running.length} running
+      </button>
+    {/if}
+    {#if queued > 0}
+      <span class="item" title="Turns waiting for their chat's current turn to finish">
+        <Icon name="clock" size={12} /> {queued} queued
       </span>
     {/if}
-    <span class="item">{server?.projects.length ?? 0} project{(server?.projects.length ?? 0) === 1 ? "" : "s"}</span>
-    <span class="item">{server?.currentSessions.length ?? 0} thread{(server?.currentSessions.length ?? 0) === 1 ? "" : "s"}</span>
+    <UsageWidget />
+    {#if spend.today > 0 || spend.month}
+      <span
+        class="item"
+        title={reporting.length
+          ? `Spent across ${reporting.length === 1 ? reporting[0].label : `${reporting.length} servers`} (server-local day/month)` +
+            (spend.month != null ? `\nThis month: $${spend.month.toFixed(2)}` : "")
+          : "Spent today across every server (turns this app has seen)"}
+        >${spend.today.toFixed(2)} today{#if spend.month != null}<span class="dim">&nbsp;· ${spend.month.toFixed(2)} mo</span>{/if}</span
+      >
+    {/if}
+    <NotificationCenter />
   </div>
 </footer>
 
@@ -49,22 +112,61 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 1rem;
+    gap: 1rem;
+    padding: 0 0.57rem;
     background: var(--statusbar-bg);
     color: var(--statusbar-fg);
-    font-size: var(--text-heading-size);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
     border-top: 1px solid var(--panel-border);
+    white-space: nowrap;
   }
   .left,
   .right {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.29rem;
+    min-width: 0;
   }
-  .item.live {
-    color: var(--success);
+  .left {
+    overflow: hidden;
   }
-  .item.busy {
+  .item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.36rem;
+    height: 1.43rem;
+    padding: 0 0.43rem;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    font: inherit;
+    cursor: default;
+  }
+  button.item {
+    cursor: pointer;
+  }
+  button.item:hover {
+    background: var(--sidebar-hover);
+    color: var(--text);
+  }
+  .attention {
+    color: var(--warning);
+  }
+  .busy {
     color: var(--accent);
+  }
+  .dim {
+    opacity: 0.7;
+  }
+  .spin {
+    display: inline-flex;
+    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

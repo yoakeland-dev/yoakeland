@@ -1,18 +1,23 @@
 <script lang="ts">
-  import { Tabs } from "bits-ui";
-  import { tick } from "svelte";
   import { app, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, type ConnectionId, type ServerState } from "../state.svelte";
-  import { selectProject, browseAndAddProject, setSessionTitle, setSessionArchived, deleteSession, openInSidePanel, openChatSession, listSessionsForProjects } from "../ipc";
-  import { relTime, basename, sessionTitle } from "../format";
+  import { selectProject, browseAndAddProject, openChatSession, listSessionsForProjects, newChat as newChatIn, disconnect, reconnectServer } from "../ipc";
+  import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { isPhotoAvatar } from "../avatar";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ProjectGroup from "./ProjectGroup.svelte";
   import SplitEntry from "./SplitEntry.svelte";
-  import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
+  import ChatRow from "./ChatRow.svelte";
+  import ServerAvatar from "./ServerAvatar.svelte";
   import Dropdown from "./Dropdown.svelte";
+  import SearchInput from "./SearchInput.svelte";
+  import { DropdownMenu } from "bits-ui";
+  import { untrack } from "svelte";
+  import { slide } from "svelte/transition";
 
   const ALL_PROJECTS = "__all__";
+  // Key in a server's own collapsedProjects map for its whole section.
+  const SERVER_SECTION = "__server__";
 
   // Dragging past the minimum collapses outright, VS Code-style, instead of
   // just hitting a hard floor — and dragging back out while the pointer is
@@ -21,19 +26,6 @@
   // accidentally collapse the sidebar.
   const COLLAPSE_THRESHOLD = 90;
 
-  const statusIcon = {
-    working: "loader-2",
-    action: "alert-circle",
-    finished: "circle-check",
-    idle: "message-circle",
-  } as const;
-
-  // Every field below that used to read the flat, single-server `app.X` now
-  // reaches through the active connection's own ServerState instead — see
-  // the multi-server-connections plan. `server` (and `cid`, its connection
-  // id, needed by every ipc.ts call now that they're threaded per
-  // connection) are null whenever there's no active connection, so the
-  // sidebar just renders its offline/empty states.
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
@@ -53,65 +45,86 @@
   const projectFilter = $derived(selectedProjectPath === ALL_PROJECTS ? null : selectedProjectPath);
 
   // A project can become known (recentProjects) without ever having been
-  // opened/selected here — added from Settings > Connections, or pushed by
+  // opened/selected here — added from Settings > Projects, or pushed by
   // project_list from another connection (§4b) — in which case it has no
   // sessionsByProject entry yet and would otherwise never show a group at
-  // all (see below). Fetch it the moment it's known, not only once picked.
+  // all. Fetch it the moment it's known, on every connected server.
   $effect(() => {
-    if (!cid || !server) return;
-    const missing = server.recentProjects.filter((p) => !(p in server.sessionsByProject));
-    if (missing.length > 0) listSessionsForProjects(cid, missing);
+    for (const [scid, srv] of Object.entries(app.servers)) {
+      if (srv.connectionStatus !== "connected") continue;
+      const missing = srv.recentProjects.filter((p) => !(p in srv.sessionsByProject));
+      if (missing.length > 0) listSessionsForProjects(scid, missing);
+    }
   });
 
-  // The sidebar's groups are keyed off every *known* project (server-
-  // persisted projects.json, via recentProjects) rather than just the ones
-  // sessionsByProject happens to have an entry for — otherwise a project
-  // that's known but not yet opened/fetched (see the effect above) simply
-  // has no group to render at all, which used to read as "added projects
-  // don't show up until you pick them".
-  const projectGroups = $derived(
-    (server?.recentProjects ?? []).map(
-      (project) => [project, server?.sessionsByProject[project] ?? []] as [string, SessionSummary[]],
-    ),
-  );
-  // Unified remote+project picker (replaces the old tabbed ServerSwitcher
-  // pill row): one dropdown listing every project across every connected
-  // remote, so picking a project under a different remote also switches to
-  // it — the picker itself is the only "which remote" control now. Values
-  // are encoded "connectionId::path" (or bare ALL_PROJECTS, the same
-  // sentinel selectedProjectPath already used, scoped to the active remote).
-  function remoteLabel(srv: ServerState): string {
-    return srv.serverIdentity ?? (srv.connectionMode === "local" ? "Local" : "Remote");
+  const serverEntries = $derived(Object.entries(app.servers) as [ConnectionId, ServerState][]);
+  const multiServer = $derived(serverEntries.length > 1);
+  const connectedServers = $derived(serverEntries.filter(([, srv]) => srv.connectionStatus === "connected"));
+
+  // Projects in the user's dragged order; anything not placed by hand sorts
+  // by its most recent chat activity.
+  function lastActivity(srv: ServerState, project: string): number {
+    let t = 0;
+    for (const s of srv.sessionsByProject[project] ?? []) t = Math.max(t, Date.parse(s.updatedAt) || 0);
+    return t;
   }
+  function orderedProjects(srv: ServerState): string[] {
+    const idx = (p: string) => {
+      const i = srv.projectOrder.indexOf(p);
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    return [...srv.recentProjects].sort((a, b) => idx(a) - idx(b) || lastActivity(srv, b) - lastActivity(srv, a));
+  }
+
+  // The project picker: every server's projects, grouped under the server.
+  // With several servers, each header is itself selectable — everything on
+  // that server. Values are "connectionId::path", "server::connectionId", or
+  // ALL_PROJECTS.
   const remoteProjectItems = $derived([
     { value: ALL_PROJECTS, label: "All projects" },
-    ...Object.entries(app.servers).flatMap(([scid, srv]) =>
-      srv.recentProjects.map((p) => ({
-        // Qualified whenever the owning connection isn't local — this list
-        // spans every connection at once, so a bare name would be ambiguous
-        // between e.g. two different servers that both have a "yoake-gui"
-        // checkout. A local project stays unqualified: this is the common
-        // case and the one that needs no disambiguating.
-        value: `${scid}::${p}`,
-        label: srv.connectionMode !== "local" ? `${remoteLabel(srv)}: ${basename(p)}` : basename(p),
-      })),
-    ),
+    ...serverEntries.flatMap(([gcid, srv]) => {
+      const group = multiServer ? gcid : undefined;
+      return [
+        ...(multiServer ? [{ value: `server::${gcid}`, label: srv.label, group, header: true }] : []),
+        ...orderedProjects(srv).map((p) => ({ value: `${gcid}::${p}`, label: srv.projectName(p), group })),
+      ];
+    }),
   ]);
+  const hasAnyProject = $derived(serverEntries.some(([, srv]) => srv.recentProjects.length > 0));
   let pickerValue = $state<string>(
     app.activeConnectionId && app.active?.currentProjectPath
       ? `${app.activeConnectionId}::${app.active.currentProjectPath}`
       : ALL_PROJECTS,
   );
+  // The server the picker narrows to, by a project or by the server itself.
+  const pickerCid = $derived(
+    pickerValue === ALL_PROJECTS ? null
+      : pickerValue.startsWith("server::") ? pickerValue.slice(8)
+      : pickerValue.slice(0, pickerValue.indexOf("::")),
+  );
+  // Narrowed to one server: its list reads as if it were the only one.
+  const flat = $derived(!multiServer || !!pickerCid);
+  // The picked project's server, shown in the picker's icon slot.
+  const pickedServer = $derived(pickerCid ? app.servers[pickerCid] : null);
   // selectedProjectPath/cid -> pickerValue (e.g. a session opened from a
   // different project narrows the underlying selection some other way).
+  // A whole-server pick has no project, so "All projects" underneath it
+  // leaves it alone.
   $effect(() => {
-    pickerValue = cid && selectedProjectPath !== ALL_PROJECTS ? `${cid}::${selectedProjectPath}` : ALL_PROJECTS;
+    if (cid && selectedProjectPath !== ALL_PROJECTS) pickerValue = `${cid}::${selectedProjectPath}`;
+    else if (!untrack(() => pickerValue).startsWith("server::")) pickerValue = ALL_PROJECTS;
   });
   // pickerValue -> selectedProjectPath/cid (the user actually picked
   // something) — switches the active connection first when the chosen
   // project belongs to a different one, so the effect above (and the
   // existing selectProject effect) both then act against the right remote.
   $effect(() => {
+    if (pickerValue.startsWith("server::")) {
+      const newCid = pickerValue.slice(8);
+      if (newCid !== app.activeConnectionId) app.activeConnectionId = newCid;
+      if (selectedProjectPath !== ALL_PROJECTS) selectedProjectPath = ALL_PROJECTS;
+      return;
+    }
     if (pickerValue === ALL_PROJECTS) {
       if (selectedProjectPath !== ALL_PROJECTS) selectedProjectPath = ALL_PROJECTS;
       return;
@@ -124,25 +137,30 @@
     if (selectedProjectPath !== path) selectedProjectPath = path;
   });
 
-  let renamingId = $state<string | null>(null);
-  let renameValue = $state("");
-  let renameInput = $state<HTMLInputElement | null>(null);
-
-  async function startRename(s: SessionSummary) {
-    renamingId = s.sessionId;
-    renameValue = s.title || "";
-    await tick();
-    renameInput?.focus();
-    renameInput?.select();
+  async function addProject(target: ConnectionId | null) {
+    if (!target) return;
+    const p = await browseAndAddProject(target);
+    if (p) pickerValue = `${p.connectionId}::${p.path}`;
   }
-  function commitRename() {
-    if (cid && renamingId && renameValue.trim())
-      setSessionTitle(cid, renamingId, renameValue.trim());
-    renamingId = null;
+
+  // New chat goes to the project picked above; with "All projects" there's
+  // no obvious one, so ask (the palette's "New session in…" page).
+  function newChat() {
+    if (pickerCid && selectedProjectPath !== ALL_PROJECTS) void newChatIn(pickerCid, selectedProjectPath);
+    else if (!hasAnyProject) void addProject(cid ?? connectedServers[0]?.[0] ?? null);
+    else app.openPalette("projects");
   }
 
   let search = $state("");
-  let view = $state("active");
+  type Chip = "waiting" | "running" | "unread" | "archived";
+  let chip = $state<Chip | null>(null);
+  const CHIPS: { id: Chip; label: string; icon: string }[] = [
+    { id: "waiting", label: "Waiting on you", icon: "alert-circle" },
+    { id: "running", label: "Running", icon: "loader-2" },
+    { id: "unread", label: "Unread", icon: "bell" },
+    { id: "archived", label: "Archived", icon: "archive" },
+  ];
+
   let resizing = $state(false);
 
   // The slot is what shrinks in the flex layout (0 when collapsed); the
@@ -222,173 +240,221 @@
     }
   }
 
-  // scid/srv default to the active connection so every existing call site
-  // (the Active/Archive sections, still single-connection) keeps working
-  // unchanged — only the Running section (aggregated across every connected
-  // remote, see the `running` derivation below) passes them explicitly.
-  function menuItems(s: SessionSummary, scid: string | null = cid, srv: typeof server = server): ContextMenuItem[] {
-    const isCurrent = s.sessionId === srv?.currentSessionId;
-    return [
-      { label: "Rename", icon: "pencil", onSelect: () => startRename(s) },
-      {
-        label: "Open in side panel",
-        icon: "layout-columns",
-        disabled: isCurrent,
-        onSelect: () => scid && openInSidePanel(scid, s.sessionId),
-      },
-      { label: "Archive", icon: "archive", onSelect: () => scid && setSessionArchived(scid, s.sessionId, true) },
-      {
-        label: "Copy session ID",
-        icon: "copy",
-        onSelect: () => void navigator.clipboard?.writeText(s.sessionId),
-      },
-      {
-        label: "Delete",
-        icon: "trash",
-        danger: true,
-        onSelect: () => {
-          if (scid && confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) {
-            deleteSession(scid, s.sessionId);
-          }
-        },
-      },
-    ];
-  }
-
-  async function newChat(projectPath?: string) {
-    if (!cid) return;
-    const path = projectPath ?? server?.currentProjectPath ?? (await browseAndAddProject(cid));
-    if (path) {
-      if (path !== server?.currentProjectPath) selectProject(cid, path);
-      const current = server?.currentSessionId;
-      if (current && (server?.messagesBySession[current] ?? []).length === 0) {
-        server?.discardUnsentSession(current);
-      }
-      server?.newSessionInProject(path);
-    }
-  }
-
   // A session created by `newChat` but never sent doesn't exist on the
   // server yet — hide it from the list until its first message goes out.
   // `messageCount` alone would miss a just-sent local message before the
   // server round-trips a session_updated/list_sessions; the local cache
-  // alone would miss any session this client hasn't opened yet (another
-  // device, a fresh install, one only seen via session_list) — check both.
-  function hasMessages(s: SessionSummary): boolean {
-    return s.messageCount > 0 || (server?.messagesBySession[s.sessionId] ?? []).length > 0;
-  }
-
-  function statusOf(sessionId: string, srv: typeof server = server): "working" | "action" | "finished" | "idle" {
-    return srv?.sessionStatus(sessionId) ?? "idle";
-  }
-
-  function matchesSearch(s: SessionSummary): boolean {
-    if (!search.trim()) return true;
-    const q = search.trim().toLowerCase();
-    return (
-      s.sessionId.toLowerCase().includes(q) ||
-      (s.title ?? "").toLowerCase().includes(q)
-    );
-  }
-
-  function currentActivity(sessionId: string, srv: typeof server = server): string {
-    if (srv?.pendingPermission?.sessionId === sessionId)
-      return "waiting on you…";
-    const msgs = srv?.messagesBySession[sessionId] ?? [];
-    const last = [...msgs].reverse().find((m) => m.role === "assistant");
-    const lastTool = last?.toolCalls[last.toolCalls.length - 1];
-    return lastTool ? `${lastTool.name}…` : "thinking…";
+  // alone would miss any session this client hasn't opened yet — check both.
+  function hasMessages(s: SessionSummary, srv: ServerState): boolean {
+    return s.messageCount > 0 || (srv.messagesBySession[s.sessionId] ?? []).length > 0;
   }
 
   const autoArchiveMs = $derived(app.settings.autoArchiveDays * 86400000);
+  const isArchived = (s: SessionSummary) => !!s.archived || app.now - new Date(s.updatedAt).getTime() > autoArchiveMs;
+  const byRecent = (a: SessionSummary, b: SessionSummary) =>
+    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
 
-  // Sessions that are the secondary ("b") half of a saved split are hidden
-  // from their own natural spot — they render stacked under their partner
-  // instead (see SplitEntry / ServerState.splitPartnerFor), wherever the
-  // partner naturally lands, even if that's a different section (Running vs
-  // a project's list) or a different project entirely.
-  // Aggregated across every connected remote, not just the active one — a
-  // running chat stays visible (and pinned here) regardless of which remote
-  // the project/remote picker currently has selected. Only the active
-  // connection's own list respects projectFilter; the concept doesn't apply
-  // to another remote's sessions, which aren't scoped to "the selected
-  // project" at all here.
-  interface RunningEntry {
-    session: SessionSummary;
+  interface Row {
     cid: ConnectionId;
-    server: ServerState;
+    srv: ServerState;
+    s: SessionSummary;
   }
-  const running = $derived<RunningEntry[]>(
-    Object.entries(app.servers).flatMap(([scid, srv]) => {
-      const sessions =
-        scid === cid
-          ? projectGroups
-              .filter(([project]) => !projectFilter || project === projectFilter)
-              .flatMap(([, sessions]) => sessions)
-          : Object.values(srv.sessionsByProject).flat();
-      return sessions
-        .filter((s) => srv.activeTurnBySession[s.sessionId] && !srv.hiddenSplitSessionIds.has(s.sessionId))
-        .map((s) => ({ session: s, cid: scid, server: srv }));
-    }),
+  const key = (r: Row) => `${r.cid}:${r.s.sessionId}`;
+  // The picker narrows project lists to one server's project; Needs you,
+  // Running and Pinned stay global — they're what you'd otherwise miss.
+  const inFilter = (gcid: ConnectionId, project: string) =>
+    (!pickerCid || gcid === pickerCid) && (!projectFilter || project === projectFilter);
+
+  // Every chat with a message, on every server. Sessions that are the
+  // secondary half of a saved split render under their partner instead
+  // (SplitEntry / ServerState.splitPartnerFor), so they're dropped here.
+  const allRows = $derived<Row[]>(
+    serverEntries.flatMap(([gcid, srv]) =>
+      srv.recentProjects.flatMap((project) =>
+        (srv.sessionsByProject[project] ?? [])
+          .filter((s) => hasMessages(s, srv) && !srv.hiddenSplitSessionIds.has(s.sessionId))
+          .map((s) => ({ cid: gcid, srv, s })),
+      ),
+    ),
   );
 
-  const activeGroups = $derived(
-    projectGroups
-      .filter(([project]) => !projectFilter || project === projectFilter)
-      .map(
-        ([project, sessions]) =>
-          [
-            project,
-            sessions
-              .filter(
-                (s) =>
-                  !server?.activeTurnBySession[s.sessionId] &&
-                  !s.archived &&
-                  Date.now() - new Date(s.updatedAt).getTime() <=
-                    autoArchiveMs &&
-                  !server?.hiddenSplitSessionIds.has(s.sessionId) &&
-                  hasMessages(s) &&
-                  matchesSearch(s),
-              )
-              .sort(
-                (a, b) =>
-                  new Date(b.updatedAt).getTime() -
-                  new Date(a.updatedAt).getTime(),
-              ),
-          ] as [string, SessionSummary[]],
-      )
-      // Empty groups still render — see ProjectGroup's own empty state —
-      // except while searching, where an empty group is just noise.
-      .filter(([, sessions]) => sessions.length > 0 || !search.trim()),
+  // Chats blocked on a permission ask or a question — top of the list until
+  // answered. Comes from the server's pending_asks list, so it includes chats
+  // this client never opened; those get a stub summary until listed.
+  const needsYou = $derived<Row[]>(
+    serverEntries.flatMap(([gcid, srv]) =>
+      [...new Set(srv.pendingAsks.map((a) => a.sessionId))]
+        .filter((id) => !srv.hiddenSplitSessionIds.has(id))
+        .map((id) => ({
+          cid: gcid,
+          srv,
+          s: srv.sessionById.get(id) ?? {
+            sessionId: id,
+            updatedAt: srv.pendingAsks.find((a) => a.sessionId === id)?.createdAt ?? new Date().toISOString(),
+            messageCount: 1,
+          },
+        })),
+    ),
+  );
+  const needsYouKeys = $derived(new Set(needsYou.map(key)));
+
+  const running = $derived<Row[]>(
+    allRows.filter((r) => r.srv.activeTurnBySession[r.s.sessionId] && !needsYouKeys.has(key(r))).sort((a, b) => byRecent(a.s, b.s)),
+  );
+  const runningKeys = $derived(new Set(running.map(key)));
+
+  // Pinned chats across every server, in the order they were pinned —
+  // Ctrl+1–9 jumps to them.
+  const pinned = $derived<Row[]>(
+    serverEntries.flatMap(([gcid, srv]) =>
+      srv.pinnedSessions.flatMap((id) => {
+        const s = srv.sessionById.get(id);
+        return s && !srv.hiddenSplitSessionIds.has(id) ? [{ cid: gcid, srv, s }] : [];
+      }),
+    ),
+  );
+  const pinnedKeys = $derived(new Set(pinned.map(key)));
+  const pinnedShown = $derived(pinned.filter((r) => !needsYouKeys.has(key(r)) && !runningKeys.has(key(r))));
+
+  function activeSessions(gcid: ConnectionId, srv: ServerState, project: string): SessionSummary[] {
+    return (srv.sessionsByProject[project] ?? [])
+      .filter((s) => {
+        const k = `${gcid}:${s.sessionId}`;
+        return (
+          !needsYouKeys.has(k) &&
+          !runningKeys.has(k) &&
+          !pinnedKeys.has(k) &&
+          !isArchived(s) &&
+          !srv.hiddenSplitSessionIds.has(s.sessionId) &&
+          hasMessages(s, srv)
+        );
+      })
+      .sort(byRecent);
+  }
+
+  // One section per server (a plain list with only one), its projects inside.
+  const serverSections = $derived(
+    serverEntries
+      .filter(([gcid]) => !pickerCid || gcid === pickerCid)
+      .map(([gcid, srv]) => ({
+        cid: gcid,
+        srv,
+        groups: orderedProjects(srv)
+          .filter((p) => inFilter(gcid, p))
+          .map((project) => ({ project, sessions: activeSessions(gcid, srv, project) })),
+      })),
   );
 
   const archiveGroups = $derived(
-    projectGroups
-      .filter(([project]) => !projectFilter || project === projectFilter)
-      .map(
-        ([project, sessions]) =>
-          [
-            project,
-            sessions
-              .filter(
-                (s) =>
-                  (s.archived ||
-                    Date.now() - new Date(s.updatedAt).getTime() >
-                      autoArchiveMs) &&
-                  !server?.hiddenSplitSessionIds.has(s.sessionId) &&
-                  hasMessages(s) &&
-                  matchesSearch(s),
-              )
-              .sort(
-                (a, b) =>
-                  new Date(b.updatedAt).getTime() -
-                  new Date(a.updatedAt).getTime(),
-              ),
-          ] as [string, SessionSummary[]],
-      )
-      .filter(([, sessions]) => sessions.length > 0),
+    serverEntries.flatMap(([gcid, srv]) =>
+      orderedProjects(srv)
+        .filter((p) => inFilter(gcid, p))
+        .map((project) => ({
+          cid: gcid,
+          project,
+          sessions: (srv.sessionsByProject[project] ?? [])
+            .filter((s) => isArchived(s) && !srv.hiddenSplitSessionIds.has(s.sessionId) && hasMessages(s, srv))
+            .sort(byRecent),
+        }))
+        .filter((g) => g.sessions.length > 0),
+    ),
   );
+
+  const unread = $derived(allRows.filter((r) => !isArchived(r.s) && r.srv.isUnread(r.s)).sort((a, b) => byRecent(a.s, b.s)));
+
+  // Search spans every server and project, titles and the cached message
+  // text alike, narrowed by the active chip. A body hit gets a snippet line.
+  const results = $derived.by(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    const pool =
+      chip === "waiting" ? needsYou : chip === "running" ? running : chip === "unread" ? unread
+        : chip === "archived" ? allRows.filter((r) => isArchived(r.s))
+        : allRows;
+    const out: (Row & { snippet?: string })[] = [];
+    for (const r of pool) {
+      if ((r.s.title ?? "").toLowerCase().includes(q) || r.s.sessionId.toLowerCase().includes(q)) {
+        out.push(r);
+      } else {
+        for (const m of r.srv.messagesBySession[r.s.sessionId] ?? []) {
+          const at = m.text.toLowerCase().indexOf(q);
+          if (at === -1) continue;
+          const start = Math.max(0, at - 30);
+          const text = m.text.slice(start, at + q.length + 60).replace(/\s+/g, " ");
+          out.push({ ...r, snippet: (start > 0 ? "…" : "") + text });
+          break;
+        }
+      }
+      if (out.length >= 50) break;
+    }
+    return out.sort((a, b) => byRecent(a.s, b.s));
+  });
+
+  const chipRows = $derived(chip === "waiting" ? needsYou : chip === "running" ? running : chip === "unread" ? unread : []);
+  const chipCount = (c: Chip) =>
+    c === "waiting" ? needsYou.length : c === "running" ? running.length : c === "unread" ? unread.length : 0;
+
+  const SERVER_STATE = { connecting: "connecting…", disconnected: "reconnecting…", error: "unreachable" } as const;
+
+  // Right-click on a server's heading.
+  function serverMenu(gcid: ConnectionId, srv: ServerState): ContextMenuItem[] {
+    const open = !srv.collapsedProjects[SERVER_SECTION];
+    const status = srv.connectionStatus;
+    return [
+      { label: "Add project…", icon: "folder-plus", disabled: status !== "connected", onSelect: () => void addProject(gcid) },
+      { label: "Focus this server", icon: "filter", onSelect: () => (pickerValue = `server::${gcid}`) },
+      { label: open ? "Collapse" : "Expand", icon: open ? "chevron-up" : "chevron-down", onSelect: () => srv.setProjectCollapsed(SERVER_SECTION, open) },
+      { label: "Collapse all projects", icon: "chevron-up", onSelect: () => srv.recentProjects.forEach((p) => srv.setProjectCollapsed(p, true)) },
+      status === "connected" || status === "connecting"
+        ? { label: "Disconnect", icon: "xmark", onSelect: () => void disconnect(gcid) }
+        : { label: "Reconnect", icon: "refresh", onSelect: () => void reconnectServer(gcid) },
+      { label: "Server settings", icon: "settings", onSelect: () => ((app.settingsTab = "servers"), (app.showSettings = true)) },
+    ];
+  }
+
+  // Drag a project's header to reorder it within its server.
+  let dragging = $state<{ cid: ConnectionId; project: string } | null>(null);
+  let dropTarget = $state<string | null>(null);
+  let dragArmed = false;
+  function dropOn(gcid: ConnectionId, srv: ServerState, target: string) {
+    const d = dragging;
+    dragging = null;
+    dropTarget = null;
+    if (!d || d.cid !== gcid || d.project === target) return;
+    const order = orderedProjects(srv).filter((p) => p !== d.project);
+    order.splice(order.indexOf(target), 0, d.project);
+    srv.setProjectOrder(order);
+  }
+
+  // Ctrl/Cmd+1–9 opens the nth pinned chat.
+  function onWindowKey(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || !/^[1-9]$/.test(e.key)) return;
+    const r = pinned[Number(e.key) - 1];
+    if (!r) return;
+    e.preventDefault();
+    openChatSession(r.cid, r.s.sessionId);
+  }
 </script>
+
+<svelte:window onkeydown={onWindowKey} />
+
+{#snippet pickedLead()}
+  {#if pickedServer}<ServerAvatar name={pickedServer.label} seed={pickedServer.serverId} size={13} />{/if}
+{/snippet}
+
+{#snippet serverGroupHeader(gcid: string)}
+  {@const srv = app.servers[gcid]}
+  {#if srv}<ServerAvatar name={srv.label} seed={srv.serverId} size={12} /> {srv.label}{/if}
+{/snippet}
+
+{#snippet rowFor(r: Row, variant: "default" | "running" | "attention", showServer = multiServer)}
+  {@const paired = r.srv.splitPartnerFor(r.s.sessionId) ?? null}
+  {#if paired}
+    <SplitEntry primary={r.s} secondary={paired} connectionId={r.cid} {variant} />
+  {:else}
+    <ChatRow connectionId={r.cid} session={r.s} {variant} {showServer} />
+  {/if}
+{/snippet}
 
 <div class="sidebar-slot" class:resizing class:collapse-anim={collapsedByDrag} style="flex-basis: {slotWidth}px">
   <aside
@@ -401,208 +467,248 @@
       <span class="brand">yoakeland</span>
     </div>
     <div class="quick-row">
-      <div class="search">
-        <Icon name="search" size={13} />
-        <input type="text" placeholder="Search threads…" bind:value={search} />
-        {#if search}
-          <button class="search-clear" onclick={() => (search = "")} title="Clear search" aria-label="Clear search">
-            <Icon name="xmark" size={12} />
-          </button>
-        {/if}
-      </div>
-      <button class="new-chat" onclick={() => newChat()} title="New chat" aria-label="New chat">
+      <SearchInput bind:value={search} placeholder="Search chats…" />
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger
+          class="filter-btn{chip ? ' on' : ''}"
+          title={chip ? `Showing: ${CHIPS.find((c) => c.id === chip)?.label}` : "Filter chats"}
+          aria-label="Filter chats"
+        >
+          <Icon name="filter" size={15} />
+          {#if !chip && needsYou.length}<span class="filter-dot"></span>{/if}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content class="context-menu" align="end" sideOffset={4}>
+            {#each CHIPS as c (c.id)}
+              <DropdownMenu.Item class="context-menu-item filter-item" onSelect={() => (chip = chip === c.id ? null : c.id)}>
+                <Icon name={c.icon as any} size={13} />
+                <span class="filter-label">{c.label}</span>
+                {#if chipCount(c.id)}<span class="filter-count" class:warn={c.id === "waiting"}>{chipCount(c.id)}</span>{/if}
+                {#if chip === c.id}<Icon name="check" size={12} />{/if}
+              </DropdownMenu.Item>
+            {/each}
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <button
+        class="new-chat"
+        onclick={newChat}
+        title={pickerCid && projectFilter ? `New chat in ${pickedServer?.projectName(projectFilter)}` : "New chat…"}
+        aria-label="New chat"
+      >
         <Icon name="message-circle-plus" size={16} />
       </button>
     </div>
 
     <div class="project-row">
-      {#if remoteProjectItems.length > 1}
+      {#if hasAnyProject}
         <Dropdown
           items={remoteProjectItems}
           bind:value={pickerValue}
           placeholder="Select a project…"
           triggerIcon="folder"
+          triggerLead={pickedServer && multiServer ? pickedLead : undefined}
           searchable={remoteProjectItems.length > 6}
           searchPlaceholder="Search projects…"
           triggerClass="project-trigger"
+          groupHeader={serverGroupHeader}
         >
           {#snippet item({ value, label, selected })}
-            {@const path = value === ALL_PROJECTS ? undefined : value.slice(value.indexOf("::") + 2)}
+            {@const path = value.includes("::") && !value.startsWith("server::") ? value.slice(value.indexOf("::") + 2) : undefined}
+            {#if value.startsWith("server::")}
+              {@const srv = app.servers[value.slice(8)]}
+              {#if srv}<ServerAvatar name={srv.label} seed={srv.serverId} size={12} />{/if}
+            {/if}
             <span class="dropdown-item-label" title={path}>{label}</span>
             {#if selected}<Icon name="check" size={11} />{/if}
           {/snippet}
         </Dropdown>
       {:else}
-        <button
-          class="project-trigger empty-cta"
-          onclick={() => cid && browseAndAddProject(cid).then((p) => p && cid && selectProject(cid, p))}
-        >
+        <button class="project-trigger empty-cta" onclick={() => addProject(cid)}>
           <Icon name="folder-plus" size={13} />
           <span>Add your first project</span>
         </button>
       {/if}
       <button
         class="manage-projects"
-        title="Manage projects"
-        aria-label="Manage projects"
-        onclick={() => (
-          (app.settingsTab = "connections"), (app.showSettings = true)
-        )}
+        title="Add project"
+        aria-label="Add project"
+        onclick={() => addProject(pickerCid ?? cid)}
       >
         <Icon name="folder-plus" size={14} />
       </button>
     </div>
 
-    <Tabs.Root bind:value={view} class="sidebar-tabs-root">
-      <Tabs.List class="view-tabs">
-        <Tabs.Trigger value="active" class="view-tab">Active</Tabs.Trigger>
-        <Tabs.Trigger value="archive" class="view-tab">Archive</Tabs.Trigger>
-      </Tabs.List>
-
     <nav class="chat-list">
-      <Tabs.Content value="active" class="view-tab-content">
-        {#if running.length > 0}
-          <div class="section-label">Running</div>
-          {#each running as entry (entry.cid + entry.session.sessionId)}
-            {@const s = entry.session}
-            {@const isActiveConn = entry.cid === cid}
-            {@const paired = isActiveConn ? (entry.server.splitPartnerFor(s.sessionId) ?? null) : null}
-            {#if paired}
-              <SplitEntry primary={s} secondary={paired} />
-            {:else if isActiveConn && renamingId === s.sessionId}
-              <div class="chat-card" class:active={s.sessionId === entry.server.currentSessionId}>
-                <div class="chat-card-top">
-                  <span class="status-icon status-{statusOf(s.sessionId, entry.server)}" aria-hidden="true">
-                    <Icon name={statusIcon[statusOf(s.sessionId, entry.server)]} size={13} />
-                  </span>
-                  <form
-                    class="rename-form"
-                    onsubmit={(e) => (e.preventDefault(), commitRename())}
-                  >
-                    <input
-                      class="rename-input"
-                      bind:this={renameInput}
-                      bind:value={renameValue}
-                      onclick={(e) => e.stopPropagation()}
-                      onblur={commitRename}
-                      onkeydown={(e) => {
-                        if (e.key === "Enter") commitRename();
-                        else if (e.key === "Escape") renamingId = null;
-                      }}
-                    />
-                  </form>
-                </div>
-                <span class="chat-card-status">{currentActivity(s.sessionId, entry.server)}</span>
-              </div>
-            {:else}
-              <ContextMenu items={isActiveConn ? menuItems(s) : []}>
-                <button
-                  type="button"
-                  class="chat-card"
-                  class:active={isActiveConn && s.sessionId === entry.server.currentSessionId}
-                  class:syncing={entry.server.syncingSessions[s.sessionId]}
-                  disabled={entry.server.syncingSessions[s.sessionId]}
-                  aria-label={`${sessionTitle(s)}, ${entry.server.syncingSessions[s.sessionId] ? "syncing" : statusOf(s.sessionId, entry.server)}`}
-                  ondblclick={() => isActiveConn && startRename(s)}
-                  onclick={() => {
-                    if (!isActiveConn) app.activeConnectionId = entry.cid;
-                    openChatSession(entry.cid, s.sessionId);
-                  }}
-                >
-                  <div class="chat-card-top">
-                    <span class="status-icon status-{statusOf(s.sessionId, entry.server)}" aria-hidden="true">
-                      <Icon name={statusIcon[statusOf(s.sessionId, entry.server)]} size={13} />
-                    </span>
-                    <span class="label">{sessionTitle(s)}</span>
-                    {#if !isActiveConn}
-                      <!-- Running on a remote other than the one currently
-                           selected in the picker — name it so "pinned
-                           regardless of remote" doesn't read as ambiguous
-                           about which server it'll open. -->
-                      <span class="remote-badge" title="Running on {entry.server.serverIdentity ?? (entry.server.connectionMode === 'local' ? 'Local' : 'Remote')}">
-                        {entry.server.serverIdentity ?? (entry.server.connectionMode === "local" ? "Local" : "Remote")}
-                      </span>
-                    {:else if s.sessionId !== entry.server.currentSessionId}
-                      <!-- Not a real <button>: this sits inside the .chat-card
-                           button above it, and nested <button>s are invalid
-                           HTML (the browser would silently split/hoist one out,
-                           breaking layout and click semantics). -->
-                      <span
-                        role="button"
-                        tabindex="0"
-                        class="side-panel-btn"
-                        title="Open in side panel"
-                        aria-label="Open in side panel"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          if (cid) openInSidePanel(cid, s.sessionId);
-                        }}
-                        onkeydown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (cid) openInSidePanel(cid, s.sessionId);
-                          }
-                        }}
-                      >
-                        <Icon name="layout-columns" size={13} />
-                      </span>
-                    {/if}
-                  </div>
-                  <span class="chat-card-status">{currentActivity(s.sessionId, entry.server)}</span>
-                </button>
-              </ContextMenu>
-            {/if}
-          {/each}
-        {/if}
-
-        {#if activeGroups.length > 0}
-          {#if running.length > 0}<div class="section-label">Recent</div>{/if}
-          {#each activeGroups as [project, sessions] (project)}
-            <ProjectGroup projectPath={project} {sessions} archived={false} onNewChat={() => newChat(project)} />
-          {/each}
-        {:else if running.length === 0}
-          <p class="empty">No threads yet</p>
-        {/if}
-      </Tabs.Content>
-      <Tabs.Content value="archive" class="view-tab-content">
-        {#if archiveGroups.length > 0}
-          {#each archiveGroups as [project, sessions] (project)}
-            <ProjectGroup projectPath={project} {sessions} archived={true} />
-          {/each}
+      {#if chip}
+        <div class="section-label filter-head">
+          {CHIPS.find((c) => c.id === chip)?.label}
+          <button class="clear-filter" title="Clear filter" aria-label="Clear filter" onclick={() => (chip = null)}>
+            <Icon name="xmark" size={11} />
+          </button>
+        </div>
+      {/if}
+      {#if search.trim()}
+        {#each results as r (key(r))}
+          <ChatRow
+            connectionId={r.cid}
+            session={r.s}
+            variant={isArchived(r.s) ? "archived" : r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default"}
+            showServer={multiServer}
+            snippet={r.snippet}
+            query={search.trim()}
+          />
+        {:else}
+          <p class="empty">No chats match “{search.trim()}”</p>
+        {/each}
+      {:else if chip === "archived"}
+        {#each archiveGroups as g (g.cid + "::" + g.project)}
+          <ProjectGroup connectionId={g.cid} projectPath={g.project} sessions={g.sessions} archived={true} />
         {:else}
           <p class="empty">Nothing archived</p>
+        {/each}
+      {:else if chip}
+        {#each chipRows as r (key(r))}
+          {@render rowFor(r, chip === "waiting" ? "attention" : chip === "running" ? "running" : "default")}
+        {:else}
+          <p class="empty">
+            {chip === "waiting" ? "Nothing is waiting on you" : chip === "running" ? "Nothing is running" : "You're all caught up"}
+          </p>
+        {/each}
+      {:else}
+        {#if needsYou.length}
+          <div class="section-label attention">Needs you</div>
+          {#each needsYou as r (key(r))}{@render rowFor(r, "attention")}{/each}
         {/if}
-      </Tabs.Content>
+        {#if running.length}
+          <div class="section-label">Running</div>
+          {#each running as r (key(r))}{@render rowFor(r, "running")}{/each}
+        {/if}
+        {#if pinnedShown.length}
+          <div class="section-label">Pinned</div>
+          {#each pinnedShown as r (key(r))}{@render rowFor(r, "default")}{/each}
+        {/if}
+
+        {#each serverSections as sec (sec.cid)}
+          {@const open = !sec.srv.collapsedProjects[SERVER_SECTION]}
+          {@const connected = sec.srv.connectionStatus === "connected"}
+          {#if !flat}
+            <ContextMenu items={() => serverMenu(sec.cid, sec.srv)}>
+            <div class="server-head" class:offline={!connected}>
+              <button
+                class="server-toggle"
+                aria-expanded={open}
+                onclick={() => sec.srv.setProjectCollapsed(SERVER_SECTION, open)}
+              >
+                <span class="lead">
+                  <span class="face icon-face"><ServerAvatar name={sec.srv.label} seed={sec.srv.serverId} size={14} /></span>
+                  <span class="face chevron-face" class:open><Icon name="chevron-right" size={12} /></span>
+                </span>
+                <span class="server-name">{sec.srv.label}</span>
+                {#if !connected}
+                  <span class="server-state {sec.srv.connectionStatus}">
+                    {SERVER_STATE[sec.srv.connectionStatus as keyof typeof SERVER_STATE] ?? ""}
+                  </span>
+                {/if}
+              </button>
+              {#if connected}
+                <button class="server-add" title={`Add a project on ${sec.srv.label}`} aria-label="Add project" onclick={() => addProject(sec.cid)}>
+                  <Icon name="folder-plus" size={12} />
+                </button>
+              {/if}
+            </div>
+            </ContextMenu>
+          {/if}
+          {#if open || flat}
+            <div
+              class="server-body"
+              class:offline={!connected}
+              class:nested={!flat}
+              transition:slide={{ duration: flat ? 0 : Math.round(180 * app.settings.animationSpeed) }}
+            >
+              {#if !connected && multiServer}
+                <p class="note">Showing cached chats — read-only until {sec.srv.label} reconnects.</p>
+              {/if}
+              {#each sec.groups as g (g.project)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="drag-wrap"
+                  class:drop-target={dropTarget === sec.cid + g.project}
+                  draggable="true"
+                  onpointerdown={(e) => (dragArmed = !!(e.target as HTMLElement).closest(".summary"))}
+                  ondragstart={(e) => {
+                    if (!dragArmed) return e.preventDefault();
+                    dragging = { cid: sec.cid, project: g.project };
+                    e.dataTransfer?.setData("text/plain", g.project);
+                  }}
+                  ondragover={(e) => {
+                    if (dragging?.cid !== sec.cid) return;
+                    e.preventDefault();
+                    dropTarget = sec.cid + g.project;
+                  }}
+                  ondragleave={() => dropTarget === sec.cid + g.project && (dropTarget = null)}
+                  ondrop={(e) => (e.preventDefault(), dropOn(sec.cid, sec.srv, g.project))}
+                  ondragend={() => ((dragging = null), (dropTarget = null))}
+                >
+                  <ProjectGroup
+                    connectionId={sec.cid}
+                    projectPath={g.project}
+                    sessions={g.sessions}
+                    archived={false}
+                    onNewChat={() => void newChatIn(sec.cid, g.project)}
+                  />
+                </div>
+              {:else}
+                {#if flat && !projectFilter}
+                  <div class="empty-state sidebar-empty">
+                    <Icon name="folder-plus" size={20} />
+                    <p>No projects on {sec.srv.label} yet</p>
+                    {#if connected}
+                      <button class="empty-action" onclick={() => addProject(sec.cid)}>Add a project</button>
+                    {/if}
+                  </div>
+                {:else if !projectFilter}
+                  <p class="empty">
+                    No projects on {sec.srv.label}{#if connected}&nbsp;
+                      — <button class="link" onclick={() => addProject(sec.cid)}>add one</button>{/if}
+                  </p>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        {:else}
+          <p class="empty">No servers yet — connect one from the command palette.</p>
+        {/each}
+      {/if}
     </nav>
-    </Tabs.Root>
 
     <div class="user-area">
       <button
         class="profile"
-        onclick={() => (
-          (app.settingsTab = "profile"), (app.showSettings = true)
-        )}
-        title="Profile"
+        onclick={() => ((app.settingsTab = "profile"), (app.showSettings = true))}
+        title={connectedServers.length ? "Profile — visible to peers on your connected servers" : "Profile — offline"}
       >
-        <span class="avatar">
-          {#if isPhotoAvatar(app.settings.profileAvatar)}
-            <img src={app.settings.profileAvatar} alt="" />
-          {:else}
-            {app.settings.profileAvatar || "🐣"}
-          {/if}
+        <span class="avatar-wrap">
+          <span class="avatar">
+            {#if isPhotoAvatar(app.settings.profileAvatar)}
+              <img src={app.settings.profileAvatar} alt="" />
+            {:else}
+              {app.settings.profileAvatar || "🐣"}
+            {/if}
+          </span>
+          <span class="presence" class:online={connectedServers.length > 0}></span>
         </span>
-        <span class="profile-name"
-          >{app.settings.profileName || "anonymous"}</span
-        >
+        <span class="profile-name">{app.settings.profileName || "anonymous"}</span>
       </button>
       <button
         class="icon-btn"
-        onclick={() => (app.showConnectModal = true)}
-        title={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect"}
-        aria-label={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect"}
+        class:on={app.showUsage}
+        onclick={() => (app.showUsage = !app.showUsage)}
+        title="Usage"
+        aria-label="Usage"
+        aria-pressed={app.showUsage}
       >
-        <Icon name="log-in" size={14} />
+        <Icon name="chart-bar" size={15} />
       </button>
     </div>
 
@@ -631,6 +737,7 @@
     {/if}
   </aside>
 </div>
+
 
 <style>
   .sidebar-slot {
@@ -679,7 +786,7 @@
        isn't selectable by default; inputs opt back in below. */
     user-select: none;
   }
-  .sidebar input {
+  .sidebar :global(input) {
     user-select: text;
   }
   .sidebar.collapsed {
@@ -788,87 +895,6 @@
     color: var(--text);
     background: var(--sidebar-hover);
   }
-  :global(.sidebar-tabs-root) {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-  }
-  :global(.view-tabs) {
-    display: flex;
-    background: rgba(255, 255, 255, 0.04);
-    border-radius: var(--radius-pill);
-    padding: 0.14rem;
-  }
-  :global(.view-tab) {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--sidebar-fg-dim);
-    padding: 0.36rem;
-    border-radius: var(--radius-pill);
-    font-size: var(--text-heading-size);
-    cursor: pointer;
-  }
-  :global(.view-tab[data-state="active"]) {
-    background: var(--sidebar-active);
-    color: var(--text);
-  }
-  /* Tabs.Content hides the inactive panel via a plain `hidden` attribute, not
-     `display:none` — `display:contents` on the active one lets its children
-     flow straight into `.chat-list`'s own flex column instead of being
-     boxed inside an extra wrapper div that would break its `gap`. The more
-     specific `[hidden]` rule below still wins for the inactive one. */
-  :global(.view-tab-content) {
-    display: contents;
-  }
-  :global(.view-tab-content[hidden]) {
-    display: none;
-  }
-  .search {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.43rem;
-    padding: 0 var(--space-1);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--sidebar-fg-dim);
-    height: var(--ctrl-h);
-  }
-  .search:focus-within {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font-size: var(--text-label-size);
-  }
-  .search-clear {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.29rem;
-    height: 1.29rem;
-    background: none;
-    border: none;
-    color: var(--sidebar-fg-dim);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-  }
-  .search-clear:hover {
-    color: var(--text);
-    background: var(--sidebar-hover);
-  }
   .chat-list {
     flex: 1;
     overflow-y: auto;
@@ -880,186 +906,64 @@
   .chat-list::-webkit-scrollbar {
     display: none;
   }
+  /* Same small-caps label as the palette's and Settings' group headings. */
   .section-label {
-    padding: 0.43rem var(--space-1) 0.14rem;
-    font-size: var(--text-heading-size);
+    padding: 0.71rem var(--space-1) 0.29rem;
+    font-size: 0.66rem;
+    font-weight: var(--text-heading-weight);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     color: var(--sidebar-fg-dim);
+    opacity: 0.75;
   }
-  .chat-card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.21rem;
-    width: 100%;
-    background: var(--accent-dim);
-    border: 1px solid transparent;
-    color: var(--text);
-    padding: var(--space-1) 0.64rem;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    text-align: left;
-    margin: 0.14rem 0;
-    font: inherit;
-  }
-  .chat-card.active {
-    border-color: var(--accent);
-  }
-  .chat-card.syncing {
-    opacity: 0.5;
-    cursor: default;
-  }
-  .chat-card-top {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-  }
-  .chat-card-status {
-    font-size: var(--text-heading-size);
-    color: var(--accent);
-    padding-left: 1.3rem;
-  }
-  .status-icon {
-    flex-shrink: 0;
-    display: inline-flex;
-  }
-  .status-icon.status-idle {
-    color: var(--sidebar-fg-dim);
-  }
-  .status-icon.status-action {
-    color: var(--warning);
-  }
-  .status-icon.status-finished {
-    color: var(--success);
-  }
-  .status-icon.status-working {
-    color: var(--info);
-  }
-  .status-icon.status-working :global(svg) {
-    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .label {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .remote-badge {
-    flex-shrink: 0;
-    font-size: var(--text-caption-size, 0.7rem);
-    color: var(--sidebar-fg-dim);
-    background: var(--sidebar-hover);
-    border-radius: var(--radius-pill);
-    padding: 0.07rem 0.43rem;
-    max-width: 6rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .side-panel-btn {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    padding: 0;
+  .empty,
+  .note {
     margin: 0;
-    background: none;
-    border: none;
-    font: inherit;
-    border-radius: var(--radius-sm);
-    color: var(--sidebar-fg-dim);
-    cursor: pointer;
-    opacity: 0;
-    transition:
-      opacity calc(0.15s * var(--anim-speed, 1)) ease,
-      color calc(0.12s * var(--anim-speed, 1)) ease,
-      background calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  .chat-card:hover .side-panel-btn {
-    opacity: 1;
-  }
-  .side-panel-btn:hover {
-    color: var(--text);
-    background: var(--sidebar-hover);
-  }
-  .rename-form {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-  }
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font: inherit;
-    padding: 0;
-    margin: 0;
-  }
-  .empty {
     color: var(--sidebar-fg-dim);
     font-size: var(--text-label-size);
     padding: var(--space-1);
   }
-  .user-area {
-    display: flex;
-    align-items: center;
-    gap: var(--space-half);
-    padding: 0.43rem;
-    border-top: 1px solid var(--panel-border);
+  .note {
+    font-size: 0.7rem;
+    padding-top: 0;
   }
-  .profile {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    min-width: 0;
+  .sidebar-empty {
+    padding: 2rem var(--space-1);
+    font-size: var(--text-label-size);
+  }
+  .sidebar-empty p {
+    margin: 0;
+  }
+  .empty-action {
+    margin-top: 0.29rem;
+    padding: 0.29rem 0.71rem;
     background: transparent;
-    border: none;
-    padding: var(--space-half) 0.43rem;
+    border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
+    color: var(--sidebar-fg);
+    font: inherit;
     cursor: pointer;
-    text-align: left;
   }
-  .profile:hover {
+  .empty-action:hover {
     background: var(--sidebar-hover);
   }
-  .avatar {
-    flex-shrink: 0;
-    width: 1.7rem;
-    height: 1.7rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    overflow: hidden;
-    font-size: 1.1rem;
-    line-height: 1;
+  .link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    cursor: pointer;
   }
-  .avatar img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+  .link:hover {
+    text-decoration: underline;
   }
-  .profile-name {
-    flex: 1;
-    font-size: var(--text-label-size);
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
+  .section-label.attention {
+    color: var(--warning);
+    opacity: 1;
   }
-  .icon-btn {
+  :global(.filter-btn) {
+    position: relative;
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -1067,15 +971,259 @@
     width: var(--ctrl-h);
     height: var(--ctrl-h);
     background: transparent;
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
+    border: 1px solid transparent;
+    color: var(--sidebar-fg-dim);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  :global(.filter-btn:hover),
+  :global(.filter-btn[data-state="open"]) {
+    color: var(--text);
+    background: var(--sidebar-hover);
+  }
+  :global(.filter-btn.on) {
+    color: var(--accent);
+    background: var(--sidebar-active);
+  }
+  .filter-dot {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--warning);
+  }
+  :global(.filter-item .filter-label) {
+    flex: 1;
+  }
+  :global(.filter-item .filter-count) {
+    font-size: 0.68rem;
+    opacity: 0.7;
+  }
+  :global(.filter-item .filter-count.warn) {
+    color: var(--warning);
+    opacity: 1;
+  }
+  .filter-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 0.29rem;
+  }
+  .clear-filter {
+    display: flex;
+    padding: 0.14rem;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    cursor: pointer;
+  }
+  .clear-filter:hover {
+    color: var(--text);
+    background: var(--sidebar-hover);
+  }
+  .server-head {
+    display: flex;
+    align-items: center;
+    margin-top: 0.43rem;
+    border-radius: var(--radius-sm);
+  }
+  .server-head:hover {
+    background: var(--sidebar-hover);
+  }
+  .server-toggle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    padding: 0.36rem 0.57rem;
+    background: none;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+  }
+  /* Avatar and chevron share one slot, crossfading on hover — same as a
+     project's folder icon (ProjectGroup.svelte). */
+  .lead {
+    position: relative;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+  }
+  .face {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      opacity calc(0.15s * var(--anim-speed, 1)) ease,
+      transform calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .chevron-face,
+  .server-toggle:hover .icon-face,
+  .server-toggle:focus-visible .icon-face {
+    opacity: 0;
+  }
+  .server-toggle:hover .chevron-face,
+  .server-toggle:focus-visible .chevron-face {
+    opacity: 1;
+  }
+  .chevron-face.open {
+    transform: rotate(90deg);
+  }
+  .server-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .server-head.offline .server-toggle :global(.server-avatar) {
+    filter: grayscale(1);
+    opacity: 0.55;
+  }
+  .server-state {
+    font-size: 0.68rem;
+    font-weight: 400;
+    color: var(--warning);
+  }
+  .server-state.error {
+    color: var(--danger);
+  }
+  .server-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--sidebar-fg-dim);
+    cursor: pointer;
+    opacity: 0;
+  }
+  .server-head:hover .server-add {
+    opacity: 1;
+  }
+  .server-add:hover {
+    color: var(--text);
+  }
+  /* One indent step per tree level: remote → project → chat. */
+  .server-body.nested {
+    --project-indent: 0.71rem;
+  }
+  .server-body.offline :global(.group) {
+    opacity: 0.7;
+  }
+  .drag-wrap.drop-target {
+    box-shadow: inset 0 2px 0 var(--accent);
+  }
+  .user-area {
+    display: flex;
+    align-items: center;
+    gap: 0.21rem;
+    padding: 0.43rem;
+    border-top: 1px solid var(--panel-border);
+  }
+  .profile {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.57rem;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    padding: 0.29rem 0.43rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+  }
+  .profile:hover {
+    background: var(--sidebar-hover);
+  }
+  .avatar {
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 1.15rem;
+    line-height: 1;
+  }
+  .avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .avatar-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+  /* Presence, the way chat apps show it: online while any server is
+     connected (you're visible in its peer list), hollow when not. */
+  .presence {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--bg);
+    box-shadow: inset 0 0 0 2px var(--sidebar-fg-dim);
+    border: 2px solid var(--bg);
+    box-sizing: content-box;
+  }
+  .presence.online {
+    background: var(--success);
+    box-shadow: none;
+  }
+  .profile-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .icon-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
     color: var(--sidebar-fg-dim);
     cursor: pointer;
     border-radius: var(--radius-sm);
+    transition:
+      background calc(0.12s * var(--anim-speed, 1)) ease,
+      color calc(0.12s * var(--anim-speed, 1)) ease;
   }
   .icon-btn:hover {
     color: var(--text);
     background: var(--sidebar-hover);
+  }
+  .icon-btn.on {
+    color: var(--text);
+    background: var(--sidebar-active);
   }
   .resize-handle {
     position: absolute;

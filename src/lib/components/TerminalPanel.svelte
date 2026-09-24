@@ -26,6 +26,12 @@
   const activeId = $derived(server?.activeTerminalBySession[sessionId]);
   const splitOn = $derived(server?.terminalSplitBySession[sessionId] ?? false);
   const splitId = $derived(server?.splitTerminalBySession[sessionId]);
+  // A brand-new chat's sessionId is minted locally and never told to the
+  // server until its first message goes out (see ServerState.newSessionInProject) —
+  // there's no session for a terminal to run in yet, so show that instead of
+  // an empty drawer or a "+ New Tab" that would just fail against an unknown
+  // session id.
+  const isDraft = $derived(!(server?.messagesBySession[sessionId] ?? []).length);
 
   // Ids this client itself minted via "+ New Tab" — these send terminal_open
   // on their TerminalView's first mount; every other id (discovered via
@@ -34,9 +40,12 @@
   // instance across every chat the user ever switches to (only `sessionId`
   // changes), so this — like every other bit of local state below — has to
   // stay meaningless for any id outside the *current* session's `tabIds`;
-  // it only ever grows, but a stray id from a since-abandoned session is
-  // harmless (never looked up again once it drops out of `tabIds`).
-  let freshIds = $state<Set<string>>(new Set());
+  // An id is dropped again once its TerminalView has actually sent
+  // terminal_open (`onopened`) — closing the drawer or switching chats
+  // unmounts the view, and a remount must attach, not re-open (the server
+  // rejects a second terminal_open for a live id). Plain Set, not $state:
+  // `fresh` is only read at mount.
+  const freshIds = new Set<string>();
   let draggingId = $state<string | null>(null);
   let slotEl = $state<HTMLDivElement | null>(null);
 
@@ -48,7 +57,7 @@
   // right after switching chats would race that response and spawn a
   // redundant tab on top of ones the session already had.
   $effect(() => {
-    if (open && server?.terminalsListedBySession[sessionId] && tabIds.length === 0 && !activeId) newTerminal();
+    if (open && !isDraft && server?.terminalsListedBySession[sessionId] && tabIds.length === 0 && !activeId) newTerminal();
   });
 
   const sizeVars = $derived(`--term-pct: ${app.terminalHeightRatio * 100}%; --term-min: ${TERMINAL_MIN_HEIGHT}px`);
@@ -74,9 +83,9 @@
   }
 
   function newTerminal() {
-    if (!server) return;
+    if (!server || isDraft) return;
     const id = `term-${crypto.randomUUID().slice(0, 8)}`;
-    freshIds = new Set([...freshIds, id]);
+    freshIds.add(id);
     server.registerTerminalTab(sessionId, id);
     server.setActiveTerminalTab(sessionId, id);
   }
@@ -127,7 +136,13 @@
 </script>
 
 <div class="terminal-slot" class:open class:resizing={app.terminalResizing} style={sizeVars} bind:this={slotEl}>
-  {#if open}
+  {#if open && isDraft}
+    <div class="empty-state">
+      <Icon name="terminal-2" size={20} />
+      <p>Terminal isn't available yet</p>
+      <span>This chat hasn't started — send a message first, then open a terminal here.</span>
+    </div>
+  {:else if open}
     <div class="bar">
       {#if tabIds.length > 1}
         <div class="tabs">
@@ -198,7 +213,7 @@
              switching tabs is instant and a backgrounded tab keeps
              receiving output while this drawer stays open. -->
         <div class="pane-slot" class:right={isSplit} style:display={id === activeId || isSplit ? "block" : "none"}>
-          <TerminalView {sessionId} terminalId={id} fresh={freshIds.has(id)} visible={id === activeId || isSplit} />
+          <TerminalView {sessionId} terminalId={id} fresh={freshIds.has(id)} onopened={() => freshIds.delete(id)} visible={id === activeId || isSplit} />
         </div>
       {/each}
     </div>
@@ -382,6 +397,27 @@
   }
   .bar-btn.active {
     color: var(--accent);
+  }
+
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.36rem;
+    padding: 1rem;
+    text-align: center;
+    color: var(--text-dim);
+  }
+  .empty-state p {
+    margin: 0.29rem 0 0;
+    font-size: var(--text-body-size);
+    color: var(--text);
+  }
+  .empty-state span {
+    max-width: 22rem;
+    font-size: var(--text-label-size);
   }
 
   .panes {

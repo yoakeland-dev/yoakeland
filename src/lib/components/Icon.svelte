@@ -71,6 +71,18 @@
   import arrowNarrowDown from "@tabler/icons/outline/arrow-narrow-down.svg?raw";
   import refresh from "@tabler/icons/outline/refresh.svg?raw";
   import eye from "@tabler/icons/outline/eye.svg?raw";
+  import bell from "@tabler/icons/outline/bell.svg?raw";
+  import file from "@tabler/icons/outline/file.svg?raw";
+  import cpu from "@tabler/icons/outline/cpu.svg?raw";
+  import command from "@tabler/icons/outline/command.svg?raw";
+  import arrowsExchange from "@tabler/icons/outline/arrows-exchange.svg?raw";
+  import pin from "@tabler/icons/outline/pin.svg?raw";
+  import pinned from "@tabler/icons/outline/pinned.svg?raw";
+  import gitBranch from "@tabler/icons/outline/git-branch.svg?raw";
+  import clock from "@tabler/icons/outline/clock.svg?raw";
+  import filter from "@tabler/icons/outline/filter.svg?raw";
+  import bellFilled from "@tabler/icons/filled/bell.svg?raw";
+  import chartBar from "@tabler/icons/outline/chart-bar.svg?raw";
 
   const icons = {
     plus,
@@ -141,6 +153,18 @@
     "arrow-narrow-down": arrowNarrowDown,
     refresh,
     eye,
+    bell,
+    file,
+    cpu,
+    command,
+    "arrows-exchange": arrowsExchange,
+    pin,
+    pinned,
+    "git-branch": gitBranch,
+    clock,
+    filter,
+    "bell-filled": bellFilled,
+    "chart-bar": chartBar,
   };
 
   let { name, size = 16 }: { name: keyof typeof icons; size?: number } = $props();

@@ -1,11 +1,27 @@
+<script lang="ts" module>
+  import { Marked } from "marked";
+  import { highlightCode } from "../highlight";
+  // One shared instance for plain (non-mention) Markdown — its own rather
+  // than marked's global, so the highlighting extension isn't registered
+  // app-wide.
+  const plain = new Marked(highlightCode);
+</script>
+
 <script lang="ts">
-  import { marked, type Token, type Links } from "marked";
+  import type { Token, Links } from "marked";
   import DOMPurify from "dompurify";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { mentionLabels, mentionLabelsFor, MENTION_RE, withMentions } from "../mentions";
 
-  let { text }: { text: string } = $props();
-
+  // `mentions`: render `@path/to/file` tokens as file chips (user messages —
+  // that's where the composer's @-autocomplete puts them).
+  let { text, mentions = false }: { text: string; mentions?: boolean } = $props();
   const PARSE_OPTS = { breaks: true, gfm: true };
+  const md = $derived(mentions ? withMentions(new Marked(highlightCode)) : plain);
+  // Passing options to lexer/parser *replaces* the instance's defaults —
+  // which is where md.use() put the mention extension — so merge instead.
+  const opts = $derived({ ...md.defaults, ...PARSE_OPTS });
+
 
   // Re-parsing/re-sanitizing the *whole* message on every streamed token is
   // wasted work that only gets worse the longer a reply runs — the same
@@ -28,7 +44,8 @@
   let raf = 0;
 
   function render(t: string) {
-    const allTokens = marked.lexer(t, PARSE_OPTS);
+    if (mentions) mentionLabels.current = labelsFor(t);
+    const allTokens = md.lexer(t, opts);
     const links = allTokens.links;
     const tokens = allTokens.filter((tok) => tok.type !== "space");
     const next: string[] = [];
@@ -40,12 +57,16 @@
         continue;
       }
       const sub = Object.assign([tok], { links }) as Token[] & { links: Links };
-      const rendered = DOMPurify.sanitize(marked.parser(sub, PARSE_OPTS) as string);
+      const rendered = DOMPurify.sanitize(md.parser(sub, opts) as string);
       next.push(rendered);
       cache[i] = { raw: tok.raw, html: rendered };
     }
     cache.length = tokens.length;
     blocks = next;
+  }
+
+  function labelsFor(t: string): Map<string, string> {
+    return mentionLabelsFor([...t.matchAll(new RegExp(MENTION_RE.source, "g"))].map((m) => m[1]));
   }
 
   $effect(() => {
@@ -57,6 +78,14 @@
 
   // Links must never navigate the app's own webview away from itself.
   function onClick(e: MouseEvent) {
+    const copy = (e.target as HTMLElement).closest?.<HTMLElement>(".code-copy");
+    if (copy) {
+      const code = copy.closest(".code-block")?.querySelector("code")?.textContent ?? "";
+      void navigator.clipboard?.writeText(code);
+      copy.classList.add("copied");
+      setTimeout(() => copy.classList.remove("copied"), 1500);
+      return;
+    }
     const a = (e.target as HTMLElement).closest?.("a");
     const href = a?.getAttribute("href");
     if (!href) return;
@@ -83,6 +112,11 @@
   }
   .markdown :global(> *:last-child) {
     margin-bottom: 0;
+  }
+  .markdown :global(.mention) {
+    color: var(--accent);
+    font-weight: 500;
+    cursor: default;
   }
   .markdown :global(p) {
     margin: 0.5em 0;
@@ -151,14 +185,121 @@
   .markdown :global(pre) {
     margin: 0.5em 0;
     padding: var(--space-1);
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--code-bg);
+    color: var(--code-fg);
     border-radius: var(--radius-sm);
     overflow-x: auto;
+  }
+  .markdown :global(.code-block) {
+    margin: 0.5em 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--panel-border);
+    background: var(--code-bg);
+    overflow: hidden;
+  }
+  .markdown :global(.code-block pre) {
+    margin: 0;
+    border-radius: 0;
+  }
+  .markdown :global(.code-head) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.14rem 0.29rem 0.14rem var(--space-1);
+    border-bottom: 1px solid color-mix(in srgb, var(--code-fg) 10%, transparent);
+    color: color-mix(in srgb, var(--code-fg) 55%, transparent);
+    font-size: var(--text-label-size);
+    user-select: none;
+  }
+  .markdown :global(.code-lang) {
+    font-family: var(--code-font-family);
+  }
+  .markdown :global(.code-copy) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.57rem;
+    height: 1.57rem;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    cursor: pointer;
+  }
+  .markdown :global(.code-copy:hover) {
+    background: color-mix(in srgb, var(--code-fg) 10%, transparent);
+    color: var(--code-fg);
+  }
+  .markdown :global(.code-copy svg) {
+    width: 14px;
+    height: 14px;
+  }
+  /* Copy icon, swapped for a check for a moment after copying. */
+  .markdown :global(.code-copy svg + svg),
+  .markdown :global(.code-copy.copied svg:first-child) {
+    display: none;
+  }
+  .markdown :global(.code-copy.copied svg + svg) {
+    display: block;
+    color: var(--success);
   }
   .markdown :global(pre code) {
     background: none;
     padding: 0;
     border-radius: 0;
+    white-space: var(--code-wrap, pre);
+    word-break: break-word;
+  }
+  /* Token classes → ANSI slots of the picked palette (see highlight.ts). */
+  .markdown :global(.hljs-comment),
+  .markdown :global(.hljs-quote),
+  .markdown :global(.hljs-meta) {
+    color: var(--syn-comment);
+    font-style: italic;
+  }
+  .markdown :global(.hljs-keyword),
+  .markdown :global(.hljs-selector-tag),
+  .markdown :global(.hljs-doctag) {
+    color: var(--syn-keyword);
+  }
+  .markdown :global(.hljs-string),
+  .markdown :global(.hljs-regexp),
+  .markdown :global(.hljs-addition),
+  .markdown :global(.hljs-char) {
+    color: var(--syn-string);
+  }
+  .markdown :global(.hljs-number),
+  .markdown :global(.hljs-literal),
+  .markdown :global(.hljs-symbol),
+  .markdown :global(.hljs-attr),
+  .markdown :global(.hljs-attribute),
+  .markdown :global(.hljs-selector-attr) {
+    color: var(--syn-number);
+  }
+  .markdown :global(.hljs-title),
+  .markdown :global(.hljs-section),
+  .markdown :global(.hljs-selector-id) {
+    color: var(--syn-function);
+  }
+  .markdown :global(.hljs-type),
+  .markdown :global(.hljs-built_in),
+  .markdown :global(.hljs-title.class_),
+  .markdown :global(.hljs-selector-class) {
+    color: var(--syn-type);
+  }
+  .markdown :global(.hljs-variable),
+  .markdown :global(.hljs-template-variable),
+  .markdown :global(.hljs-name),
+  .markdown :global(.hljs-deletion),
+  .markdown :global(.hljs-selector-pseudo) {
+    color: var(--syn-variable);
+  }
+  .markdown :global(.hljs-emphasis) {
+    font-style: italic;
+  }
+  .markdown :global(.hljs-strong) {
+    font-weight: 700;
   }
   .markdown :global(table) {
     margin: 0.5em 0;

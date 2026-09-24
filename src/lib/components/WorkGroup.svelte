@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fly, fade } from "svelte/transition";
   import type { AssistantStep } from "../types";
-  import { toolMeta, summaryFor, briefFor } from "../toolMeta";
+  import { metaFor, summaryFor, briefFor } from "../toolMeta";
   import { heldLabel } from "../heldLabel.svelte";
   import ToolCallGroup from "./ToolCallGroup.svelte";
   import Icon from "./Icon.svelte";
@@ -34,7 +34,7 @@
     if (lastStep.kind === "thought") return "Thinking…";
     const call = lastStep.calls[lastStep.calls.length - 1];
     if (!call) return "";
-    const label = toolMeta[call.name]?.label ?? call.name;
+    const label = metaFor(call).label;
     const summary = summaryFor(call);
     return summary ? `${label} — ${summary}` : label;
   });

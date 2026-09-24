@@ -28,6 +28,7 @@
     sessionId,
     terminalId,
     fresh,
+    onopened,
     visible,
   }: {
     sessionId: string;
@@ -37,6 +38,8 @@
      * opened by another peer (sends terminal_attach instead). Only read at
      * mount time. */
     fresh: boolean;
+    /** Called once terminal_open has gone out for a `fresh` tab. */
+    onopened?: () => void;
     visible: boolean;
   } = $props();
 
@@ -278,6 +281,7 @@
       if (fresh) {
         app.active?.registerTerminalTab(sessionId, terminalId);
         terminalOpen(connectionId, sessionId, terminalId, { cols, rows });
+        onopened?.();
       } else {
         terminalAttach(connectionId, sessionId, terminalId, cols, rows);
       }

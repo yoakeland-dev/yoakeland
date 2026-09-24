@@ -4,98 +4,70 @@
   // rendered as one entry with both sessions stacked vertically rather than
   // as two separate rows — `primary` keeps the position it'd have on its
   // own (its section, its timestamp slot); `secondary` just tags along
-  // underneath regardless of its own timestamp or running state. Used both
-  // from Sidebar.svelte's Running section and from ProjectGroup.svelte, so a
-  // pairing works however the two sessions are otherwise split across
-  // sections.
-  import { app } from "../state.svelte";
+  // underneath regardless of its own timestamp or running state. Each half
+  // is an ordinary ChatRow, so they look and behave like every other row.
+  import { app, type ConnectionId } from "../state.svelte";
   import { setSessionLayout, openChatSession } from "../ipc";
   import { sessionTitle } from "../format";
   import Icon from "./Icon.svelte";
+  import ChatRow from "./ChatRow.svelte";
   import type { SessionSummary } from "../types";
 
-  let { primary, secondary }: { primary: SessionSummary; secondary: SessionSummary } = $props();
+  let {
+    primary,
+    secondary,
+    connectionId,
+    variant = "default",
+  }: {
+    primary: SessionSummary;
+    secondary: SessionSummary;
+    connectionId: ConnectionId;
+    variant?: "default" | "running" | "attention";
+  } = $props();
 
-  // Session state lives on the active connection's own ServerState now —
-  // see the multi-server-connections plan. `cid` is needed by every ipc.ts
-  // call now that they're threaded per connection.
-  let server = $derived(app.active);
-  let cid = $derived(app.activeConnectionId);
-
-  function statusOf(sessionId: string): "working" | "action" | "finished" | "idle" {
-    return server?.sessionStatus(sessionId) ?? "idle";
-  }
-
-  const statusIcon = {
-    working: "loader-2",
-    action: "alert-circle",
-    finished: "circle-check",
-    idle: "message-circle",
-  } as const;
+  let server = $derived(app.servers[connectionId]);
+  const active = $derived(
+    connectionId === app.activeConnectionId &&
+      (primary.sessionId === server?.currentSessionId || secondary.sessionId === server?.currentSessionId),
+  );
 </script>
 
-<!-- A plain container, not a <button>: each row below is independently
-     clickable (open that specific session) AND carries its own "maximize"
-     button, and a native <button> cannot contain another interactive
-     control (nested <button>s are invalid HTML — the browser silently
-     splits/hoists one out, breaking layout and click handling). Rows use
-     role="button" + a keydown handler instead, the standard "clickable row
-     with a nested action button" pattern (the row isn't itself a focusable
-     native control, but the maximize button inside it is a real <button>,
-     which is exactly what should get keyboard/AT focus for that action). -->
-<div
-  class="split-entry"
-  class:active={primary.sessionId === server?.currentSessionId ||
-    secondary.sessionId === server?.currentSessionId}
->
+<div class="split-entry" class:active>
   {#each [primary, secondary] as s, i (s.sessionId)}
-    <div
-      class="split-row"
-      class:secondary={i === 1}
-      role="button"
-      tabindex="0"
-      onclick={() => cid && openChatSession(cid, s.sessionId)}
-      onkeydown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          if (cid) openChatSession(cid, s.sessionId);
-        }
-      }}
-    >
-      <span class="status-icon status-{statusOf(s.sessionId)}">
-        <Icon name={statusIcon[statusOf(s.sessionId)]} size={12} />
-      </span>
-      <span class="label">{sessionTitle(s)}</span>
-      <button
-        type="button"
-        class="maximize-btn"
-        title="Maximize"
-        aria-label={`Maximize ${sessionTitle(s)}`}
-        onclick={(e) => {
-          e.stopPropagation();
-          if (!cid) return;
-          setSessionLayout(cid, primary.sessionId, null);
-          openChatSession(cid, s.sessionId);
-        }}
-      >
-        <Icon name="maximize" size={12} />
-      </button>
+    <div class="half" class:secondary={i === 1}>
+      <ChatRow {connectionId} session={s} variant={i === 0 ? variant : "default"} compact>
+        {#snippet actions()}
+          <button
+            type="button"
+            class="act"
+            title="Maximize"
+            aria-label={`Maximize ${sessionTitle(s)}`}
+            onclick={() => {
+              setSessionLayout(connectionId, primary.sessionId, null);
+              openChatSession(connectionId, s.sessionId);
+            }}
+          >
+            <Icon name="maximize" size={12} />
+          </button>
+          {#if i === 0}
+            <button
+              type="button"
+              class="act"
+              title="Ungroup"
+              aria-label="Ungroup"
+              onclick={() => setSessionLayout(connectionId, primary.sessionId, null)}
+            >
+              <Icon name="unlink" size={12} />
+            </button>
+          {/if}
+        {/snippet}
+      </ChatRow>
     </div>
   {/each}
-  <button
-    type="button"
-    class="ungroup-btn"
-    title="Ungroup"
-    aria-label="Ungroup"
-    onclick={() => cid && setSessionLayout(cid, primary.sessionId, null)}
-  >
-    <Icon name="unlink" size={12} />
-  </button>
 </div>
 
 <style>
   .split-entry {
-    position: relative;
     display: flex;
     flex-direction: column;
     width: 100%;
@@ -105,110 +77,28 @@
     margin: 0.14rem 0;
     overflow: hidden;
   }
-  .ungroup-btn {
-    position: absolute;
-    top: 0.36rem;
-    right: 0.36rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.4rem;
-    height: 1.4rem;
-    color: var(--sidebar-fg-dim);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    opacity: 0;
-    transition:
-      opacity calc(0.15s * var(--anim-speed, 1)) ease,
-      color calc(0.12s * var(--anim-speed, 1)) ease,
-      background calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  .split-entry:hover .ungroup-btn {
-    opacity: 1;
-  }
-  .ungroup-btn:hover {
-    color: var(--text);
-    background: var(--sidebar-hover);
-  }
   .split-entry.active {
     border-color: var(--accent);
   }
-  .split-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.64rem;
-    color: var(--text);
-    font-size: 0.8rem;
-    min-width: 0;
-    cursor: pointer;
-  }
-  .split-row:hover,
-  .split-row:focus-visible {
-    background: var(--sidebar-hover);
-  }
-  .split-row.secondary {
+  .half.secondary {
     border-top: 1px solid var(--panel-border);
-    opacity: 0.8;
+    opacity: 0.85;
   }
-  .maximize-btn {
-    flex-shrink: 0;
+  .act {
     display: flex;
     align-items: center;
     justify-content: center;
     width: 1.4rem;
     height: 1.4rem;
     padding: 0;
-    margin: 0;
     background: none;
     border: none;
-    font: inherit;
-    color: var(--sidebar-fg-dim);
     border-radius: var(--radius-sm);
+    color: var(--sidebar-fg-dim);
     cursor: pointer;
-    opacity: 0;
-    transition:
-      opacity calc(0.15s * var(--anim-speed, 1)) ease,
-      color calc(0.12s * var(--anim-speed, 1)) ease,
-      background calc(0.12s * var(--anim-speed, 1)) ease;
   }
-  .split-row:hover .maximize-btn,
-  .split-row:focus-within .maximize-btn {
-    opacity: 1;
-  }
-  .maximize-btn:hover {
+  .act:hover {
     color: var(--text);
     background: var(--sidebar-hover);
-  }
-  .status-icon {
-    flex-shrink: 0;
-    display: inline-flex;
-  }
-  .status-icon.status-idle {
-    color: var(--sidebar-fg-dim);
-  }
-  .status-icon.status-action {
-    color: var(--warning);
-  }
-  .status-icon.status-finished {
-    color: var(--success);
-  }
-  .status-icon.status-working {
-    color: var(--info);
-  }
-  .status-icon.status-working :global(svg) {
-    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .label {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 </style>

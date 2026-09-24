@@ -4,13 +4,14 @@
   import { app, RIGHT_SIDEBAR_MIN_WIDTH, TERMINAL_MIN_HEIGHT } from "$lib/state.svelte";
   import { isDesktop } from "$lib/platform";
   import { wireEvents, autoConnect } from "$lib/ipc";
-  import ConnectScreen from "$lib/components/ConnectScreen.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import RightSidebar from "$lib/components/RightSidebar.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
-  import DirectoryBrowser from "$lib/components/DirectoryBrowser.svelte";
+  import UsagePanel from "$lib/components/UsagePanel.svelte";
+  import CommandPalette from "$lib/components/CommandPalette.svelte";
+  import Toasts from "$lib/components/Toasts.svelte";
   import SnapshotDialog from "$lib/components/SnapshotDialog.svelte";
   import FirstServerPanel from "$lib/components/FirstServerPanel.svelte";
   import Icon from "$lib/components/Icon.svelte";
@@ -165,7 +166,21 @@
       if (app.settings.theme === "system") app.applySettings();
     };
     media.addEventListener("change", onSchemeChange);
-    return () => media.removeEventListener("change", onSchemeChange);
+
+    // Ctrl/Cmd+K opens the command palette from anywhere — except inside a
+    // terminal, where Ctrl+K belongs to the shell (readline's kill-line).
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "k") return;
+      if ((e.target as Element | null)?.closest?.(".xterm")) return;
+      e.preventDefault();
+      if (app.paletteOpen) app.paletteOpen = false;
+      else app.openPalette();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      media.removeEventListener("change", onSchemeChange);
+      window.removeEventListener("keydown", onKey, true);
+    };
   });
 
   // There's always a session to show — no empty placeholder screen. Before a
@@ -245,7 +260,9 @@
   <div class="main">
     <Sidebar />
     <div class="content-row" bind:this={contentRowEl}>
-      {#if app.active?.currentSessionId}
+      {#if app.showUsage}
+        <UsagePanel />
+      {:else if app.active?.currentSessionId}
         <ChatPanel
           sessionId={app.active.currentSessionId}
           ownsChrome={!linkedVisible}
@@ -272,10 +289,9 @@
   <StatusBar />
 </div>
 <SettingsPanel />
-<DirectoryBrowser />
+<CommandPalette />
+<Toasts />
 <SnapshotDialog />
-
-<ConnectScreen />
 
 <style>
   .shell {

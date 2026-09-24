@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fly, fade } from "svelte/transition";
   import type { ToolCallEntry } from "../types";
-  import { toolMeta, summaryFor, briefFor } from "../toolMeta";
+  import { metaFor, summaryFor, briefFor } from "../toolMeta";
   import { heldLabel } from "../heldLabel.svelte";
   import ToolCallCard from "./ToolCallCard.svelte";
   import Icon from "./Icon.svelte";
@@ -21,7 +21,7 @@
 
   const latestLabel = $derived.by(() => {
     if (!latest) return "";
-    const label = toolMeta[latest.name]?.label ?? latest.name;
+    const label = metaFor(latest).label;
     const summary = summaryFor(latest);
     return summary ? `${label} — ${summary}` : label;
   });
@@ -44,8 +44,8 @@
   // call happens to be latest. Flash/spinner/error still take over it
   // exactly like ToolCallCard's own icon slot does.
   const restIcon = $derived.by(() => {
-    const names = new Set(calls.map((c) => c.name));
-    if (names.size === 1) return toolMeta[calls[0].name]?.icon ?? "square";
+    const icons = new Set(calls.map((c) => metaFor(c).icon));
+    if (icons.size === 1) return metaFor(calls[0]).icon;
     return "tool";
   });
 </script>

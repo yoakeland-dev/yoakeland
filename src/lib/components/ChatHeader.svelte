@@ -54,6 +54,15 @@
     [...messages].reverse().find((m) => m.role === "assistant" && m.finish)
       ?.finish,
   );
+  const git = $derived.by(() => {
+    const project = server?.projectBySession[sessionId];
+    return project ? server?.gitStatusByProject[project] : undefined;
+  });
+  // -max-session-cost-usd (§3.1 ping status.budgets) applies per session, so
+  // it's shown against this session's own running total.
+  const sessionCap = $derived(
+    server?.serverStatus?.budgets?.find((b) => b.scope === "session" && b.period === "total")?.limitUsd,
+  );
   const contextPct = $derived(
     lastFinish?.context
       ? Math.min(
@@ -181,6 +190,18 @@
     {/if}
   </div>
   <div class="right">
+    {#if git}
+      <span
+        class="stat git"
+        title={`${git.detached ? "Detached HEAD" : `On ${git.branch}`} · ${git.dirtyFiles} changed file${git.dirtyFiles === 1 ? "" : "s"}${git.hasUpstream ? ` · ${git.ahead} ahead, ${git.behind} behind upstream` : " · no upstream"}`}
+      >
+        <Icon name="git-branch" size={12} />
+        {git.detached ? "detached" : git.branch}
+        {#if git.dirtyFiles}<span class="dirty">±{git.dirtyFiles}</span>{/if}
+        {#if git.hasUpstream && git.ahead}<span>↑{git.ahead}</span>{/if}
+        {#if git.hasUpstream && git.behind}<span>↓{git.behind}</span>{/if}
+      </span>
+    {/if}
     {#if lastFinish?.context}
       <div
         class="meter"
@@ -192,8 +213,12 @@
       <span class="stat">{contextPct}% ctx</span>
     {/if}
     {#if lastFinish?.spend}
-      <span class="stat"
-        >${(lastFinish.spend.sessionTotalUsd ?? 0).toFixed(2)} session</span
+      {@const total = lastFinish.spend.sessionTotalUsd ?? 0}
+      <span
+        class="stat"
+        class:over={sessionCap != null && total >= sessionCap * 0.8}
+        title={sessionCap != null ? `The server stops a session at $${sessionCap.toFixed(2)}` : undefined}
+        >${total.toFixed(2)}{#if sessionCap != null}&nbsp;/ ${sessionCap.toFixed(2)}{/if} session</span
       >
     {/if}
   </div>
@@ -366,5 +391,19 @@
     font-size: var(--text-heading-size);
     color: var(--text-dim);
     white-space: nowrap;
+  }
+  .stat.git {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.29rem;
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dirty {
+    color: var(--warning);
+  }
+  .stat.over {
+    color: var(--warning);
   }
 </style>

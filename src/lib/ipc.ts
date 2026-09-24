@@ -1,8 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { ChatMode, Envelope } from "./types";
-import { app, ServerState, type ConnectionId } from "./state.svelte";
+import type { ChatMode, Envelope, ServerStatus } from "./types";
+import {
+  app,
+  ServerState,
+  forgetKnownServer,
+  loadKnownServers,
+  loadServerToken,
+  type ConnectionId,
+  type KnownServer,
+} from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
 import { isDesktop } from "./platform";
 import { bytesToBase64 } from "./base64";
@@ -64,15 +72,12 @@ function touchActivity(connectionId: ConnectionId) {
   if (state) state.lastActivityAt = Date.now();
 }
 
-/** Only the local unix socket is safe to retry unattended — a remote/TCP
- * connection's host/port/token were entered by hand and aren't persisted
- * (storing a bare auth token client-side without real OS credential storage
- * isn't something to do silently), so a dropped remote connection surfaces
- * as an error and waits for the user to reconnect via the Connect screen
- * instead of guessing at credentials to retry with. */
+/** Retries a dropped connection with backoff — local and remote alike: a
+ * remote's host/port/token are all in its in-memory ConnectParams (and the
+ * token is remembered across restarts, see storeServerToken). */
 function scheduleReconnect(connectionId: ConnectionId) {
   const server = app.servers[connectionId];
-  if (!server || server.connectParams.mode !== "local") return;
+  if (!server) return;
   let state = liveness.get(connectionId);
   if (!state) {
     state = { lastActivityAt: Date.now(), reconnectAttempt: 0 };
@@ -84,7 +89,7 @@ function scheduleReconnect(connectionId: ConnectionId) {
   state.reconnectTimer = setTimeout(() => {
     const s = app.servers[connectionId];
     if (!s || s.connectionStatus === "connected" || s.connectionStatus === "connecting") return;
-    app.log(`reconnecting to local socket (attempt ${state.reconnectAttempt})…`);
+    app.log(`reconnecting to ${s.label} (attempt ${state.reconnectAttempt})…`);
     void redial(connectionId);
   }, delay);
 }
@@ -92,16 +97,22 @@ function scheduleReconnect(connectionId: ConnectionId) {
 function handleConnectionLost(connectionId: ConnectionId, reason: string) {
   const server = app.servers[connectionId];
   if (!server) return;
-  const mode = server.connectParams.mode;
   stopLiveness(connectionId);
   server.connectionStatus = "disconnected";
   server.connectionError = reason;
   app.log(`disconnected: ${reason}`);
   server.clearAllSessionSyncing();
-  if (mode === "local") scheduleReconnect(connectionId);
+  server.pendingAsks = [];
+  for (const w of uploadWaiters.values()) {
+    if (w.connectionId === connectionId) w.resolve({ error: "connection lost" });
+  }
+  scheduleReconnect(connectionId);
 }
 
-/** Redials a dropped local connection. Rust mints a brand-new ConnectionId
+/** Redials a dropped connection — automatically for local ones (see
+ * scheduleReconnect), or on request for either mode (reconnectServer, from
+ * the palette/Settings server lists; a remote's token is still in its
+ * in-memory ConnectParams). Rust mints a brand-new ConnectionId
  * per connect_unix call — there's no way to ask for the old one back — so a
  * naive reconnect would mean dropping this server's ServerState (current
  * session/project, nav history, caches) and starting a fresh one, which
@@ -111,10 +122,20 @@ function handleConnectionLost(connectionId: ConnectionId, reason: string) {
  * under the new id once the redial succeeds. */
 async function redial(oldConnectionId: ConnectionId) {
   const server = app.servers[oldConnectionId];
-  if (!server || server.connectParams.mode !== "local") return;
+  if (!server) return;
   const params = server.connectParams;
+  server.connectionStatus = "connecting";
   try {
-    const newConnectionId = await invoke<string>("connect_unix", { path: params.socketPath, ...peerIdentity() });
+    const newConnectionId =
+      params.mode === "local"
+        ? await invoke<string>("connect_unix", { path: params.socketPath, ...peerIdentity() })
+        : await invoke<string>("connect_tcp", {
+            host: params.host,
+            port: params.port,
+            token: params.token,
+            caPem: params.caPem || undefined,
+            ...peerIdentity(),
+          });
     delete app.servers[oldConnectionId];
     stopLiveness(oldConnectionId); // oldConnectionId is retired — afterConnect(newConnectionId) starts fresh tracking
     server.connectionId = newConnectionId;
@@ -130,6 +151,8 @@ async function redial(oldConnectionId: ConnectionId) {
   }
 }
 
+export const reconnectServer = redial;
+
 export function wireEvents() {
   if (wired || !isDesktop) return;
   wired = true;
@@ -144,8 +167,16 @@ export function wireEvents() {
     if (!server) return; // stale event from a connection we no longer track
     touchActivity(connectionId);
     if (env.type === "ping") {
-      // Backend liveness check (§2a) — echo the nonce straight back.
-      void send(connectionId, { type: "pong", data: { nonce: (env.data as { nonce?: string })?.nonce } });
+      // Backend liveness check (§2a) — echo the nonce straight back. A
+      // server-sent ping also carries the status bar's server snapshot.
+      const data = env.data as { nonce?: string; status?: ServerStatus } | undefined;
+      if (data?.status) server.serverStatus = data.status;
+      void send(connectionId, { type: "pong", data: { nonce: data?.nonce } });
+      return;
+    }
+    if (env.type === "upload_progress" || env.type === "upload_done") {
+      const data = env.data as unknown as UploadReply & { uploadId: string };
+      uploadWaiters.get(data.uploadId)?.resolve(data);
       return;
     }
     server.handleEvent(env);
@@ -218,6 +249,7 @@ function afterConnect(connectionId: ConnectionId) {
   listProjects(connectionId);
   listProviders(connectionId);
   detectCli(connectionId);
+  listNotifications(connectionId);
   // The sidebar's Active/Archive lists are grouped across every saved
   // project, not just whichever one is currently open — so every one of
   // them needs its own list_sessions, not just currentProjectPath's.
@@ -242,7 +274,20 @@ function peerIdentity() {
     name: app.settings.profileName || undefined,
     deviceType: "desktop" as const,
     avatar: app.settings.profileAvatar ? outgoingAvatarDataUrl(app.settings.profileAvatar) : undefined,
+    deviceId: thisDeviceId(),
   };
+}
+
+/** This install's stable id (§2a auth `deviceId`), made once and sent to
+ * every server, so they (and our own peer widget) can tell devices apart. */
+export function thisDeviceId(): string {
+  const KEY = "yoake.deviceId";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(KEY, id);
+  }
+  return id;
 }
 
 /** Key `app.settings.trustedCaByHostPort` is stored under for a given remote. */
@@ -354,19 +399,32 @@ export async function getDefaultSocketPath(): Promise<string> {
 
 /**
  * Called once on startup: connecting should be automatic, not something the
- * user has to click through. Tries the default local socket first (spawning
- * a server there if nothing's listening yet, same as connectLocalUnix always
- * has) — the connect modal only opens itself if that fails, since at that
- * point there's no other connection this app can reach on its own and a
- * remote server's host/token can only ever come from the user anyway.
+ * user has to click through. The default local socket goes first (spawning a
+ * server there if nothing's listening, same as connectLocalUnix always has)
+ * so it wins the active slot, then every remembered server in parallel —
+ * other local sockets directly, remotes with their remembered token and
+ * trusted CA. A remote with no remembered token (paired before tokens were
+ * kept) just stays listed under Servers until it's connected once by hand.
+ * If nothing at all connects, FirstServerPanel takes over.
  */
 export async function autoConnect() {
-  try {
-    const socketPath = await getDefaultSocketPath();
-    await connectLocalUnix({ binPath: "yoakeland", socketPath });
-  } catch {
-    app.showConnectModal = true;
-  }
+  const socketPath = await getDefaultSocketPath();
+  await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
+  await Promise.allSettled(
+    loadKnownServers().map(async (k) => {
+      if (k.mode === "local") {
+        if (k.socketPath && k.socketPath !== socketPath) await connectLocalUnix({ binPath: "yoakeland", socketPath: k.socketPath });
+        return;
+      }
+      const token = await loadServerToken(k.serverId);
+      if (!token || !k.host || !k.port) return;
+      const ca = app.settings.trustedCaByServer[k.serverId] ?? app.settings.trustedCaByHostPort[caServerKey(k.host, k.port)];
+      await connectTcp(k.host, k.port, token, ca);
+    }),
+  );
+  // A failed background attempt shouldn't leave its error on the connect
+  // screen once something else did connect.
+  if (app.activeConnectionId) app.setPendingConnect("disconnected");
 }
 
 export async function disconnect(connectionId: ConnectionId) {
@@ -376,16 +434,112 @@ export async function disconnect(connectionId: ConnectionId) {
   if (server) {
     server.connectionStatus = "disconnected";
     server.clearAllSessionSyncing();
+    server.pendingAsks = [];
+  }
+}
+
+/** The actual "remove this server" action — disconnect() alone only marks a
+ * connection dead, it stays in app.servers and offered-for-reconnect
+ * forever, with nothing in the UI to take the next step. This does: close
+ * the connection (abort()s its reader/writer, backend.rs's disconnect —
+ * explicit, so no "connection lost" event fires and local mode's
+ * auto-reconnect never kicks in), drop its ServerState so it stops appearing
+ * as a connected server anywhere, forget it from the remembered-servers list
+ * so it stops being offered as a "Reconnect", and hand off `active` to
+ * whatever's left, if this was it. */
+export async function removeServer(connectionId: ConnectionId) {
+  const server = app.servers[connectionId];
+  if (server?.connectionStatus === "connected" || server?.connectionStatus === "connecting") {
+    await disconnect(connectionId);
+  } else {
+    stopLiveness(connectionId);
+  }
+  delete app.servers[connectionId];
+  if (server?.serverId) forgetKnownServer(server.serverId);
+  if (app.activeConnectionId === connectionId) {
+    app.activeConnectionId = Object.keys(app.servers)[0] ?? null;
+  }
+}
+
+/** One row per server the user could act on: every live/dead connection in
+ * app.servers, then remembered ones (KnownServer) that aren't among them.
+ * Shared by the palette's Servers page and Settings → Servers.
+ * loadKnownServers() reads localStorage, so callers re-derive after
+ * forgetting one. */
+export interface ServerRow {
+  key: string;
+  connectionId?: ConnectionId;
+  known?: KnownServer;
+  /** serverId once known — ServerAvatar's color seed. */
+  seed: string | null;
+  label: string;
+  address: string;
+  mode: "local" | "remote";
+  status: ServerState["connectionStatus"];
+}
+
+export function serverRows(): ServerRow[] {
+  const live = Object.values(app.servers);
+  const rows: ServerRow[] = live.map((s) => {
+    const p = s.connectParams;
+    return {
+      key: s.connectionId,
+      connectionId: s.connectionId,
+      seed: s.serverId,
+      label: s.label,
+      address: p.mode === "local" ? p.socketPath : `${p.host}:${p.port}`,
+      mode: p.mode,
+      status: s.connectionStatus,
+    };
+  });
+  for (const k of loadKnownServers()) {
+    if (live.some((s) => s.serverId === k.serverId)) continue;
+    rows.push({
+      key: `known:${k.serverId}`,
+      known: k,
+      seed: k.serverId,
+      label: k.label || (k.mode === "local" ? "Local" : "Remote"),
+      address: k.mode === "local" ? (k.socketPath ?? "") : `${k.host}:${k.port}`,
+      mode: k.mode,
+      status: "disconnected",
+    });
+  }
+  return rows;
+}
+
+/** The one "go to this server" action: switch to it if it's up, redial it
+ * if it's a dead connection, connect a remembered local socket directly, or
+ * a remembered remote with its remembered token — failing that (no token
+ * kept, or it was rejected), open Settings' add-server form prefilled with
+ * its address to pair again. */
+export async function connectServerRow(row: ServerRow) {
+  const id = row.connectionId;
+  if (id) {
+    if (row.status === "connected") app.activeConnectionId = id;
+    else if (row.status !== "connecting") await reconnectServer(id);
+    return;
+  }
+  const k = row.known!;
+  if (k.mode === "local" && k.socketPath) {
+    app.activeConnectionId = await connectLocalUnix({ binPath: "yoakeland", socketPath: k.socketPath });
+  } else if (k.host && k.port) {
+    const token = await loadServerToken(k.serverId);
+    const ca = app.settings.trustedCaByServer[k.serverId] ?? app.settings.trustedCaByHostPort[caServerKey(k.host, k.port)];
+    const id = token ? await connectTcp(k.host, k.port, token, ca).catch(() => null) : null;
+    if (id) app.activeConnectionId = id;
+    else app.openAddServer(k.host, k.port);
   }
 }
 
 // ---- Convenience wrappers for outbound events (§3.1) ----
 
-export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt: string): string {
+/** `attachments` are absolute paths on the server's machine (§3.1
+ * user_prompt): a local file's own path, or what `uploadFile` returned. */
+export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt: string, attachments?: string[]): string {
   const turnId = `turn-${crypto.randomUUID().slice(0, 8)}`;
   const server = app.servers[connectionId];
   if (!server) return turnId;
-  server.addUserMessage(sessionId, turnId, prompt);
+  server.addUserMessage(sessionId, turnId, prompt, attachments);
   // Always included, not just on first use: a session is permanently bound
   // to one project on our side too, so this never conflicts (§4b) and saves
   // tracking "have we sent it yet" separately.
@@ -408,6 +562,7 @@ export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt
       // PNG on every message.
       authorName: app.settings.profileName || undefined,
       authorAvatar: app.settings.profileAvatar || undefined,
+      attachments: attachments?.length ? attachments : undefined,
     },
   });
   // No client-side title anymore: the backend races its own generated title
@@ -535,9 +690,12 @@ function reassertSessionSettings(connectionId: ConnectionId, sessionId: string) 
  * through them with the arrows walk the same list. Re-clicking the
  * already-open session records nothing, so it can't fill the stack with
  * duplicates of itself. */
+/** Opens a session in the main panel — switching the main panel to its
+ * server first, since the sidebar and palette list every server's chats. */
 export function openChatSession(connectionId: ConnectionId, sessionId: string) {
   const server = app.servers[connectionId];
   if (!server) return;
+  app.activeConnectionId = connectionId;
   if (sessionId !== server.currentSessionId) server.pushNavHistory(server.currentSessionId);
   server.openSession(sessionId);
   if (server.connectionStatus === "connected") {
@@ -601,7 +759,7 @@ export function denyPermissionWithFeedback(
 ) {
   respondPermission(connectionId, sessionId, turnId, toolCallId, false, false, feedback.trim() || undefined);
   const server = app.servers[connectionId];
-  if (server) server.pendingPermission = null;
+  server?.removeAsk(toolCallId);
 }
 
 export function restoreSnapshot(connectionId: ConnectionId, sessionId: string, snapshotId: string) {
@@ -668,7 +826,8 @@ export function deleteSession(connectionId: ConnectionId, sessionId: string) {
  * ServerState.openSession) — after a reload or from another device. */
 export function openInSidePanel(connectionId: ConnectionId, sessionId: string) {
   const server = app.servers[connectionId];
-  if (!server) return;
+  if (!server || !server.canSplitCurrent) return;
+  app.activeConnectionId = connectionId; // splits pair sessions of one server
   const main = server.currentSessionId;
   if (main && main !== sessionId && server.splitPartnerFor(main)?.sessionId !== sessionId) {
     setSessionLayout(connectionId, main, sessionId);
@@ -720,55 +879,57 @@ export function selectProject(connectionId: ConnectionId, path: string) {
   }
 }
 
-let directoryBrowserResolve: ((path: string | null) => void) | null = null;
+/** A folder picked in the browser, and the server it's on — the palette can
+ * switch which server it browses mid-pick. */
+export interface PickedFolder {
+  connectionId: ConnectionId;
+  path: string;
+}
 
-/** Opens the in-app folder browser (§3.1 `list_directory`), the only correct
- * way to pick a project folder over a remote/TCP connection — the backend's
- * filesystem isn't necessarily this machine's. Resolves with the chosen
- * path, or null if cancelled. Tags `app.browsingConnectionId` so a late
- * response from an abandoned browse against a different server can't
- * clobber a newer one (see ServerState.handleEvent's directory_list case) —
- * only one browse flow is ever open at once, so this stays global rather
- * than living per server. */
-export function browseRemoteDirectory(connectionId: ConnectionId): Promise<string | null> {
+let directoryBrowserResolve: ((picked: PickedFolder | null) => void) | null = null;
+
+/** Opens the command palette's folder browser (§3.1 `list_directory`) on
+ * the backend's filesystem — used for local and remote connections alike,
+ * so there's one picker that always shows the disk the tools actually run
+ * on. Resolves with the chosen path, or null if cancelled. Tags
+ * `app.browsingConnectionId` so a late response from an abandoned browse
+ * against a different server can't clobber a newer one (see
+ * ServerState.handleEvent's directory_list case). */
+function pickFolder(connectionId: ConnectionId): Promise<PickedFolder | null> {
+  resolveDirectoryBrowser(null); // a browse already in flight is superseded
   return new Promise((resolve) => {
     directoryBrowserResolve = resolve;
     app.directoryListing = null;
     app.browsingConnectionId = connectionId;
     listDirectory(connectionId);
-    app.showDirectoryBrowser = true;
+    app.openPalette("browse");
   });
 }
 
-/** Called by DirectoryBrowser.svelte when the user confirms or cancels. */
+/** Called by CommandPalette.svelte when the user confirms a folder or the
+ * browse page goes away. A no-op when no browse is pending. */
 export function resolveDirectoryBrowser(path: string | null) {
-  app.showDirectoryBrowser = false;
-  app.browsingConnectionId = null;
-  directoryBrowserResolve?.(path);
+  const resolve = directoryBrowserResolve;
+  const connectionId = app.browsingConnectionId;
   directoryBrowserResolve = null;
+  app.browsingConnectionId = null;
+  resolve?.(path && connectionId ? { connectionId, path } : null);
 }
 
-/** A native OS dialog only reflects the right filesystem for a local
- * unix-socket connection (§3.1 `list_directory`); anything else falls back
- * to browsing the backend's own filesystem in-app. */
-function pickFolder(connectionId: ConnectionId, title: string): Promise<string | null> {
-  const server = app.servers[connectionId];
-  if (server?.connectionStatus === "connected" && server.connectionMode === "remote") {
-    return browseRemoteDirectory(connectionId);
-  }
-  return open({ directory: true, multiple: false, title }).then((dir) => (typeof dir === "string" ? dir : null));
+/** Whether a pickFolder() caller is waiting on the palette's browse page. */
+export function isPickingFolder(): boolean {
+  return directoryBrowserResolve !== null;
 }
 
 /** Browse for a folder and select it. Returns the chosen path, or null if
  * the user cancelled. */
-export async function pickProjectFolder(connectionId: ConnectionId): Promise<string | null> {
-  const dir = await pickFolder(connectionId, "Open project folder");
-  if (!dir) return null;
-  selectProject(connectionId, dir);
-  return dir;
+export async function pickProjectFolder(connectionId: ConnectionId): Promise<PickedFolder | null> {
+  const picked = await pickFolder(connectionId);
+  if (picked) selectProject(picked.connectionId, picked.path);
+  return picked;
 }
 
-/** The one remaining native-dialog entry point — Settings > Connections'
+/** The one remaining native-dialog entry point — Settings > Projects'
  * "Browse…", for adding a new path from scratch without switching to it
  * (daily selection goes through the sidebar's dropdown instead). Must still
  * reach the server via `open_project` when connected — the known-projects
@@ -776,9 +937,10 @@ export async function pickProjectFolder(connectionId: ConnectionId): Promise<str
  * locally here would never make it into `projects.json` and so would never
  * show up for another device, or survive this client forgetting its own
  * localStorage. Same connected/offline split as `selectProject`. */
-export async function browseAndAddProject(connectionId: ConnectionId): Promise<string | null> {
-  const dir = await pickFolder(connectionId, "Add a project folder");
-  if (!dir) return null;
+export async function browseAndAddProject(startOn: ConnectionId): Promise<PickedFolder | null> {
+  const picked = await pickFolder(startOn);
+  if (!picked) return null;
+  const { connectionId, path: dir } = picked;
   const server = app.servers[connectionId];
   if (server?.connectionStatus === "connected") {
     server.nextProjectOpenSwitches = false; // "adds without switching to it" — see state.svelte.ts's project_opened handler
@@ -787,7 +949,29 @@ export async function browseAndAddProject(connectionId: ConnectionId): Promise<s
   } else {
     server?.rememberProject(dir);
   }
-  return dir;
+  return picked;
+}
+
+/** Starts a new chat in `projectPath` (default: the current project; with
+ * neither, the user picks a folder first). An untouched empty chat that was
+ * open is dropped rather than left behind. */
+export async function newChat(connectionId: ConnectionId, projectPath?: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  app.activeConnectionId = connectionId;
+  let path = projectPath ?? server.currentProjectPath;
+  if (!path) {
+    const picked = await browseAndAddProject(connectionId);
+    if (!picked) return;
+    if (picked.connectionId !== connectionId) return newChat(picked.connectionId, picked.path);
+    path = picked.path;
+  }
+  if (path !== server.currentProjectPath) selectProject(connectionId, path);
+  const current = server.currentSessionId;
+  if (current && (server.messagesBySession[current] ?? []).length === 0) {
+    server.discardUnsentSession(current);
+  }
+  server.newSessionInProject(path);
 }
 
 export function listProjects(connectionId: ConnectionId) {
@@ -798,7 +982,7 @@ export function listProjects(connectionId: ConnectionId) {
  * coming back on the next list_projects) and cancels/evicts any session
  * still live in it server-side — real teardown, not just a client-side
  * "hide it" (SPEC.md §3.1 remove_project). Paired with the user removing it
- * locally (Settings > Connections) — see ServerState.forgetProject. */
+ * locally (Settings > Projects) — see ServerState.forgetProject. */
 export function removeProject(connectionId: ConnectionId, path: string) {
   void send(connectionId, { type: "remove_project", data: { path } });
 }
@@ -1040,4 +1224,78 @@ export function terminalClose(connectionId: ConnectionId, sessionId: string, ter
  * terminal drawer itself is opened. */
 export function listTerminals(connectionId: ConnectionId, sessionId: string) {
   void send(connectionId, { type: "list_terminals", sessionId, data: { sessionId } });
+}
+
+// ---- Notifications (§3.1 list_notifications/dismiss_notification) ----
+
+export function listNotifications(connectionId: ConnectionId) {
+  void send(connectionId, { type: "list_notifications", data: {} });
+}
+
+/** Dismisses one notification, or all of them with no `id` — for every
+ * device, the server echoes notification_dismissed to all peers. */
+export function dismissNotification(connectionId: ConnectionId, id?: string) {
+  // Optimistic: drop it now rather than on the notification_dismissed echo
+  // (which then filters the same way, a no-op). A lost request just means it
+  // comes back with the next notification_list.
+  const server = app.servers[connectionId];
+  if (server) server.notifications = id ? server.notifications.filter((n) => n.id !== id) : [];
+  void send(connectionId, { type: "dismiss_notification", data: id ? { id } : {} });
+}
+
+// ---- Uploads (§3.1 upload_begin/upload_chunk) ----
+
+interface UploadReply {
+  received?: number;
+  path?: string;
+  error?: string;
+}
+
+// 512 KB raw is ~700 KB of base64 — far under the 10 MB frame limit, small
+// enough that chat traffic interleaves between chunks.
+const UPLOAD_CHUNK = 512 * 1024;
+const uploadWaiters = new Map<string, { connectionId: ConnectionId; resolve: (r: UploadReply) => void }>();
+
+/** Uploads a client-side file to the server and resolves with its
+ * server-side path, for use as a user_prompt attachment. Content-addressed
+ * on the server, so a file it already has costs one round trip and no
+ * bytes. Each chunk waits for the previous one's ack (flow control).
+ * ponytail: reads the whole file into memory to hash it; stream through a
+ * hasher if the 256 MB server cap ever makes that hurt. */
+export async function uploadFile(
+  connectionId: ConnectionId,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const sha256 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+  const uploadId = `up-${crypto.randomUUID().slice(0, 8)}`;
+  const exchange = (envelope: Envelope) =>
+    new Promise<UploadReply>((resolve) => {
+      uploadWaiters.set(uploadId, { connectionId, resolve });
+      void send(connectionId, envelope);
+    });
+  try {
+    let reply = await exchange({ type: "upload_begin", data: { uploadId, name: file.name, size: bytes.length, sha256 } });
+    let offset = 0;
+    while (!reply.path && !reply.error) {
+      const chunk = bytes.subarray(offset, offset + UPLOAD_CHUNK);
+      offset += chunk.length;
+      reply = await exchange({ type: "upload_chunk", data: { uploadId, data: bytesToBase64(chunk) } });
+      onProgress?.(bytes.length ? offset / bytes.length : 1);
+    }
+    if (reply.error) throw new Error(reply.error);
+    return reply.path!;
+  } finally {
+    uploadWaiters.delete(uploadId);
+  }
+}
+
+/** Jumps to the chat a notification is about, if it names one. */
+export function openNotificationTarget(connectionId: ConnectionId, n: { sessionId?: string; projectPath?: string }) {
+  const server = app.servers[connectionId];
+  if (!server || !n.sessionId) return;
+  if (n.projectPath && !server.projectBySession[n.sessionId]) server.projectBySession[n.sessionId] = n.projectPath;
+  openChatSession(connectionId, n.sessionId);
 }

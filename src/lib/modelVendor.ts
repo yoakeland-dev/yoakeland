@@ -1,4 +1,17 @@
-import type { ModelInfo, ProviderInfo } from "./types";
+import type { CliKind, ModelInfo, ProviderInfo } from "./types";
+
+/** Every `cli_*` agent the server can drive (§6b) — the one table Settings'
+ * toggles, the picker's tabs and message footers all read from. */
+export const CLI_AGENTS: Record<CliKind, { title: string; icon: string; cli: string; defaultName: string }> = {
+  cli_claude: { title: "Claude", icon: "claude", cli: "claude", defaultName: "claude-subscription" },
+  cli_codex: { title: "Codex", icon: "openai", cli: "codex", defaultName: "codex-subscription" },
+  cli_cursor: { title: "Cursor", icon: "cursor", cli: "cursor-agent", defaultName: "cursor-agent" },
+  cli_kimi: { title: "Kimi", icon: "kimi", cli: "kimi", defaultName: "kimi-cli" },
+  cli_opencode: { title: "OpenCode", icon: "opencode", cli: "opencode", defaultName: "opencode" },
+  cli_gemini: { title: "Gemini", icon: "gemini", cli: "gemini", defaultName: "gemini-cli" },
+  cli_grok: { title: "Grok", icon: "grok", cli: "grok", defaultName: "grok-cli" },
+  cli_deepseek: { title: "DeepSeek", icon: "deepseek", cli: "dsh", defaultName: "deepseek-cli" },
+};
 
 // Vendor icon/label lookup for a (provider, model) pair — shared between
 // ModelPicker.svelte (the picker itself) and any other UI that needs to show
@@ -13,7 +26,7 @@ export interface Entry {
 }
 
 // Vendor tabs in the left rail — for *direct* (non-aggregator) api_key
-// providers only. cli_claude/cli_codex get their own tabs (grouped by
+// providers only. cli_* agents get their own tabs (grouped by
 // transport, not brand, since there's only ever one or two of them) and
 // OpenRouter gets a single aggregator tab — see TabKey below. Splitting it
 // this way is the point: an OpenRouter key alone used to make every one of
@@ -59,8 +72,13 @@ export function directVendorOf(p: ProviderInfo, model?: string): Vendor {
 export function isOpenRouter(p: ProviderInfo): boolean {
   return p.kind === "api_key" && p.httpProvider === "openrouter";
 }
-export function isCli(p: ProviderInfo): boolean {
-  return p.kind === "cli_claude" || p.kind === "cli_codex";
+export function isCli(p: ProviderInfo): p is ProviderInfo & { kind: CliKind } {
+  return p.kind.startsWith("cli_");
+}
+
+/** Icon/title for a CLI provider, tolerating a kind newer than this client. */
+export function cliMeta(p: ProviderInfo): { title: string; icon: string } {
+  return CLI_AGENTS[p.kind as CliKind] ?? { title: p.name, icon: "tool" };
 }
 
 // The icon shown per model row inside the OpenRouter tab — an aggregator's
@@ -167,10 +185,11 @@ export function titleFor(entry: Entry): string {
 }
 
 export function vendorMetaFor(entry: Entry): { label: string; icon: string } {
-  if (entry.provider.kind === "cli_claude")
-    return { label: "Claude", icon: "claude" };
-  if (entry.provider.kind === "cli_codex")
-    return { label: "ChatGPT", icon: "openai" };
+  if (entry.provider.kind === "cli_codex") return { label: "ChatGPT", icon: "openai" };
+  if (isCli(entry.provider)) {
+    const m = cliMeta(entry.provider);
+    return { label: m.title, icon: m.icon };
+  }
   if (isOpenRouter(entry.provider))
     return openRouterVendorMeta(entry.model.id);
   return VENDOR_META[directVendorOf(entry.provider, entry.model.id)];

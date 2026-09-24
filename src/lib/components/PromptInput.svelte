@@ -1,7 +1,10 @@
 <script lang="ts">
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+  import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { scale } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
+  import { untrack } from "svelte";
   import { app } from "../state.svelte";
   import {
     sendPrompt,
@@ -12,6 +15,7 @@
     denyPermissionWithFeedback,
     askUserAnswer,
     selectProject,
+    uploadFile,
   } from "../ipc";
   import { isDesktop } from "../platform";
   import { basename } from "../format";
@@ -153,6 +157,27 @@
   const projectName = $derived(projectPath ? basename(projectPath) : null);
   const hasProvider = $derived(!!server?.providerBySession[sessionId]);
 
+  // Unsent text follows its chat: switching chats stashes it on the server
+  // state (the sidebar marks chats that have one) and brings back the new
+  // chat's own.
+  let draftSession: string | undefined;
+  $effect(() => {
+    const sid = sessionId;
+    untrack(() => {
+      if (draftSession === sid || !server) return;
+      text = server.composerDraftBySession[sid] ?? "";
+      draftSession = sid;
+    });
+  });
+  $effect(() => {
+    const t = text;
+    untrack(() => {
+      if (!server || !draftSession) return;
+      if (t.trim()) server.composerDraftBySession[draftSession] = t;
+      else delete server.composerDraftBySession[draftSession];
+    });
+  });
+
   // A no_provider rejection (turn_completed, §3.2 — the selected provider
   // became unavailable between being picked and the turn actually running)
   // "unsends" the message server-state-side (state.svelte.ts removes it from
@@ -165,25 +190,133 @@
     requestAnimationFrame(() => textarea?.focus());
   });
 
-  // Attaching only works when this client's disk *is* the server's disk —
-  // otherwise the path we'd insert wouldn't resolve to anything on the
-  // machine actually running the model's tools. Byte upload for the
-  // remote/web case needs a wire message that doesn't exist yet (§3.1 has no
-  // upload endpoint); tracked for later, not stubbed here.
-  const canAttach = $derived(isDesktop && app.connectionMode === "local");
+  // Attachments (§3.1 user_prompt `attachments`) are paths on the server's
+  // machine. Over the local socket that's this machine, so a picked file is
+  // referenced in place — no copy. A remote server gets the bytes uploaded
+  // (§3.1 upload_begin) and we attach the path it hands back; pasted files
+  // have no path at all, so they're uploaded either way.
+  type Attachment = { key: string; name: string; path?: string; progress?: number; error?: string };
+  let attachments = $state<Attachment[]>([]);
+  let fileInput: HTMLInputElement | undefined = $state();
+  const uploading = $derived(attachments.some((a) => !a.path && !a.error));
 
   async function attachFile() {
-    if (!canAttach) return;
-    const path = await openFileDialog({ multiple: false, directory: false });
-    if (!path || Array.isArray(path)) return;
-    const pos = textarea?.selectionStart ?? text.length;
-    text = text.slice(0, pos) + `@${path} ` + text.slice(pos);
-    const newPos = pos + path.length + 2;
-    requestAnimationFrame(() => {
-      textarea?.focus();
-      textarea?.setSelectionRange(newPos, newPos);
-      cursorPos = newPos;
-    });
+    if (!cid || !connected) return;
+    if (isDesktop && app.connectionMode === "local") {
+      const picked = await openFileDialog({ multiple: true, directory: false });
+      const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+      for (const path of paths) {
+        if (!attachments.some((a) => a.path === path)) {
+          attachments.push({ key: path, name: basename(path), path });
+        }
+      }
+    } else {
+      fileInput?.click();
+    }
+  }
+
+  /** Adds a chip and uploads whatever `load` produces into it. */
+  function startUpload(name: string, load: () => Promise<File>) {
+    const c = cid;
+    if (!c) return;
+    const key = crypto.randomUUID();
+    attachments.push({ key, name, progress: 0 });
+    const entry = () => attachments.find((a) => a.key === key);
+    load()
+      .then((file) =>
+        uploadFile(c, file, (f) => {
+          const a = entry();
+          if (a) a.progress = f;
+        }),
+      )
+      .then((path) => {
+        const a = entry();
+        if (a) a.path = path;
+      })
+      .catch((err: unknown) => {
+        const a = entry();
+        if (a) a.error = err instanceof Error ? err.message : String(err);
+      });
+  }
+
+  function upload(files: Iterable<File>) {
+    for (const file of files) startUpload(file.name || "pasted file", async () => file);
+  }
+
+  /** Files dropped from this machine's disk (a native Tauri drop hands us
+   * paths, not File objects): referenced in place on a local connection,
+   * read and uploaded for a remote one. */
+  function attachPaths(paths: string[]) {
+    if (app.connectionMode === "local") {
+      for (const path of paths) {
+        if (!attachments.some((a) => a.path === path)) attachments.push({ key: path, name: basename(path), path });
+      }
+      return;
+    }
+    for (const path of paths) {
+      startUpload(basename(path), async () => {
+        const buf = await invoke<ArrayBuffer>("read_file_bytes", { path }).catch((err) => {
+          throw new Error(`${err}`.includes("directory") ? "folders can't be uploaded" : String(err));
+        });
+        return new File([buf], basename(path));
+      });
+    }
+  }
+
+  // Drag-and-drop. In the desktop shell the webview never sees dropped
+  // files (Tauri intercepts them and reports paths + a position), so hit-test
+  // that position against this chat's own panel — with a side chat open,
+  // only the one under the cursor takes the files. Elsewhere, plain HTML5
+  // drop events on the composer do the job.
+  let dragOver = $state(false);
+  function underCursor(pos: { x: number; y: number }): boolean {
+    const el = boxEl?.closest("section.panel") ?? boxEl;
+    const r = el?.getBoundingClientRect();
+    const x = pos.x / devicePixelRatio;
+    const y = pos.y / devicePixelRatio;
+    return !!r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  }
+  $effect(() => {
+    if (!isDesktop) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void getCurrentWebview()
+      .onDragDropEvent(({ payload: p }) => {
+        if (p.type === "leave") {
+          dragOver = false;
+        } else if (p.type === "enter" || p.type === "over") {
+          dragOver = connected && !editingId && underCursor(p.position);
+        } else if (p.type === "drop") {
+          const hit = dragOver || (connected && !editingId && underCursor(p.position));
+          dragOver = false;
+          if (hit && p.paths.length) attachPaths(p.paths);
+        }
+      })
+      .then((u) => (disposed ? u() : (unlisten = u)));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  });
+
+  function onDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes("Files") || !connected) return;
+    e.preventDefault();
+    dragOver = true;
+  }
+  function onDrop(e: DragEvent) {
+    dragOver = false;
+    const files = e.dataTransfer?.files;
+    if (!files?.length || !connected) return;
+    e.preventDefault();
+    upload(files);
+  }
+
+  function onPaste(e: ClipboardEvent) {
+    const files = e.clipboardData?.files;
+    if (!files?.length || !connected) return;
+    e.preventDefault();
+    upload(files);
   }
 
   function insertMention() {
@@ -255,13 +388,9 @@
   }
 
   // Only worth switching *between* once there's more than one — with 0 or 1
-  // servers there's nothing to pick, so the plain "add/connect" button stays
-  // (see Sidebar.svelte's own remoteLabel for the same fallback naming).
-  function serverLabel(s: { serverIdentity?: string | null; connectionMode: string }): string {
-    return s.serverIdentity ?? (s.connectionMode === "local" ? "Local" : "Remote");
-  }
+  // servers there's nothing to pick, so the plain "add/connect" button stays.
   const serverItems = $derived(
-    Object.entries(app.servers).map(([scid, s]) => ({ value: scid, label: serverLabel(s) })),
+    Object.entries(app.servers).map(([scid, s]) => ({ value: scid, label: s.label })),
   );
   function setActiveServer(value: string | undefined) {
     if (value) app.activeConnectionId = value;
@@ -271,11 +400,11 @@
   // morphs into an approval card — the diff, three decisions (reject/allow
   // once/always allow), and the same text box repurposed as an optional
   // "reject and tell it what you want instead" note.
-  const pending = $derived(
-    server?.pendingPermission?.sessionId === sessionId
-      ? server.pendingPermission
-      : null,
-  );
+  // Every ask in this session is queued (a turn can raise several — e.g. a
+  // CLI agent's multi-question AskUserQuestion); the oldest is the one shown,
+  // and answering it removes only that id so the next one steps up.
+  const asks = $derived(server?.asksFor(sessionId) ?? []);
+  const pending = $derived(asks[0]?.kind === "permission" ? asks[0] : null);
 
   function respond(allowed: boolean, remember: boolean) {
     if (!pending || !cid || !server) return;
@@ -287,7 +416,7 @@
       allowed,
       remember,
     );
-    server.pendingPermission = null;
+    server.removeAsk(pending.toolCallId);
   }
 
   // read_write forces every bash call to Ask and drops the remember cache key
@@ -297,18 +426,14 @@
     currentMode === "read_write" && pending?.toolName === "bash",
   );
 
-  // ask_user_question (§3.1/§3.2) — available in every mode, its own pending
-  // slot so it can't collide with a permission ask (state.svelte.ts). Renders
-  // instead of the permission card when both would otherwise apply, since the
-  // two can't be outstanding in the same session at once in practice.
-  const pendingQuestion = $derived(
-    server?.pendingQuestion?.sessionId === sessionId ? server.pendingQuestion : null,
-  );
+  // ask_user_question (§3.1/§3.2) — available in every mode, queued with
+  // permission asks above.
+  const pendingQuestion = $derived(asks[0]?.kind === "question" ? asks[0] : null);
 
   function answerQuestion(answer: string) {
     if (!pendingQuestion || !cid || !server) return;
     askUserAnswer(cid, pendingQuestion.toolCallId, answer);
-    server.pendingQuestion = null;
+    server.removeAsk(pendingQuestion.toolCallId);
     text = "";
   }
 
@@ -339,11 +464,14 @@
       text = "";
       return;
     }
-    if (!value || turnId || !connected || !projectPath || !hasProvider) return;
     if (editingId) {
+      if (!value || turnId || !connected || !projectPath || !hasProvider) return;
       editMessage(cid, sessionId, editingId, value);
     } else {
-      sendPrompt(cid, sessionId, value);
+      const paths = attachments.flatMap((a) => (a.path ? [a.path] : []));
+      if ((!value && !paths.length) || uploading || turnId || !connected || !projectPath || !hasProvider) return;
+      sendPrompt(cid, sessionId, value, paths);
+      attachments = [];
     }
     text = "";
   }
@@ -386,11 +514,24 @@
         >?{:else}What shall we build?{/if}
     </h2>
 
-    <form class="box" class:pending={pending || pendingQuestion} bind:this={boxEl} onsubmit={submit}>
+    <form
+      class="box"
+      class:pending={pending || pendingQuestion}
+      class:drag-over={dragOver}
+      bind:this={boxEl}
+      onsubmit={submit}
+      ondragover={onDragOver}
+      ondragleave={() => (dragOver = false)}
+      ondrop={onDrop}
+    >
+      {#if dragOver}
+        <div class="drop-hint"><Icon name="paperclip" size={14} /> Drop to attach</div>
+      {/if}
       {#if pendingQuestion}
         <div class="permission">
           <div class="permission-head">
             <span class="permission-title">{pendingQuestion.question}</span>
+            {#if asks.length > 1}<span class="ask-count">1 of {asks.length}</span>{/if}
           </div>
           {#if pendingQuestion.options}
             <div class="question-options">
@@ -409,6 +550,7 @@
               >{pending.diff?.filePath ?? pending.toolName}</span
             >
             <span class="permission-desc">{pending.description}</span>
+            {#if asks.length > 1}<span class="ask-count">1 of {asks.length}</span>{/if}
           </div>
           {#if pending.diff}
             <DiffView diff={pending.diff} />
@@ -446,11 +588,31 @@
         </div>
       {/if}
 
+      {#if attachments.length && !pending && !pendingQuestion && !editingId}
+        <ul class="attachments">
+          {#each attachments as a (a.key)}
+            <li class:error={!!a.error} title={a.error ?? a.path ?? `Uploading ${a.name}…`}>
+              <Icon name={a.error ? "alert-circle" : a.path ? "file" : "loader-2"} size={12} />
+              <span class="name">{a.name}</span>
+              {#if !a.path && !a.error}<span class="pct">{Math.round((a.progress ?? 0) * 100)}%</span>{/if}
+              <button
+                type="button"
+                title="Remove"
+                onclick={() => (attachments = attachments.filter((x) => x.key !== a.key))}
+              >
+                <Icon name="xmark" size={11} />
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
       <div class="input-area" class:hidden={pendingQuestion?.options}>
         <textarea
           bind:this={textarea}
           bind:value={text}
           onkeydown={onKeydown}
+          onpaste={onPaste}
           onkeyup={trackCursor}
           onclick={trackCursor}
           oninput={() => {
@@ -496,14 +658,23 @@
             <button
               type="button"
               class="icon-chip"
-              title={canAttach
-                ? "Attach a local file"
-                : "Requires a local server connection — remote upload isn't supported yet"}
-              disabled={!canAttach}
+              title={app.connectionMode === "local" ? "Attach files" : "Upload and attach files"}
+              disabled={!connected || !!editingId}
               onclick={attachFile}
             >
               <Icon name="paperclip" size={14} />
             </button>
+            <input
+              bind:this={fileInput}
+              type="file"
+              multiple
+              hidden
+              onchange={(e) => {
+                const input = e.currentTarget;
+                if (input.files) upload(input.files);
+                input.value = "";
+              }}
+            />
 
             <ModelPicker {sessionId} />
 
@@ -562,12 +733,15 @@
             <button
               type="submit"
               class="send icon-only"
-              disabled={!text.trim() ||
+              disabled={(!text.trim() && !attachments.some((a) => a.path)) ||
+                uploading ||
                 !connected ||
                 !projectPath ||
                 !hasProvider}
               title={!connected
                 ? "Connect to yoakeland to send this"
+                : uploading
+                  ? "Waiting for uploads to finish"
                 : !projectPath
                   ? "Pick a project first"
                   : !hasProvider
@@ -610,8 +784,8 @@
         <button
           type="button"
           class="fc-pill"
-          title={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect to a server"}
-          onclick={() => (app.showConnectModal = true)}
+          title="Servers"
+          onclick={() => app.openPalette("servers")}
         >
           <Icon
             name={app.connectionMode === "local" ? "computer" : "cloud"}
@@ -862,6 +1036,24 @@
     border-radius: 22px;
     padding: 0.71rem var(--space-1) var(--space-1);
   }
+  .box.drag-over {
+    border-color: var(--accent);
+  }
+  .drop-hint {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.43rem;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--float-bg) 85%, var(--accent));
+    color: var(--accent);
+    font-size: 0.86rem;
+    font-weight: 500;
+    pointer-events: none;
+  }
   .box.pending {
     border-color: var(--accent);
   }
@@ -884,6 +1076,10 @@
   .permission-desc {
     font-size: var(--text-label-size);
     color: var(--text-dim);
+  }
+  .ask-count {
+    font-size: var(--text-label-size);
+    color: var(--warning, var(--text-dim));
   }
   .permission-actions {
     display: flex;
@@ -983,6 +1179,43 @@
      --float-enter/exit-duration's un-multiplied base values — small enough
      that skipping the --anim-speed hookup here isn't worth its own reactive
      read of the custom property). */
+  .attachments {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.29rem;
+    margin: 0 0 0.43rem;
+    padding: 0;
+  }
+  .attachments li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.29rem;
+    max-width: 16rem;
+    padding: 0.14rem 0.29rem 0.14rem 0.43rem;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+  }
+  .attachments li.error {
+    color: var(--danger);
+    border-color: var(--danger-dim);
+  }
+  .attachments .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .attachments button {
+    display: inline-flex;
+    background: none;
+    border: none;
+    padding: 0.07rem;
+    color: inherit;
+    cursor: pointer;
+  }
   .mentions {
     position: absolute;
     bottom: 100%;

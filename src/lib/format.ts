@@ -1,5 +1,6 @@
-export function relTime(iso: string | number): string {
-  const diff = Date.now() - new Date(iso).getTime();
+/** Pass `app.now` as `now` in a template so it re-renders as time passes. */
+export function relTime(iso: string | number, now = Date.now()): string {
+  const diff = now - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "now";
   if (mins < 60) return `${mins}m`;

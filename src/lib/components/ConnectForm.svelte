@@ -1,13 +1,14 @@
 <script lang="ts">
-  // The actual local/remote connect fields + submit handlers — pulled out of
-  // ConnectScreen.svelte (the modal) so the same form can also render inline,
-  // without a dialog, wherever there's no active connection to show a chat in
-  // (see FirstServerPanel.svelte). ConnectTcp/connectLocalUnix (ipc.ts) are
-  // already additive as of the multi-server-connections work — calling this
-  // a second time just adds another entry to app.servers rather than
-  // replacing one — so this component itself needs no "is this the first
+  // The actual local/remote connect fields + submit handlers — rendered by
+  // FirstServerPanel.svelte (nothing connected yet) and Settings →
+  // Servers' "Add server" (everything after that; the palette's
+  // "Add server…" lands there too, since a form doesn't belong in a list UI).
+  // ConnectTcp/connectLocalUnix (ipc.ts) are already additive as of the
+  // multi-server-connections work — calling this a second time just adds
+  // another entry to app.servers rather than replacing one — so this component itself needs no "is this the first
   // server" branching at all.
   import { open } from "@tauri-apps/plugin-dialog";
+  import { tick, untrack } from "svelte";
   import { Tabs } from "bits-ui";
   import {
     connectLocalUnix,
@@ -17,12 +18,22 @@
     FALLBACK_SOCKET_PATH,
     getDefaultSocketPath,
   } from "../ipc";
+  import { decodePairingCode } from "../pairing";
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
 
-  let { onconnected }: { onconnected?: () => void } = $props();
+  // prefill: a remembered remote's address, when it has no remembered token
+  // (or that token was rejected) — the user pairs again from here.
+  // showLocal off (Settings → Servers): the local server auto-connects at
+  // startup (autoConnect in ipc.ts), so adding one later is always a remote.
+  // FirstServerPanel — nothing connected at all yet — keeps the local tab.
+  let {
+    onconnected,
+    prefill,
+    showLocal = true,
+  }: { onconnected?: () => void; prefill?: { host?: string; port?: number }; showLocal?: boolean } = $props();
 
-  let tab = $state<"local" | "remote">("local");
+  let tab = $state<"local" | "remote">(untrack(() => (showLocal && !prefill?.host ? "local" : "remote")));
 
   // Local — a Unix domain socket (§2a): no token, the OS already restricts
   // who can connect to this user account. A yoakeland server is expected to
@@ -35,10 +46,102 @@
   getDefaultSocketPath().then((p) => (socketPath = p));
 
   // Remote (TCP) — always goes through the real auth handshake (§2a), and is
-  // never something this app would launch on your behalf.
-  let host = $state("");
-  let port = $state(7890);
+  // never something this app would launch on your behalf. Keyboard-first
+  // steps rather than one long form: address, then the pairing code, with
+  // manual token/CA entry as its own step off of that (not an inline
+  // dropdown — opening one of those still leaves you needing several Tabs to
+  // actually reach the fields it revealed, which defeats the point) — see
+  // remoteFormBody below for the Enter-advances/Backspace-retreats wiring.
+  let host = $state(untrack(() => prefill?.host ?? ""));
+  let port = $state(untrack(() => prefill?.port ?? 7890));
   let token = $state("");
+  let step = $state<"address" | "code" | "manual">("address");
+  let hostInputEl = $state<HTMLInputElement | null>(null);
+  let codeInputEl = $state<HTMLInputElement | null>(null);
+  let manualTokenEl = $state<HTMLInputElement | null>(null);
+
+  function goToCode() {
+    step = "code";
+    void tick().then(() => codeInputEl?.focus());
+  }
+  function goToAddress() {
+    step = "address";
+    void tick().then(() => hostInputEl?.focus());
+  }
+  function goToManual() {
+    step = "manual";
+    void tick().then(() => manualTokenEl?.focus());
+  }
+
+  function onHostKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (host.trim()) goToCode();
+    }
+  }
+  function onPortKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (host.trim()) goToCode();
+    }
+  }
+  function onCodeKeydown(e: KeyboardEvent) {
+    if (e.key === "Backspace" && !pairingCode) {
+      e.preventDefault();
+      goToAddress();
+    }
+  }
+  function onManualTokenKeydown(e: KeyboardEvent) {
+    if (e.key === "Backspace" && !token) {
+      e.preventDefault();
+      goToCode();
+    }
+  }
+
+  /** `xxx.xxx.xxx.xxx:yyyyy` (or `host:port`, or `[::1]:port`) pasted into
+   * either field splits itself into both instead of landing as one garbled
+   * value — paste-only (not every keystroke), so typing a literal ':' in a
+   * hostname or a raw IPv6 address never gets second-guessed. */
+  function splitHostPort(text: string): { host: string; port: number } | null {
+    const t = text.trim();
+    const m = t.match(/^\[(.+)\]:(\d{1,5})$/) ?? t.match(/^([^:\s]+):(\d{1,5})$/);
+    if (!m) return null;
+    const port = Number(m[2]);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return { host: m[1], port };
+  }
+  function onHostPortPaste(e: ClipboardEvent) {
+    const text = e.clipboardData?.getData("text");
+    const parsed = text && splitHostPort(text);
+    if (!parsed) return;
+    e.preventDefault();
+    host = parsed.host;
+    port = parsed.port;
+    goToCode();
+  }
+
+  // A pairing code (Settings > Server > People with access' "copy this now"
+  // box) bundles a token with the CA cert it was minted alongside — pasting
+  // one here fills both fields below in one step instead of two separate
+  // copy/pastes. Purely a shortcut into the same token/caPem fields, so
+  // there's nothing to submit here itself and no server-side round trip.
+  let pairingCode = $state("");
+  let pairingError = $state<string | null>(null);
+  function applyPairingCode(value: string) {
+    pairingCode = value;
+    if (!value.trim()) {
+      pairingError = null;
+      return;
+    }
+    const decoded = decodePairingCode(value);
+    if (!decoded) {
+      pairingError = "Not a pairing code — use \"Enter manually instead\" below.";
+      return;
+    }
+    pairingError = null;
+    token = decoded.token;
+    if (decoded.caPem) caPem = decoded.caPem;
+  }
 
   // TLS is mandatory on the TCP listener now (§2a) — either yoakeland's own
   // auto-managed CA (paired by importing its ca.pem, the common case) or an
@@ -70,26 +173,6 @@
     if (typeof file === "string") binPath = file;
   }
 
-  /** Prefills the local tab with a remembered socket path and connects
-   * immediately — no credential is ever needed for a local connection, so
-   * there's nothing to ask the user to re-enter (see ConnectScreen's
-   * "known servers" list). */
-  export function connectToKnownLocal(path: string) {
-    tab = "local";
-    socketPath = path;
-    void connectLocalUnix({ binPath, socketPath: path }).then(() => onconnected?.());
-  }
-
-  /** Prefills the remote tab with a remembered host/port — the token itself
-   * is deliberately never persisted (see AppSettings.trustedCaByHostPort's
-   * doc comment for the same precedent), so the user still has to type it
-   * in before submitting. */
-  export function prefillKnownRemote(knownHost: string, knownPort: number) {
-    tab = "remote";
-    host = knownHost;
-    port = knownPort;
-  }
-
   async function submitLocal(e: Event) {
     e.preventDefault();
     await connectLocalUnix({ binPath, socketPath });
@@ -103,71 +186,79 @@
   }
 </script>
 
-<Tabs.Root bind:value={tab} class="tabs-root">
-  <Tabs.List class="connect-tabs">
-    <Tabs.Trigger value="local" class="connect-tab-trigger">
-      <Icon name="computer" size={14} /> Local project
-    </Tabs.Trigger>
-    <Tabs.Trigger value="remote" class="connect-tab-trigger">
-      <Icon name="cloud" size={14} /> Remote server
-    </Tabs.Trigger>
-  </Tabs.List>
-
-  <Tabs.Content value="local">
-    <form onsubmit={submitLocal}>
-      <p class="hint">
-        Connects to a yoakeland server already running on this machine over a Unix socket — no
-        token needed, the OS already restricts this to your user account. Only if nothing answers
-        there do we launch one for you, as its own standalone process — closing this app won't
-        stop it. Which project(s) to work on is picked afterward, from the sidebar.
-      </p>
-      <label>
-        Socket path
-        <input bind:value={socketPath} placeholder={FALLBACK_SOCKET_PATH} />
-      </label>
-      <details>
-        <summary>Fallback launch settings</summary>
-        <label>
-          yoakeland binary
-          <div class="row">
-            <input bind:value={binPath} placeholder="yoakeland" />
-            <button type="button" onclick={pickBinary}>Browse</button>
-          </div>
-        </label>
-      </details>
-      <button class="primary" type="submit" disabled={app.connectionStatus === "connecting"}>
-        {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
-      </button>
-    </form>
-  </Tabs.Content>
-  <Tabs.Content value="remote">
-    <form onsubmit={submitRemote}>
-      <p class="hint">
-        Always TLS — trust the server's own CA below (its `ca.pem`), or leave it blank to
-        trust the OS's certificate store instead, for a server given a real certificate.
-      </p>
+{#snippet remoteFormBody()}
+  <form class="steps" onsubmit={submitRemote}>
+    {#if step === "address"}
+      <p class="hint">Where's the server? Paste "host:port" into either field to fill both at once.</p>
       <div class="row">
         <label class="grow">
           Host
-          <input bind:value={host} placeholder="localhost" />
+          <input
+            bind:this={hostInputEl}
+            bind:value={host}
+            onkeydown={onHostKeydown}
+            onpaste={onHostPortPaste}
+            placeholder="localhost"
+          />
         </label>
         <label>
           Port
-          <input type="number" bind:value={port} placeholder="7890" />
+          <input
+            type="number"
+            bind:value={port}
+            onkeydown={onPortKeydown}
+            onpaste={onHostPortPaste}
+            placeholder="7890"
+          />
         </label>
       </div>
+      <button type="button" class="primary" disabled={!host.trim()} onclick={goToCode}>
+        Next <Icon name="chevron-right" size={14} />
+      </button>
+    {:else if step === "code"}
+      <p class="hint">
+        Always TLS, against a CA only the server operator has — paste the pairing code they gave you
+        (from their Settings › Server), it carries the token and CA in one piece.
+      </p>
+      <label>
+        Pairing code
+        <input
+          bind:this={codeInputEl}
+          value={pairingCode}
+          onkeydown={onCodeKeydown}
+          oninput={(e) => applyPairingCode((e.target as HTMLInputElement).value)}
+          placeholder="Paste the code from Settings › Server"
+        />
+      </label>
+      {#if pairingError}
+        <p class="error"><Icon name="alert-circle" size={14} /> {pairingError}</p>
+      {/if}
+      <button type="button" class="menu-option" onclick={goToManual}>
+        <span>Enter manually instead</span>
+        <Icon name="chevron-right" size={13} />
+      </button>
+      <div class="step-actions">
+        <button type="button" class="back-step" onclick={goToAddress} title="Back (Backspace)">
+          <Icon name="chevron-left" size={13} />
+        </button>
+        <button class="primary grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
+          {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
+        </button>
+      </div>
+    {:else}
+      <p class="hint">Only needed if you don't have a pairing code — a bare token, or one from an operator-supplied real certificate that has no CA to bundle.</p>
       <label>
         Auth token
-        <input bind:value={token} placeholder="shared secret from -token" type="password" />
+        <input bind:this={manualTokenEl} bind:value={token} onkeydown={onManualTokenKeydown} placeholder="shared secret from -token" type="password" />
       </label>
       <label>
-        Server CA certificate (optional)
+        Server CA certificate
         <div class="row">
           <textarea
             class="ca-input"
             bind:value={caPem}
             rows="3"
-            placeholder="Paste ca.pem contents, or import the file…"
+            placeholder="Paste ca.pem contents, or import the file… — leave blank only if the server has a real, publicly-trusted certificate"
           ></textarea>
           <button class="ca-import" type="button" onclick={importCa} disabled={importingCa}>
             {importingCa ? "Importing…" : "Import…"}
@@ -177,12 +268,63 @@
       {#if caImportError}
         <p class="error"><Icon name="alert-circle" size={14} /> {caImportError}</p>
       {/if}
-      <button class="primary" type="submit" disabled={app.connectionStatus === "connecting"}>
-        {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
-      </button>
-    </form>
-  </Tabs.Content>
-</Tabs.Root>
+      <div class="step-actions">
+        <button type="button" class="back-step" onclick={goToCode} title="Back (Backspace)">
+          <Icon name="chevron-left" size={13} />
+        </button>
+        <button class="primary grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
+          {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
+        </button>
+      </div>
+    {/if}
+  </form>
+{/snippet}
+
+{#if showLocal}
+  <Tabs.Root bind:value={tab} class="tabs-root">
+    <Tabs.List class="connect-tabs">
+      <Tabs.Trigger value="local" class="connect-tab-trigger">
+        <Icon name="computer" size={14} /> Local project
+      </Tabs.Trigger>
+      <Tabs.Trigger value="remote" class="connect-tab-trigger">
+        <Icon name="cloud" size={14} /> Remote server
+      </Tabs.Trigger>
+    </Tabs.List>
+
+    <Tabs.Content value="local">
+      <form onsubmit={submitLocal}>
+        <p class="hint">
+          Connects to a yoakeland server already running on this machine over a local socket (a named pipe on Windows) — no
+          token needed, the OS already restricts this to your user account. Only if nothing answers
+          there do we launch one for you, as its own standalone process — closing this app won't
+          stop it. Which project(s) to work on is picked afterward, from the sidebar.
+        </p>
+        <label>
+          Socket path
+          <input bind:value={socketPath} placeholder={FALLBACK_SOCKET_PATH} />
+        </label>
+        <details>
+          <summary>Fallback launch settings</summary>
+          <label>
+            yoakeland binary
+            <div class="row">
+              <input bind:value={binPath} placeholder="yoakeland" />
+              <button type="button" onclick={pickBinary}>Browse</button>
+            </div>
+          </label>
+        </details>
+        <button class="primary" type="submit" disabled={app.connectionStatus === "connecting"}>
+          {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
+        </button>
+      </form>
+    </Tabs.Content>
+    <Tabs.Content value="remote">
+      {@render remoteFormBody()}
+    </Tabs.Content>
+  </Tabs.Root>
+{:else}
+  {@render remoteFormBody()}
+{/if}
 
 {#if app.connectionStatus === "error" && app.connectionError}
   <p class="error"><Icon name="alert-circle" size={14} /> {app.connectionError}</p>
@@ -257,6 +399,49 @@
   }
   .grow {
     flex: 1;
+  }
+  .menu-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.43rem;
+    padding: 0.5rem 0.64rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--panel-border);
+    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    font-size: var(--text-label-size);
+    text-align: left;
+  }
+  .menu-option:hover {
+    background: var(--sidebar-hover);
+    color: var(--text);
+  }
+  .step-actions {
+    display: flex;
+    gap: var(--space-1);
+  }
+  .back-step {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.71rem;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--panel-border);
+    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+  }
+  .back-step:hover {
+    color: var(--text);
+  }
+  .steps .primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.29rem;
   }
   input {
     background: rgba(255, 255, 255, 0.05);

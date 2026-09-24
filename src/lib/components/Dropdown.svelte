@@ -12,6 +12,11 @@
   export interface DropdownItem {
     value: string;
     label: string;
+    /** Items sharing a group get one header above the first of them. */
+    group?: string;
+    /** Selectable stand-in for its group's header (e.g. "everything on this
+     * server"): drawn like the header, and the plain header is skipped. */
+    header?: boolean;
   }
 
   let {
@@ -19,6 +24,7 @@
     value = $bindable(),
     placeholder = "Select…",
     triggerIcon,
+    triggerLead,
     triggerTitle,
     searchable = false,
     searchPlaceholder = "Search…",
@@ -26,11 +32,15 @@
     triggerClass = "",
     contentClass = "",
     item,
+    groupHeader,
   }: {
     items: DropdownItem[];
     value: string | undefined;
     placeholder?: string;
     triggerIcon?: string;
+    /** Custom leading element (e.g. a server monogram) in the icon's slot —
+     * crossfades with the chevron exactly like triggerIcon. Wins over it. */
+    triggerLead?: Snippet;
     triggerTitle?: string;
     searchable?: boolean;
     searchPlaceholder?: string;
@@ -38,6 +48,7 @@
     triggerClass?: string;
     contentClass?: string;
     item?: Snippet<[DropdownItem & { selected: boolean }]>;
+    groupHeader?: Snippet<[string]>;
   } = $props();
 
   let search = $state("");
@@ -59,14 +70,14 @@
     class={`dropdown-trigger ${triggerClass}`}
     title={triggerTitle}
   >
-    {#if triggerIcon}
+    {#if triggerLead || triggerIcon}
       <!-- Icon and chevron crossfade in one slot rather than sitting side by
            side: the chevron reads as "this icon opens a list" instead of as a
            second glyph crowding the value. Same treatment as the model
            picker's trigger. -->
       <span class="dropdown-trigger-icon">
         <span class="crossfade icon-face">
-          <Icon name={triggerIcon as any} size={12} />
+          {#if triggerLead}{@render triggerLead()}{:else}<Icon name={triggerIcon as any} size={12} />{/if}
         </span>
         <span class="crossfade chevron-face">
           <Icon name="chevron-down" size={12} />
@@ -110,11 +121,16 @@
         </div>
       {/if}
       <Select.Viewport class="dropdown-viewport">
-        {#each filtered as opt (opt.value)}
+        {#each filtered as opt, i (opt.value)}
+          {#if opt.group && !opt.header && opt.group !== filtered[i - 1]?.group}
+            <div class="dropdown-group">
+              {#if groupHeader}{@render groupHeader(opt.group)}{:else}{opt.group}{/if}
+            </div>
+          {/if}
           <Select.Item
             value={opt.value}
             label={opt.label}
-            class="dropdown-item"
+            class={opt.header ? "dropdown-item dropdown-group-item" : opt.group ? "dropdown-item grouped" : "dropdown-item"}
           >
             {#snippet children({ selected })}
               {#if item}
@@ -296,6 +312,17 @@
     flex-direction: column;
     gap: 0.07rem;
   }
+  .dropdown-group {
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    padding: 0.5rem 0.57rem 0.21rem;
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
   :global(.dropdown-item) {
     display: flex;
     align-items: center;
@@ -307,10 +334,29 @@
     color: var(--sidebar-fg);
     cursor: pointer;
   }
+  /* A selectable header: the header's type treatment with an item's hover. */
+  :global(.dropdown-item.dropdown-group-item) {
+    margin-top: 0.21rem;
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+  :global(.dropdown-item.dropdown-group-item[data-highlighted]),
+  :global(.dropdown-item.dropdown-group-item[data-selected]) {
+    color: var(--sidebar-fg);
+  }
+  /* Indent the content (not the highlight) under its group header. */
+  :global(.dropdown-item.grouped) {
+    padding-left: 1.29rem;
+  }
   :global(.dropdown-item[data-highlighted]) {
     background: var(--sidebar-hover);
   }
   :global(.dropdown-item-label) {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

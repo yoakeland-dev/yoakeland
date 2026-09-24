@@ -204,6 +204,12 @@
   .panel.sidebar-collapsed {
     margin-left: var(--chat-margin);
   }
+  /* Flat main area (see app.css): square, edge to edge, with only a hairline
+     where it meets the sidebar or a neighbouring chat. */
+  :global(:root[data-main="flat"]) .panel {
+    border-radius: 0;
+    border-width: 0 0 0 1px;
+  }
   /* Holds .body and ChatSidebar side by side, with TerminalPanel a sibling
      below both (not inside this row) — see the template comment. */
   .row {
