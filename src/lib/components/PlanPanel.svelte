@@ -1,7 +1,6 @@
 <script lang="ts">
   import { app } from "../state.svelte";
   import { setMode } from "../ipc";
-  import { invoke, isDesktop } from "../platform";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
 
@@ -10,29 +9,6 @@
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
   const plan = $derived(server?.planBySession[sessionId]);
-  const projectPath = $derived(server?.projectBySession[sessionId]);
-
-  // Only readable when this client's disk *is* the server's disk — same
-  // guard PromptInput.svelte's attach-file uses (canAttach).
-  const canRead = $derived(isDesktop && app.connectionMode === "local");
-
-  let content = $state<string | null>(null);
-  let loadedFor: string | null = null;
-
-  $effect(() => {
-    if (!plan || !projectPath || !canRead) {
-      content = null;
-      loadedFor = null;
-      return;
-    }
-    const key = `${sessionId}:${plan.path}:${plan.updatedAt}`;
-    if (loadedFor === key) return;
-    loadedFor = key;
-    const absolutePath = `${projectPath}/${plan.path}`;
-    invoke<string>("read_text_file", { path: absolutePath })
-      .then((text) => (content = text))
-      .catch((err) => (content = `Couldn't read the plan: ${err}`));
-  });
 
   function close() {
     if (server?.openPlanSessionId === sessionId) server.openPlanSessionId = null;
@@ -52,15 +28,7 @@
       </button>
     </div>
     <div class="plan-body">
-      {#if !canRead}
-        <p class="hint">
-          {plan.path} — inline preview isn't available over a remote connection yet.
-        </p>
-      {:else if content === null}
-        <p class="hint">Loading…</p>
-      {:else}
-        <Markdown text={content} />
-      {/if}
+      <Markdown text={plan.content} />
     </div>
     <div class="plan-actions">
       <button type="button" class="approve" onclick={() => approve("read_write")}
@@ -84,7 +52,6 @@
     flex-direction: column;
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
@@ -128,10 +95,6 @@
     overflow-y: auto;
     padding: 0.71rem;
     font-size: 0.85rem;
-  }
-  .hint {
-    color: var(--text-dim);
-    font-size: 0.8rem;
   }
   .plan-actions {
     display: flex;

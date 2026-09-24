@@ -677,7 +677,7 @@ export class ServerState {
   // write_plan's output (§4c) — one plan file per session, keyed by session so
   // a re-write lands "in place" rather than stacking. openPlanSessionId is
   // which one (if any) the side panel is currently showing.
-  planBySession = $state<Record<string, { path: string; updatedAt: number }>>({});
+  planBySession = $state<Record<string, { path: string; content: string; updatedAt: number }>>({});
   openPlanSessionId = $state<string | null>(null);
 
   // Every unanswered permission/question ask on this server, oldest first —
@@ -2083,8 +2083,11 @@ export class ServerState {
         break;
       }
       case "plan_written": {
-        const data = env.data as { path: string };
-        this.planBySession = { ...this.planBySession, [sessionId]: { path: data.path, updatedAt: Date.now() } };
+        const data = env.data as { path: string; content: string };
+        this.planBySession = {
+          ...this.planBySession,
+          [sessionId]: { path: data.path, content: data.content ?? "", updatedAt: Date.now() },
+        };
         if (sessionId === this.currentSessionId) this.openPlanSessionId = sessionId;
         break;
       }
