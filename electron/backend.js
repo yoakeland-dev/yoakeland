@@ -38,9 +38,7 @@ async function probe(sock) {
   }
 }
 
-// Windows pipe names are global, so another user could create ours first and
-// receive our prompts and credentials. Node can't check a pipe's owner, so
-// local connections on Windows are refused.
+// Windows pipe names are global and Node can't check a pipe's owner, so local connections there are refused.
 async function openLocal(p) {
   if (isWindows) {
     // ponytail: needs a native addon that compares the pipe's owner SID
@@ -107,8 +105,7 @@ export function defaultSocketPath() {
   return expandTilde("~/.yoake/yoakeland.sock");
 }
 
-// Logs go to a file, not a pipe: once the app exits, the server's next write
-// to a pipe would raise SIGPIPE and kill it.
+// Logs go to a file, not a pipe: after the app exits, a write to a pipe would raise SIGPIPE and kill the server.
 async function spawnDetached(dataDir, binPath, args) {
   await mkdir(dataDir, { recursive: true });
   const log = openSync(path.join(dataDir, "server.log"), "w");
@@ -149,7 +146,7 @@ export function commands(emit, dataDir) {
         host,
         port,
         ca: trustedCAs(caPem),
-        // SNI can't carry an IP address. Hostname verification still checks `host`.
+        // SNI can't carry an IP address; hostname verification still checks `host`.
         servername: net.isIP(host) ? undefined : host,
       });
       await connected(sock, "secureConnect").catch((e) => {

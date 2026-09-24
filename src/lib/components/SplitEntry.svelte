@@ -1,11 +1,6 @@
 <script lang="ts">
-  // A saved pairing (see splitPartnerFor, driven by the anchor session's own
-  // server-persisted linkedSessionId — SPEC.md §3.1 set_session_layout),
-  // rendered as one entry with both sessions stacked vertically rather than
-  // as two separate rows — `primary` keeps the position it'd have on its
-  // own (its section, its timestamp slot); `secondary` just tags along
-  // underneath regardless of its own timestamp or running state. Each half
-  // is an ordinary ChatRow, so they look and behave like every other row.
+  // A saved pairing (splitPartnerFor, linkedSessionId, SPEC.md §3.1 set_session_layout):
+  // `primary` keeps its normal position; `secondary` tags along underneath regardless of its own state.
   import { app, type ConnectionId } from "../state.svelte";
   import { setSessionLayout, openChatSession } from "../ipc";
   import { sessionTitle } from "../format";

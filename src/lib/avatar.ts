@@ -1,14 +1,7 @@
-// Peer avatars travel as a data URL over the wire (SPEC.md §2a `auth`,
-// `set_peer_avatar`) — the backend does zero image processing, so the client
-// must downscale before sending. `profileAvatar` (state.svelte.ts) holds
-// either a short emoji glyph or an uploaded photo, already downscaled to the
-// house-convention 96x96 by `photoAvatarDataUrl` at upload time; emoji still
-// get rendered into a same-size PNG lazily, right before sending, since
-// there's no image to downscale for them.
+// The backend does zero image processing (SPEC.md §2a), so the client downscales to 96x96 before sending.
 const AVATAR_SIZE = 96;
 
-/** An uploaded avatar is stored/sent as a data URL; an emoji glyph is stored
- * as plain text and only turned into one when it's about to be sent. */
+/** An uploaded avatar is a data URL; an emoji glyph is plain text, rendered into one only when sent. */
 export function isPhotoAvatar(avatar: string): boolean {
   return avatar.startsWith("data:");
 }
@@ -26,9 +19,7 @@ export function emojiAvatarDataUrl(emoji: string): string {
   return canvas.toDataURL("image/png");
 }
 
-/** Center-crops `file` to a square and downscales it to 96x96 (§2a's house
- * convention) so an uploaded photo stays a small, fast-to-broadcast JPEG
- * instead of shipping its original resolution to every connected peer. */
+/** Center-crops `file` to a square and downscales to 96x96 so it broadcasts as a small JPEG. */
 export function photoAvatarDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -50,9 +41,7 @@ export function photoAvatarDataUrl(file: File): Promise<string> {
   });
 }
 
-/** Sends `profileAvatar` as-is if it's already a 96x96 data URL, otherwise
- * renders the emoji into one first — the one place that distinction matters
- * for outbound traffic (peer_list, §3.2). */
+/** Sends `profileAvatar` as-is if it's already a data URL, otherwise renders the emoji into one first. */
 export function outgoingAvatarDataUrl(avatar: string): string {
   return isPhotoAvatar(avatar) ? avatar : emojiAvatarDataUrl(avatar);
 }

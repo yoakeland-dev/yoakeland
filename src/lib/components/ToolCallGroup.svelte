@@ -13,8 +13,7 @@
   const IN_FLIGHT = new Set(["requested", "awaiting_permission", "running"]);
   const isRunning = $derived(calls.some((c) => IN_FLIGHT.has(c.status)));
   const hasError = $derived(calls.some((c) => c.status === "error" || c.status === "denied"));
-  // The call to headline while the group is still going — the most recent
-  // one, so a fresh call sliding in reads as "here's what's happening now".
+  // Headline the most recent call so a fresh one sliding in reads as "here's what's happening now".
   const latest = $derived(calls[calls.length - 1]);
 
   const brief = $derived(briefFor(calls));
@@ -26,23 +25,16 @@
     return summary ? `${label} — ${summary}` : label;
   });
 
-  // A group that's just sitting there done doesn't need a persistent
-  // checkmark — it's the common case, not news. What's worth a beat of
-  // feedback is the moment a call actually finishes, so the label holds
-  // still for that moment (see heldLabel) while the icon flashes over to a
-  // muted check, then both move on to whatever's next.
+  // Only flash feedback at the moment a call finishes, not for a group already sitting done;
+  // the label holds still for that moment (see heldLabel) while the icon flashes a muted check.
   const held = heldLabel(() => ({
     key: isRunning ? (latest?.toolCallId ?? "done") : "done",
     label: isRunning ? latestLabel : brief,
     hasError,
   }));
 
-  // At rest, a group shows the specific tool's icon when every call in it
-  // is the same tool (same identity ToolCallCard would show) — but a mixed
-  // bag of tools has no single honest icon to pick, so it falls back to a
-  // generic "tool use" glyph instead of misrepresenting itself as whichever
-  // call happens to be latest. Flash/spinner/error still take over it
-  // exactly like ToolCallCard's own icon slot does.
+  // Shows the tool's icon only when every call is the same tool; a mixed bag falls back to a
+  // generic glyph rather than misrepresenting itself as whichever call is latest.
   const restIcon = $derived.by(() => {
     const icons = new Set(calls.map((c) => metaFor(c).icon));
     if (icons.size === 1) return metaFor(calls[0]).icon;
@@ -99,8 +91,7 @@
     font-family: ui-monospace, monospace;
     text-align: left;
   }
-  /* Same cross-fade slot as ToolCallCard's icon/chevron — status icon at
-     rest, chevron only once hovering signals "this expands". */
+  /* Same cross-fade slot as ToolCallCard's icon/chevron. */
   .icon-slot {
     position: relative;
     width: 1rem;
@@ -153,9 +144,7 @@
   .head:focus-visible .chevron-icon.open {
     transform: scale(1) rotate(90deg);
   }
-  /* The sliding swap between calls needs its own stacking context, same
-     0-size-but-not-clipped trick as .icon-slot, so the fly transitions don't
-     shove the row's height around while a call enters/exits. */
+  /* Same 0-size-but-not-clipped trick as .icon-slot, so fly transitions don't shift row height. */
   .label-slot {
     position: relative;
     flex: 1;

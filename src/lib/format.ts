@@ -11,7 +11,6 @@ export function relTime(iso: string | number, now = Date.now()): string {
 
 const compactNumber = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 
-// Shortens a token count for a dense stats row — 1284 -> "1.3k".
 export function shortNum(n: number): string {
   return compactNumber.format(n);
 }
@@ -21,8 +20,7 @@ export function basename(path: string): string {
   return path.split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
 
-// The server assigns a title asynchronously after the first exchange; until
-// that round-trips, show a friendly placeholder instead of the raw session ID.
+// Title arrives asynchronously after the first exchange; show a placeholder until then.
 export function sessionTitle(s: { title?: string | null }): string {
   return s.title || "New chat";
 }

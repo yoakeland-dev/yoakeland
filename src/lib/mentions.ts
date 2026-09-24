@@ -1,9 +1,7 @@
 import type { Marked } from "marked";
 
-// `@path` file mentions as the composer inserts them (`@src/lib/ipc.ts`,
-// or an absolute path). Only counts at the start of text or after
-// whitespace, so `user@host` isn't one, and must look like a file path
-// (contain a `/` or a `.`) so a plain `@someone` isn't either.
+// Only matches at start-of-text or after whitespace (so `user@host` doesn't count) and requires
+// a `/` or `.` (so a plain `@someone` doesn't either).
 export const MENTION_RE = /(?:^|(?<=\s))@(\/?(?:[\w.~-]+\/)*[\w-][\w.-]*)/;
 
 // A sentence-ending period isn't part of the file name.
@@ -28,8 +26,7 @@ export function mentionLabelsFor(paths: string[]): Map<string, string> {
   return out;
 }
 
-// The labels for whichever message is being rendered right now — set by
-// Markdown.svelte just before it parses, read by the renderer below.
+// Set by Markdown.svelte just before it parses; read by the renderer below.
 export const mentionLabels: { current: Map<string, string> } = { current: new Map() };
 
 const escape = (s: string) =>

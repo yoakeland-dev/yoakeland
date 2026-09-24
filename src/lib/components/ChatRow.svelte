@@ -1,8 +1,7 @@
 <script lang="ts">
-  // The one row shape every sidebar list uses (Needs you, Running, Pinned,
-  // project lists, search results, split pairs): status icon, title, one
-  // optional line of meta, and hover actions. `variant` only changes what
-  // the meta line says and how loudly the row is tinted.
+  // Shared row shape for every sidebar list (Needs you, Running, Pinned,
+  // project lists, search results, split pairs); `variant` only changes the
+  // meta line and tint.
   import { tick, type Snippet } from "svelte";
   import { app, type ConnectionId } from "../state.svelte";
   import { setSessionArchived, setSessionTitle, deleteSession, openInSidePanel, openChatSession } from "../ipc";
@@ -56,7 +55,6 @@
 
   const messages = $derived(server?.messagesBySession[s.sessionId] ?? []);
 
-  // What the chat is doing right now, for the Running/Needs-you meta line.
   const activity = $derived.by(() => {
     const ask = server?.pendingAsks.find((a) => a.sessionId === s.sessionId);
     if (ask) return ask.kind === "question" ? ask.question : ask.description || "Needs your approval";
@@ -64,8 +62,7 @@
     const lastTool = last?.toolCalls[last.toolCalls.length - 1];
     return lastTool && lastTool.status !== "done" ? activityFor(lastTool) : lastTool ? "Writing…" : "Thinking…";
   });
-  // When the running turn started: its prompt's local timestamp. Unknown for
-  // a turn started on another device before this client saw the chat.
+  // Unknown if the turn started on another device before this client saw the chat.
   const startedAt = $derived(
     variant === "running" || variant === "attention" ? messages.findLast((m) => m.role === "user")?.createdAt : undefined,
   );
@@ -77,7 +74,6 @@
     startedAt && server?.activeTurnBySession[s.sessionId] ? relTime(startedAt, app.now) : relTime(s.updatedAt, app.now),
   );
 
-  // Hover preview: the last message's first line and the model it used.
   const preview = $derived.by(() => {
     const last = messages.findLast((m) => m.text.trim());
     const line = last?.text.trim().split("\n")[0].slice(0, 140);
@@ -87,7 +83,6 @@
       .join("\n");
   });
 
-  // Splits `text` around case-insensitive matches of `query` for <mark>.
   function parts(text: string): { t: string; hit: boolean }[] {
     const q = query?.trim().toLowerCase();
     if (!q) return [{ t: text, hit: false }];
@@ -150,7 +145,7 @@
     { label: "Delete", icon: "trash", danger: true, onSelect: remove },
   ]);
 
-  // ↑/↓ walk every row in the sidebar, in DOM order; F2 renames; Delete
+  // Up/Down walk every row in the sidebar, in DOM order; F2 renames; Delete
   // archives (with undo). Enter/Space are the button's own click.
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -403,7 +398,7 @@
     padding: 0;
     margin: 0;
   }
-  /* Time (and unread dot) at rest, actions on hover — same slot. */
+  /* Time (and unread dot) at rest, actions on hover, same slot. */
   .trail {
     position: relative;
     flex-shrink: 0;

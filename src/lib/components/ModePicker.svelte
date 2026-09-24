@@ -8,9 +8,8 @@
     label: string;
     hint: string;
     icon: ComponentProps<typeof IconComp>["name"];
-    // Color this mode's trigger/row lights up to on hover/open. Only
-    // Autonomous carries one: it's the mode that bypasses permission checks
-    // outright, so it's the one worth flagging.
+    // Only Autonomous carries one: the mode that bypasses permission checks
+    // outright is the one worth flagging.
     tint?: string;
   };
 
@@ -66,8 +65,8 @@
     projectPath ? (server?.webToolsEnabledByProject[projectPath] ?? true) : true,
   );
 
-  // A CLI agent brings its own tools, so the mode is mapped onto the agent's
-  // own permission mode instead (§4c/§6b) and yoakeland's web tools don't apply.
+  // §4c/§6b: a CLI agent brings its own tools, so mode maps onto its own
+  // permission mode and yoakeland's web tools don't apply.
   const cliProvider = $derived.by(() => {
     const p = server?.providers.find((x) => x.name === server?.providerBySession[sessionId]);
     return p && isCli(p) ? p : undefined;
@@ -75,8 +74,7 @@
 
   function pick(id: ChatMode) {
     if (!cid || !server) return;
-    // Optimistic — mode_set (state.svelte.ts) confirms/corrects this once the
-    // round trip lands, same pattern as every other set_* call here.
+    // Optimistic; mode_set (state.svelte.ts) confirms/corrects once the round trip lands.
     server.modeBySession[sessionId] = id;
     server.setLastUsedMode(id);
     setMode(cid, sessionId, id);
@@ -150,7 +148,7 @@
 </Popover.Root>
 
 <style>
-  /* Autonomous is the one mode that bypasses permission checks outright —
+  /* Autonomous is the one mode that bypasses permission checks outright:
      it stays tinted at rest (not just on hover/open) so that's visible from
      a glance at the collapsed toolbar, not just from opening the popover. */
   :global(.picker-trigger.tinted) {

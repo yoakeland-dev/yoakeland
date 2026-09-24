@@ -1,9 +1,8 @@
 <script lang="ts" module>
   import { Marked } from "marked";
   import { highlightCode } from "../highlight";
-  // One shared instance for plain (non-mention) Markdown — its own rather
-  // than marked's global, so the highlighting extension isn't registered
-  // app-wide.
+  // Own instance rather than marked's global, so the highlighting extension
+  // isn't registered app-wide.
   const plain = new Marked(highlightCode);
 </script>
 
@@ -13,32 +12,21 @@
   import { openUrl } from "../platform";
   import { mentionLabels, mentionLabelsFor, MENTION_RE, withMentions } from "../mentions";
 
-  // `mentions`: render `@path/to/file` tokens as file chips (user messages —
-  // that's where the composer's @-autocomplete puts them).
   let { text, mentions = false }: { text: string; mentions?: boolean } = $props();
   const PARSE_OPTS = { breaks: true, gfm: true };
   const md = $derived(mentions ? withMentions(new Marked(highlightCode)) : plain);
-  // Passing options to lexer/parser *replaces* the instance's defaults —
-  // which is where md.use() put the mention extension — so merge instead.
+  // Passing options to lexer/parser *replaces* the instance's defaults
+  // (where md.use() put the mention extension), so merge instead.
   const opts = $derived({ ...md.defaults, ...PARSE_OPTS });
 
 
-  // Re-parsing/re-sanitizing the *whole* message on every streamed token is
-  // wasted work that only gets worse the longer a reply runs — the same
-  // problem Vercel's Streamdown solves by splitting into block-level tokens
-  // and only re-rendering whichever one is still growing. `marked.lexer`
-  // already gives us that split (no new dependency): every earlier block is
-  // cached by its own raw text, so once a paragraph/list/code-fence closes,
-  // it's parsed and sanitized exactly once no matter how much streams in
-  // after it. Keyed by index in the template below, so Svelte only touches
-  // the one DOM node that actually changed each tick.
+  // Re-parsing the whole message on every streamed token gets wasteful the
+  // longer a reply runs, so `marked.lexer`'s block split lets each earlier,
+  // closed block get cached by its raw text and parsed only once.
   //
-  // Known ceiling: a block is cached the moment its raw text stops changing,
-  // using whatever `links` (reference-style `[x]: url` definitions) existed
-  // in the stream *at that moment* — a definition that streams in later
-  // won't retroactively fix an already-cached block that referenced it
-  // earlier. Vanishingly rare in model output; not worth the bookkeeping to
-  // detect and re-render.
+  // Known ceiling: a block caches using whatever `links` (reference-style
+  // definitions) existed at that moment; one streaming in later won't
+  // retroactively fix an already-cached block. Rare enough not to handle.
   let blocks = $state<string[]>([]);
   const cache: { raw: string; html: string }[] = [];
   let raf = 0;
@@ -251,7 +239,7 @@
     white-space: var(--code-wrap, pre);
     word-break: break-word;
   }
-  /* Token classes → ANSI slots of the picked palette (see highlight.ts). */
+  /* Token classes to ANSI slots of the picked palette (see highlight.ts). */
   .markdown :global(.hljs-comment),
   .markdown :global(.hljs-quote),
   .markdown :global(.hljs-meta) {

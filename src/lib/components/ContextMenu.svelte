@@ -9,22 +9,14 @@
 </script>
 
 <script lang="ts">
-  // Right-click menu for a single row, via bits-ui's ContextMenu primitive
-  // instead of a hand-rolled implementation — gets correct positioning/edge
-  // collision, portal-to-body, focus trap, and keyboard nav (roving focus,
-  // typeahead, Escape/outside-click dismissal) for free. Wrap whatever should
-  // be right-clickable in this component; it doesn't add its own visible
-  // element (the Trigger wrapper is `display: contents`).
+  // bits-ui's ContextMenu primitive: positioning/edge collision, portal-to-body,
+  // focus trap and keyboard nav for free instead of hand-rolling them.
   import { ContextMenu } from "bits-ui";
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
 
-  // `items` also accepts a thunk — needed by any caller whose item list
-  // depends on live, non-reactive state (e.g. TerminalView.svelte's Copy
-  // reading xterm's own term.hasSelection()). A plain array is evaluated once,
-  // by the *parent's* last render, which can go stale; recomputing right as
-  // the menu opens (below) instead of whenever the parent happens to
-  // re-render is what actually gets a fresh read at the moment it matters.
+  // `items` also accepts a thunk for callers needing a fresh read of
+  // non-reactive state at open time (e.g. xterm's term.hasSelection()).
   let {
     items,
     children,
@@ -64,7 +56,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.07rem;
-    /* A floating surface — see the --float-* tokens in app.css. */
+    /* A floating surface, see the --float-* tokens in app.css. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);

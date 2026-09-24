@@ -1,9 +1,6 @@
 <script lang="ts">
-  // Status-bar git overview: every project's git state on every server
-  // (§3.2 git_status), where the chat header only shows the open chat's.
-  // Collapsed it counts repos with uncommitted changes and unpushed/unpulled
-  // commits; the popup is a row per repo (clicking opens its most recent
-  // chat) that expands to its changed files.
+  // §3.2 git_status: every project's git state on every server, where the
+  // chat header only shows the open chat's.
   import { Popover } from "bits-ui";
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
   import { openChatSession, newChat } from "../ipc";
@@ -37,7 +34,6 @@
           }),
         ),
       )
-      // Most in need of attention first: changes, then unsynced commits.
       .sort((a, b) => b.git.dirtyFiles - a.git.dirtyFiles || b.git.ahead + b.git.behind - (a.git.ahead + a.git.behind) || a.name.localeCompare(b.name)),
   );
   const current = $derived(app.active && app.activeConnectionId ? `${app.activeConnectionId}:${app.active.currentProjectPath}` : "");
@@ -49,7 +45,7 @@
   let toggled = $state<Record<string, boolean>>({});
   const isExpanded = (r: Repo) => toggled[r.key] ?? r.key === current;
 
-  // Letter → color, matching how editors tint git decorations.
+  // Letter to color, matching how editors tint git decorations.
   const TONE: Record<string, string> = { M: "mod", T: "mod", A: "add", "?": "add", D: "del", U: "del", R: "ren", C: "ren" };
   const SHOWN = 8;
 

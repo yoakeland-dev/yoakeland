@@ -19,15 +19,9 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
-  // Model/provider state lives on the active connection's own ServerState
-  // now — see the multi-server-connections plan. `cid` is needed by every
-  // ipc.ts call now that they're threaded per connection.
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
-  // Left-rail tab identity, encoded as a plain string so it's trivial to
-  // compare/store in $state: "favorites", "openrouter", "cli:<providerName>",
-  // or "vendor:<Vendor>".
   type TabKey =
     | "favorites"
     | "openrouter"
@@ -35,13 +29,12 @@
     | `vendor:${Vendor}`;
 
   let open = $state(false);
-  // The command palette's "Open model picker" (app.modelPickerRequest).
   let handledPickerRequest = 0;
   $effect(() => {
     const req = app.modelPickerRequest;
     if (req && req.at !== handledPickerRequest && req.sessionId === sessionId) {
       handledPickerRequest = req.at;
-      // After the palette's own close has settled, or its focus-return
+      // After the palette's own close settles, else its focus-return
       // would immediately dismiss this popover again.
       setTimeout(() => (open = true), 0);
     }
@@ -55,9 +48,6 @@
   );
   const currentModel = $derived(server?.modelBySession[sessionId]);
 
-  // Every (provider, model) pair we currently know about — models arrive
-  // lazily per provider via list_models (see the $effect below), so a
-  // provider with nothing cached yet just contributes no rows.
   const allEntries = $derived.by(() => {
     const entries: Entry[] = [];
     for (const provider of server?.providers ?? []) {
@@ -78,9 +68,8 @@
       : undefined,
   );
 
-  // Every CLI agent gets a tab even before its models arrive — an ACP
-  // agent's list_models opens a throwaway session and takes seconds, and
-  // "agent default" is pickable without one.
+  // A CLI agent gets a tab even before its models arrive: an ACP agent's
+  // list_models opens a throwaway session and takes seconds.
   const cliProvidersPresent = $derived((server?.providers ?? []).filter(isCli));
   const vendorsPresent = $derived(
     VENDOR_ORDER.filter((v) =>
@@ -130,18 +119,15 @@
           directVendorOf(e.provider, e.model.id) === vendor,
       );
     }
-    // Legacy cli_claude models (SPEC.md §3.2 isLegacy) sort below current
-    // ones rather than disappearing — a session already pinned to one must
-    // still be able to re-select it (see the divider in the template).
+    // SPEC.md §3.2 isLegacy: sort below current models rather than
+    // disappearing, so a session pinned to one can still re-select it.
     return list
       .slice()
       .sort((a, b) => Number(!!a.model.isLegacy) - Number(!!b.model.isLegacy));
   });
 
-  // New sessions start with no provider bound at all (§ providerBySession) —
-  // rather than always landing on the "Provider…" placeholder, pick up
-  // whatever was last confirmed active anywhere, once, the first time this
-  // session actually has that choice available.
+  // New sessions start unbound; pick up whatever was last confirmed active
+  // anywhere, once, rather than landing on the "Provider…" placeholder.
   $effect(() => {
     if (
       cid &&
@@ -160,8 +146,7 @@
     }
   });
 
-  // Fetch each registered provider's model list once, lazily, rather than
-  // hardcoding a model set — never assumed stale, refetch by reopening.
+  // Fetches each provider's model list once, lazily; refetch by reopening.
   $effect(() => {
     if (!cid || !server) return;
     for (const p of server.providers) {
@@ -179,10 +164,8 @@
     return `model-entry-${modelKey(entry.provider.name, entry.model.id)}`;
   }
 
-  // bind:open (below) is the two-way binding; this effect just runs the
-  // "just opened" side effects (reset tab/search, focus + scroll to the
-  // current entry) whenever `open` flips false → true, replacing what used
-  // to be a manual onOpenChange callback that also reassigned `open` itself.
+  // Runs "just opened" side effects (reset tab/search, focus + scroll to
+  // current entry) whenever `open` flips false to true.
   let wasOpen = false;
   $effect(() => {
     if (open && !wasOpen) {
@@ -239,7 +222,7 @@
   }
 
   /** Favorites are server-persisted per provider (§3.1 `set_favorite_models`)
-   * so they follow the user across clients/devices — this sends the whole
+   * so they follow the user across clients/devices. This sends the whole
    * replacement set, optimistically flipping the local copy first so the
    * star responds instantly. */
   function toggleFavorite(entry: Entry) {
@@ -307,9 +290,7 @@
         </div>
       {:else}
         <div class="picker-body">
-          <!-- Hidden while searching: search spans every provider, so a
-               highlighted provider tab would suggest a filter that isn't
-               applied. -->
+          <!-- Hidden while searching: search spans every provider. -->
           {#if !search.trim()}
           <div class="tabs">
             <button
@@ -510,9 +491,6 @@
   :global(.picker-panel) {
     width: 22rem;
     max-width: calc(100vw - 2rem);
-    /* A floating surface — see the --float-* tokens in app.css: the plain panel
-       fill by default, translucent over a backdrop blur when Settings >
-       Appearance > Surfaces is set to Frosted. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);

@@ -25,9 +25,8 @@
   let { sessionId, floating }: { sessionId: string; floating: boolean } =
     $props();
 
-  // Session/provider/project state lives on the active connection's own
-  // ServerState now — see the multi-server-connections plan. `cid` is
-  // needed by every ipc.ts call now that they're threaded per connection.
+  // Session/provider/project state lives on the active connection's ServerState; `cid` is
+  // needed since ipc.ts calls are threaded per connection.
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
@@ -39,18 +38,11 @@
   let mentionIndex = $state(0);
   let mentionDismissed = $state(false);
 
-  // The box's height should only *animate* while the composer is morphing
-  // between its floating and docked layouts — a plain content-driven resize
-  // (typing a longer line) must snap instantly instead of lagging behind the
-  // keystroke. `morphing` is true for exactly the span of that layout
-  // transition: flipped on the instant `floating` changes, and back off once
-  // BOTH things it's waiting on have actually finished animating — the
-  // .stack's own slide (top) and the textarea's height shrink/grow. Waiting
-  // on only one of the two let the other get cut off mid-transition (a
-  // visible snap) whenever they finished a frame apart, which they always
-  // did since autosize() used to run a rAF late. A timeout fallback covers
-  // the case where one of the two properties doesn't actually change (no
-  // transitionend fires for a no-op transition).
+  // Height only animates during the floating/docked layout morph; a content-driven resize
+  // (typing) must snap instantly. `morphing` goes true when `floating` changes and back off
+  // once BOTH the .stack slide and the textarea height transition finish - waiting on only
+  // one let the other get cut off mid-transition when they finished a frame apart. Timeout
+  // fallback covers a no-op transition that never fires transitionend.
   let morphing = $state(false);
   let pendingMorphProps = new Set<string>();
   let prevFloating: boolean | undefined;
@@ -95,24 +87,16 @@
     return () => clearTimeout(t);
   });
 
-  // Grows with content up to a cap, then scrolls internally — matches the
-  // CSS max-height on textarea below. The empty/floating state gets a taller
-  // floor (an inviting landing box) than the docked one-liner default; both
-  // floors and the content-driven height itself are plain style.height
-  // writes, animated by the `transition: height` on textarea below rather
-  // than a `rows` attribute swap, which would jump a frame ahead of it.
+  // Grows with content up to a cap (matches CSS max-height on textarea below), then scrolls.
+  // Height is a plain style.height write, animated by `transition: height` below rather than
+  // a `rows` attribute swap, which would jump a frame ahead of it.
   const MAX_TEXTAREA_HEIGHT = 240;
   function autosize() {
     if (!textarea) return;
-    // Measuring scrollHeight requires resetting to "auto" first (otherwise a
-    // shrinking edit can't be detected — scrollHeight would still reflect
-    // the old, larger explicit height). But that reset is itself a forced
-    // reflow, and for short content it resolves to nearly the same height as
-    // the target — which then becomes the CSS transition's "before" value
-    // instead of what was actually on screen, making the morph's height
-    // transition invisible (a snap) instead of visible. Restoring the prior
-    // explicit height and forcing a reflow before writing the target gives
-    // the transition a real starting point to interpolate from.
+    // Resetting to "auto" is needed to measure scrollHeight for a shrinking edit, but that
+    // reflow becomes the CSS transition's "before" value if left as-is, making the morph
+    // invisible. Restore the prior height and force a reflow first, so the transition has
+    // the real on-screen value to interpolate from.
     const prevHeight = textarea.style.height;
     textarea.style.height = "auto";
     const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
@@ -135,7 +119,7 @@
   });
 
   // MessageList needs to know how tall the docked composer is so scrolled
-  // messages don't end up hidden underneath it — see its padding-bottom.
+  // messages don't end up hidden underneath it, see its padding-bottom.
   $effect(() => {
     if (!boxEl) return;
     const ro = new ResizeObserver(() => {
@@ -175,10 +159,8 @@
     });
   });
 
-  // A no_provider rejection (turn_completed, §3.2 — the selected provider
-  // became unavailable between being picked and the turn actually running)
-  // "unsends" the message server-state-side (state.svelte.ts removes it from
-  // the transcript) and hands the original text back here to restore.
+  // A no_provider rejection (turn_completed §3.2, provider went unavailable mid-flight)
+  // "unsends" the message server-side and hands the original text back here to restore.
   $effect(() => {
     const draft = server?.restoredDraftBySession[sessionId];
     if (draft === undefined || !server) return;
@@ -187,11 +169,9 @@
     requestAnimationFrame(() => textarea?.focus());
   });
 
-  // Attachments (§3.1 user_prompt `attachments`) are paths on the server's
-  // machine. Over the local socket that's this machine, so a picked file is
-  // referenced in place — no copy. A remote server gets the bytes uploaded
-  // (§3.1 upload_begin) and we attach the path it hands back; pasted files
-  // have no path at all, so they're uploaded either way.
+  // Attachments (§3.1 user_prompt `attachments`) are paths on the server's machine. Over the
+  // local socket that's this machine, so a picked file is referenced in place. A remote
+  // server gets the bytes uploaded (§3.1 upload_begin); pasted files have no path either way.
   type Attachment = { key: string; name: string; path?: string; progress?: number; error?: string };
   let attachments = $state<Attachment[]>([]);
   let fileInput: HTMLInputElement | undefined = $state();
@@ -257,9 +237,8 @@
     }
   }
 
-  // Desktop: onFileDrop covers the whole window, so only the chat panel under
-  // the cursor takes the files. Browser: the composer's own handlers below,
-  // which stand down on desktop so a drop doesn't attach twice.
+  // Desktop: onFileDrop covers the whole window, so only the panel under the cursor takes
+  // the files. Browser handlers below stand down on desktop so a drop doesn't attach twice.
   let dragOver = $state(false);
   function underCursor({ x, y }: { x: number; y: number }): boolean {
     const el = boxEl?.closest("section.panel") ?? boxEl;
@@ -313,9 +292,8 @@
     });
   }
 
-  // The "@query" token immediately before the cursor, if any — driven off
-  // list_files (§3.1) since the client has no filesystem access of its own
-  // (the project may not even be on this machine — see §2a server mode).
+  // The "@query" token before the cursor, if any. Driven off list_files (§3.1) since the
+  // client has no filesystem access of its own (§2a server mode).
   const mentionQuery = $derived.by(() => {
     if (mentionDismissed) return null;
     const upToCursor = text.slice(0, cursorPos);
@@ -370,7 +348,7 @@
     if (value && cid) selectProject(cid, value);
   }
 
-  // Only worth switching *between* once there's more than one — with 0 or 1
+  // Only worth switching *between* once there's more than one: with 0 or 1
   // servers there's nothing to pick, so the plain "add/connect" button stays.
   const serverItems = $derived(
     Object.entries(app.servers).map(([scid, s]) => ({ value: scid, label: s.label })),
@@ -379,13 +357,9 @@
     if (value) app.activeConnectionId = value;
   }
 
-  // While a permission_request is outstanding for this session, the composer
-  // morphs into an approval card — the diff, three decisions (reject/allow
-  // once/always allow), and the same text box repurposed as an optional
-  // "reject and tell it what you want instead" note.
-  // Every ask in this session is queued (a turn can raise several — e.g. a
-  // CLI agent's multi-question AskUserQuestion); the oldest is the one shown,
-  // and answering it removes only that id so the next one steps up.
+  // A permission_request morphs the composer into an approval card (diff, reject/allow
+  // once/always allow, and the text box repurposed as an optional reject note). Asks are
+  // queued (a turn can raise several); the oldest shows, answering it steps up the next.
   const asks = $derived(server?.asksFor(sessionId) ?? []);
   const pending = $derived(asks[0]?.kind === "permission" ? asks[0] : null);
 
@@ -402,14 +376,13 @@
     server.removeAsk(pending.toolCallId);
   }
 
-  // read_write forces every bash call to Ask and drops the remember cache key
-  // on that path (SPEC.md §4c) — offering "Always Allow" as if it persists is
-  // misleading, so it's disabled specifically for a bash card in this mode.
+  // read_write forces every bash call to Ask and drops the remember cache key (SPEC.md §4c),
+  // so "Always Allow" would be misleading here.
   const bashAlwaysAllowDisabled = $derived(
     currentMode === "read_write" && pending?.toolName === "bash",
   );
 
-  // ask_user_question (§3.1/§3.2) — available in every mode, queued with
+  // ask_user_question (§3.1/§3.2), available in every mode, queued with
   // permission asks above.
   const pendingQuestion = $derived(asks[0]?.kind === "question" ? asks[0] : null);
 
@@ -782,27 +755,19 @@
 </div>
 
 <style>
-  /* The composer always overlays .body (an absolute inset:0 layer) instead
-     of sharing flex flow with MessageList — that's what lets .stack below
-     slide between a bottom dock and a vertical center with one animated
-     `top`/`transform` pair instead of two incompatible layouts. */
+  /* Overlays .body instead of sharing flex flow with MessageList, so .stack below can slide
+     between a bottom dock and vertical center with one animated `top`/`transform` pair. */
   .wrap {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    /* Own stacking context, so ::after's negative z-index (below) only
-       reorders it against .wrap's own children (.stack) — without this it
-       would resolve against the nearest ancestor stacking context instead
-       (.body, see ChatPanel.svelte) and end up entirely behind MessageList,
-       which defeats the fade rather than just tucking it under the box. */
+    /* Own stacking context, so ::after's negative z-index only reorders against .wrap's own
+       children; otherwise it'd resolve against .body (ChatPanel.svelte) and end up entirely
+       behind MessageList instead of tucking under the box. */
     isolation: isolate;
   }
-  /* A big soft scrim behind the floating composer so it stays legible over a
-     busy/dark wallpaper (only shown pre-first-message — see .wallpaper.visible
-     in ChatPanel.svelte) — pure background-only paint, no filter/blur, so it's
-     cheap to animate. Fades out the instant the chat stops floating (first
-     message sent) since there's no wallpaper left behind the docked composer
-     to need it. */
+  /* Scrim behind the floating composer so it stays legible over a busy wallpaper (shown only
+     pre-first-message). Background-only paint, no filter/blur, so it's cheap to animate. */
   .wrap::before {
     content: "";
     position: absolute;
@@ -818,16 +783,9 @@
   .wrap.floating::before {
     opacity: 1;
   }
-  /* Fades scrolled-under transcript text out behind the docked composer,
-     rather than having it cut off hard at the box's edge. Only shown once
-     docked (there's no transcript behind the floating/empty-state composer
-     to fade). Height matches MessageList's own reserved bottom padding
-     (--composer-height + the same 40px gap, see .list there) exactly, so
-     the fade's transparent top edge lines up with where real message
-     content is allowed to sit at rest — it only ever covers the blank
-     buffer zone plus whatever scrolls up into it, never a message that's
-     just sitting there unscrolled (which is how a message's footer used to
-     go dark: a flat 7rem band doesn't track the composer's actual size). */
+  /* Fades scrolled-under transcript text instead of a hard cut at the box's edge. Height
+     matches MessageList's reserved bottom padding (--composer-height + 40px, see .list there)
+     exactly, so it only covers the blank buffer zone, never an unscrolled message's footer. */
   .wrap::after {
     content: "";
     position: absolute;
@@ -837,27 +795,21 @@
     height: calc(var(--composer-height, 90px) + 40px);
     background: linear-gradient(to bottom, transparent, var(--panel-bg) 65%);
     opacity: 0;
-    /* Behind .stack (the composer) — ::after otherwise paints after it in
-       DOM order and would sit on top, covering the box instead of just the
-       transcript behind it. */
+    /* Behind .stack: ::after otherwise paints after it in DOM order and would cover the box. */
     z-index: -1;
     transition: opacity calc(0.3s * var(--anim-speed, 1)) ease;
   }
   .wrap:not(.floating)::after {
     opacity: 1;
   }
-  /* Bottom-anchored by default: sits `top` from the wrap's own bottom edge,
-     pulled up by its own full height via the translateY(-100%). Floating
-     switches both to the vertical-center equivalent — same functions, same
-     units, so the browser interpolates the move instead of snapping. */
+  /* Floating switches to the vertical-center equivalent using the same functions/units, so
+     the browser interpolates the move instead of snapping. */
   .stack {
     --morph: calc(0.2s * var(--anim-speed, 1));
     position: absolute;
     left: 50%;
     top: calc(100% - 1.14rem);
-    /* Docked width — wider, since a one-line bar reads better spanning more
-       of the panel. The floating (new-chat) width below is narrower on
-       purpose: a tall, inviting landing box rather than a wide one-liner. */
+    /* Docked width is wider since a one-line bar reads better spanning more of the panel. */
     width: min(45.71rem, calc(100% - 3.43rem));
     transform: translate(-50%, -100%);
     pointer-events: auto;
@@ -867,10 +819,8 @@
       width var(--morph) ease;
   }
   .wrap.floating .stack {
-    /* Centered on the visible body below the header, not on the whole panel
-       — .wrap spans the full panel behind the overlaid header, so a plain
-       50% reads as sitting too high relative to the content area you can
-       actually see. */
+    /* Centered on the visible body below the header, not the whole panel: .wrap spans behind
+       the overlaid header, so a plain 50% would sit too high. */
     top: calc(50% + var(--header-height) / 2);
     width: min(36rem, calc(100% - 3.43rem));
     transform: translate(-50%, -50%);
@@ -881,10 +831,8 @@
     bottom: calc(100% + 1.7rem);
     transform: translateX(-50%) translateY(0);
     margin: 0;
-    /* Shrinks off the panel's own width (see .body's container-type in
-       ChatPanel.svelte) before it can overflow a narrow panel — e.g. main
-       chat squeezed by an open sidebar/side-panel — rather than clipping or
-       forcing the panel wider. */
+    /* Shrinks off the panel's width (.body's container-type in ChatPanel.svelte) before it
+       can overflow a narrow panel, rather than clipping or forcing it wider. */
     font-size: clamp(1.15rem, 6cqi, 1.7rem);
     font-weight: 600;
     color: var(--text);
@@ -895,10 +843,8 @@
       opacity var(--morph, calc(0.2s * var(--anim-speed, 1))) ease,
       transform var(--morph, calc(0.2s * var(--anim-speed, 1))) ease;
   }
-  /* Slides down into the box's own footprint (it sits behind it — see the
-     box's z-index below) instead of just fading in the empty air above where
-     the box used to be, so it visibly tucks away under the composer rather
-     than leaving a hole that then pops shut once the fade finishes. */
+  /* Slides down into the box's own footprint (sits behind it, see z-index below) instead of
+     fading in place, so it visibly tucks away under the composer. */
   .hero.hidden {
     opacity: 0;
     transform: translateX(-50%) translateY(calc(1.7rem + 100%));
@@ -911,10 +857,8 @@
     text-underline-offset: 3px;
     text-decoration-color: var(--accent);
   }
-  /* Below the composer, not above — sits right under the box and, once the
-     chat has a first message, slides up to tuck away behind it instead of
-     just fading in place. Left-aligned to the composer's own edge (no
-     translateX centering) so it lines up with the toolbar row above it. */
+  /* Below the composer; slides up to tuck away behind it once the chat has a first message,
+     instead of just fading in place. Left-aligned to the composer's edge. */
   .float-controls {
     position: absolute;
     left: 0;
@@ -935,14 +879,9 @@
     opacity: 0;
     pointer-events: none;
   }
-  /* Pill chrome shared by the two idle controls under the composer — the
-     project picker (a Dropdown) and the local/remote switch (a plain button,
-     since it opens the connect modal rather than picking from a list). Global
-     because the Dropdown's trigger element belongs to Dropdown.svelte. Nothing
-     shows at rest — no fill, no outline, and no blur (a backdrop-filter would
-     frost the background under a control that isn't drawing anything) — and
-     fill, outline and blur all fade in together on hover/open, same as every
-     other trigger in this composer. */
+  /* Pill chrome shared by the project picker and local/remote switch. Global because the
+     Dropdown's trigger element belongs to Dropdown.svelte. Nothing shows at rest (no fill,
+     outline, or blur); all fade in together on hover/open. */
   :global(.fc-pill) {
     position: relative;
     display: inline-flex;
@@ -972,11 +911,8 @@
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     color: var(--text);
   }
-  /* Dropdown's own trigger already lands on several of those properties at
-     equal specificity (a --ctrl-h-tall, --radius-sm rectangle), so they're
-     restated here — qualified with .dropdown-trigger so this wins on
-     specificity rather than on stylesheet order, same as .mode-trigger
-     above. */
+  /* Restated qualified with .dropdown-trigger so this wins on specificity over Dropdown's
+     own equal-specificity trigger rules, not stylesheet order (same as .mode-trigger above). */
   :global(.dropdown-trigger.fc-pill) {
     height: 1.86rem;
     max-width: 16rem;
@@ -995,24 +931,19 @@
   }
   .box {
     position: relative;
-    /* Above .hero and .float-controls (both z-index: -1) so they tuck away
-       visibly behind its solid background instead of just fading in the
-       open air next to it. */
+    /* Above .hero and .float-controls (both z-index: -1) so they tuck away visibly behind
+       its solid background. */
     z-index: 1;
     width: 100%;
-    /* A floating surface — see the --float-* tokens in app.css: the plain panel
+    /* A floating surface, see the --float-* tokens in app.css: the plain panel
        fill by default, translucent over a backdrop blur when Settings >
        Appearance > Surfaces is set to Frosted. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    /* Concentric with the send button in the bottom-right corner: button
-       radius (1rem, since it's a 2rem circle) + the box's own right/bottom
-       padding (0.57rem) it sits inset by = 1.57rem, i.e. 22px at the 14px
-       root size. Right and bottom padding below are kept equal so that gap
-       is actually uniform on both axes — that's what makes the corners
-       nest instead of just approximately lining up. */
+    /* Concentric with the send button: button radius (1rem) + its inset padding (0.57rem)
+       = 22px at the 14px root size. Right/bottom padding kept equal so the corners nest. */
     border-radius: 22px;
     padding: 0.71rem var(--space-1) var(--space-1);
   }
@@ -1137,28 +1068,18 @@
     font-size: 0.92rem;
     line-height: 1.5;
     outline: none;
-    /* Matches MAX_TEXTAREA_HEIGHT in the script — grows with the prompt up
-       to this, then scrolls internally instead of pushing the toolbar off
-       the bottom of the panel. */
+    /* Matches MAX_TEXTAREA_HEIGHT in the script; scrolls internally past this instead of
+       pushing the toolbar off the panel. */
     max-height: 240px;
     overflow-y: auto;
   }
-  /* autosize() writes a plain height in px on every keystroke as well as on
-     the floating/docked floor swap — but only the latter should visibly
-     animate. Scoping the transition to .stack.morphing (set only for the
-     span of that floating/docked morph, see the script) means a resize
-     while typing snaps instantly instead of lagging a beat behind the
-     keystroke. */
+  /* autosize() writes height on every keystroke, but only the floating/docked morph should
+     animate; scoping the transition to .stack.morphing keeps typing snapping instantly. */
   .stack.morphing textarea {
     transition: height var(--morph) ease;
   }
-  /* Same in/out feel as every bits-ui floating surface (app.css's floatIn/
-     floatOut) — but this one's a plain {#if} block, not bits-ui, so there's
-     no PresenceManager to keep it mounted through a CSS-only exit animation.
-     Svelte's own `scale` transition instead (durations mirror
-     --float-enter/exit-duration's un-multiplied base values — small enough
-     that skipping the --anim-speed hookup here isn't worth its own reactive
-     read of the custom property). */
+  /* A plain {#if} block, not bits-ui, so there's no PresenceManager for a CSS-only exit
+     animation; uses Svelte's own `scale` transition instead. */
   .attachments {
     list-style: none;
     display: flex;
@@ -1258,10 +1179,8 @@
     justify-content: center;
     width: 1.86rem;
     height: 1.86rem;
-    /* Transparent chrome, like every other control in the toolbar: the fill
-       only shows up on hover (below). The border stays a real 1px box in
-       every state rather than being dropped, so hovering can't nudge the
-       chip's content by a pixel or reflow the row. */
+    /* Border stays a real 1px box in every state rather than being dropped, so hovering
+       can't nudge the chip's content by a pixel. */
     background: transparent;
     border: 1px solid transparent;
     color: var(--text-dim);
@@ -1299,7 +1218,7 @@
     opacity: 0.4;
     cursor: default;
   }
-  /* 2rem circle → 1rem corner radius, the send-button half of .box's
+  /* 2rem circle to 1rem corner radius, the send-button half of .box's
      concentric-corner border-radius calculation above. */
   .send.icon-only {
     width: 2rem;

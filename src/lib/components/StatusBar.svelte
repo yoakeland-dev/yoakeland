@@ -1,13 +1,6 @@
 <script lang="ts">
-  // App-wide, never "the current server": every server is live at once and
-  // chats run on several simultaneously, so this only shows what spans all
-  // of them — and only when there's something to show. Per-chat numbers
-  // (context, session cost) live in the chat header instead.
-  //   left:  servers and their health (ServerHealthWidget), who else is
-  //          connected (PeersWidget), every repo's git state (GitWidget)
-  //   right: terminals (TerminalsWidget), chats waiting on you, chats
-  //          running, queued turns, subscription usage (UsageWidget), spend
-  //          today, notifications
+  // App-wide, not per-server: multiple servers/chats run at once, so this only shows what
+  // spans all of them. Per-chat numbers (context, session cost) live in the chat header instead.
   import { app, type ConnectionId } from "../state.svelte";
   import { openChatSession } from "../ipc";
   import Icon from "./Icon.svelte";
@@ -34,8 +27,7 @@
     ),
   );
   const localSpend = $derived(app.spendToday.day === new Date().toDateString() ? app.spendToday.usd : 0);
-  // Servers that report spend (v2.15 ping status) count every client's
-  // turns; older ones fall back to what this app has seen itself.
+  // Servers reporting spend (v2.15+ ping status) count every client's turns; older ones fall back to local tracking.
   const reporting = $derived(servers.filter((s) => s.serverStatus?.spend));
   const spend = $derived(
     reporting.length

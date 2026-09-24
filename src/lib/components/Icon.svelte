@@ -1,8 +1,6 @@
 <script lang="ts">
-  // Tabler Icons (https://tabler.io/icons), outline set, inlined at build
-  // time via Vite's `?raw` loader so they inherit color like text (all
-  // strokes are `currentColor`). No wrapper icon library — this is the whole
-  // binding.
+  // Tabler Icons, inlined at build time via Vite's `?raw` loader so they
+  // inherit color like text (strokes are `currentColor`).
   import plus from "@tabler/icons/outline/plus.svg?raw";
   import send from "@tabler/icons/outline/send.svg?raw";
   import pause from "@tabler/icons/outline/player-pause.svg?raw";
@@ -169,9 +167,7 @@
 
   let { name, size = 16 }: { name: keyof typeof icons; size?: number } = $props();
 
-  // In rem, not px, so every icon in the app scales with Settings > Appearance
-  // > UI font size (root font-size is that value — see app.css) instead of
-  // staying a fixed pixel size while surrounding text and spacing grow.
+  // rem, not px, so icons scale with Settings > Appearance > UI font size.
   const REM_BASE = 14;
 </script>
 

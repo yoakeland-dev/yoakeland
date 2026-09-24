@@ -1,8 +1,4 @@
-// Terminal I/O is raw bytes over the wire, base64-encoded (SPEC.md §3.1
-// terminal_input, §3.2 terminal_snapshot/terminal_output) rather than a plain
-// JSON string, since a pty's output isn't guaranteed to be valid UTF-8.
-// btoa/atob is chunked because `String.fromCharCode(...bytes)` blows the call
-// stack on a large-enough scrollback dump.
+// Chunked because `String.fromCharCode(...bytes)` blows the call stack on a large scrollback dump.
 const CHUNK_SIZE = 0x8000;
 
 export function bytesToBase64(bytes: Uint8Array): string {

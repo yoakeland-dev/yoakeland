@@ -1,9 +1,6 @@
 <script lang="ts">
-  // Status-bar subscription usage (SPEC.md §2a status.rateLimits): one
-  // provider collapsed — its most-used window — and a popup with a small card
-  // per provider. Clicking a card pins it to the collapsed view
-  // (settings.usageFocus); with nothing pinned, the most-used one shows.
-  // Providers sharing a CLI on one server share its login, so they're one card.
+  // Subscription usage (SPEC.md §2a status.rateLimits). Clicking a card pins it to the collapsed
+  // view (settings.usageFocus); with nothing pinned, the most-used one shows.
   import { Popover } from "bits-ui";
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
   import { relTime } from "../format";

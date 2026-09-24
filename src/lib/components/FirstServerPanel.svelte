@@ -1,10 +1,6 @@
 <script lang="ts">
-  // Shown in place of the chat panel whenever there's no active connection at
-  // all (app.active is null) — today that's the normal state until the user
-  // connects to (or launches) a yoakeland server; once this app bundles an
-  // always-on local server, this becomes a rare transient rather than the
-  // default first-launch screen, but it's the honest state to show either
-  // way rather than an empty panel.
+  // Shown in place of the chat panel whenever there's no active connection
+  // (app.active is null), rather than an empty panel.
   import ConnectForm from "./ConnectForm.svelte";
 </script>
 

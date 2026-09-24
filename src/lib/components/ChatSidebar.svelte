@@ -1,13 +1,6 @@
 <script lang="ts">
-  // A single chat's own right-edge panel — not to be confused with a second,
-  // independent *chat* shown side by side (that's ServerState.sidebarSessionId
-  // / RightSidebar.svelte, a completely different feature: "split view").
-  // This is one chat's own auxiliary view onto itself — its plan, file
-  // previews, diffs, snapshots eventually; a placeholder for now. Lives
-  // inside ChatPanel.svelte's own `.panel`, docked to its right edge, same
-  // per-session open/close as TerminalPanel.svelte and the same
-  // clamp(min, ratio%, 50%) resize-against-the-parent trick, just on the
-  // horizontal axis.
+  // Not to be confused with the "split view" feature (ServerState.sidebarSessionId
+  // / RightSidebar.svelte), a second independent chat shown side by side.
   import { app, CHAT_SIDEBAR_MIN_WIDTH } from "../state.svelte";
   import Icon from "./Icon.svelte";
 
@@ -73,8 +66,7 @@
     overflow: hidden;
     width: 0;
     border-left: 1px solid transparent;
-    /* Same fill as the chat panel itself, no blur — see TerminalPanel.svelte's
-       identical treatment and --panel-bg's own doc comment in app.css. */
+    /* Same fill as the chat panel, no blur; matches TerminalPanel.svelte. */
     background: var(--panel-bg);
     transition:
       width calc(0.2s * var(--anim-speed, 1)) ease,

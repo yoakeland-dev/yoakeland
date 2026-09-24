@@ -1,25 +1,16 @@
 <script lang="ts">
-  // Thin resize/collapse wrapper around a second ChatPanel — the linked chat
-  // opened via the "put to the side" button on a session row (Sidebar.svelte
-  // / ProjectGroup.svelte) rather than drag and drop. The chat itself is
-  // rendered by ChatPanel.svelte, same component and same card styling as the
-  // main chat — this file only owns the proportional-width/slide-collapse
-  // mechanics, not any chat-shaped markup of its own.
+  // Resize/collapse wrapper around a second ChatPanel; owns only the proportional-width/
+  // slide-collapse mechanics, no chat markup of its own.
   //
-  // Width is entirely the layout's job, not JS's: `.right-slot` (the flex
-  // item that reserves space in `.content-row`, next to the main chat) and
-  // `.right-sidebar` (the positioned wrapper that slides off on collapse)
-  // both size themselves with the same `clamp(min, pct, 50%)` against
-  // `.content-row`, their shared containing block (see +page.svelte). State
-  // only holds the ratio; resizing the *left* sidebar, collapsing it, or
-  // resizing the window all reflow this in the same paint with no JS keeping
-  // anything in sync.
+  // Width is the layout's job, not JS's: `.right-slot` and `.right-sidebar` both size
+  // themselves with the same `clamp(min, pct, 50%)` against `.content-row` (see +page.svelte).
+  // State only holds the ratio, so any reflow (left sidebar resize/collapse, window resize)
+  // stays in sync with no JS needed.
   import { app, RIGHT_SIDEBAR_MIN_WIDTH } from "../state.svelte";
   import ChatPanel from "./ChatPanel.svelte";
 
-  // Bindable so +page.svelte can measure this specific ChatPanel's box — the
-  // corner handle where this sidebar's own terminal drawer meets its resize
-  // handle (bottom-left of the sidebar, once that terminal is open) needs it.
+  // Bindable so +page.svelte can measure this ChatPanel's box, for the corner handle where
+  // the terminal drawer meets the resize handle.
   let { panelEl = $bindable(null) }: { panelEl?: HTMLElement | null } = $props();
 
   const COLLAPSE_THRESHOLD = 90;
@@ -30,14 +21,9 @@
     `--right-pct: ${app.rightSidebarRatio * 100}%; --right-min: ${RIGHT_SIDEBAR_MIN_WIDTH}px`,
   );
 
-  // Width only animates while the *left* sidebar's own collapse reflows this
-  // one's available space — width changes from dragging (handled by
-  // `resizing` below, live for both this panel's own handle and the left
-  // sidebar's — CSS does that for free) or from a window resize should be
-  // instant/real-time. This panel's own open/close is always a side effect
-  // of switching chats now (opening a saved split, or its own header's close
-  // button — see ChatHeader.svelte's `sidePanel` branch) rather than a
-  // manual toggle of its own, so it always snaps rather than easing.
+  // Width only animates when the left sidebar's collapse reflows available space; dragging
+  // and window resize stay instant. This panel's own open/close is always a side effect of
+  // switching chats (see ChatHeader.svelte's `sidePanel` branch), so it always snaps.
   let widthAnimating = $state(false);
   $effect(() => {
     app.sidebarCollapsed;
@@ -47,11 +33,9 @@
     return () => clearTimeout(timer);
   });
 
-  // True for a brief window right after a drag crosses the collapse
-  // threshold, in either direction — mirrors Sidebar.svelte's
-  // collapsedByDrag. One eased transition for that crossing (see
-  // .crossing-anim below), then back to transition:none so the rest of the
-  // drag keeps tracking the pointer instead of easing behind it.
+  // True briefly after a drag crosses the collapse threshold (mirrors Sidebar.svelte's
+  // collapsedByDrag): one eased transition for the crossing, then back to transition:none
+  // so the rest of the drag tracks the pointer instead of easing behind it.
   let crossingAnim = $state(false);
   let crossingAnimTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -65,19 +49,15 @@
   }
   function onResize(e: PointerEvent) {
     if (!app.rightSidebarResizing || !slotEl) return;
-    // Measure `.content-row` directly rather than the window — the space
-    // this panel is proportional to is what's left of the (fixed-width) left
-    // sidebar, not the whole viewport.
+    // Measure `.content-row`, not the window: this panel is proportional to what's left
+    // of the fixed-width left sidebar, not the whole viewport.
     const container = (
       slotEl.parentElement as HTMLElement
     ).getBoundingClientRect();
     const fromRight = container.right - e.clientX;
-    // Dragging past the minimum collapses outright, same as the left
-    // sidebar — see Sidebar.svelte's onResize for the identical threshold
-    // logic. Not touching rightSidebarRatio while collapsed means it's left
-    // exactly where it was when the threshold was crossed, so re-opening
-    // comes back at the same size with no separate "width before drag" to
-    // track.
+    // Dragging past the minimum collapses outright (same threshold logic as Sidebar.svelte's
+    // onResize). rightSidebarRatio is untouched while collapsed, so re-opening restores the
+    // same size with no separate "width before drag" to track.
     const collapsed = fromRight < RIGHT_SIDEBAR_MIN_WIDTH - COLLAPSE_THRESHOLD;
     if (collapsed !== app.rightSidebarCollapsed) {
       crossingAnim = true;
@@ -132,11 +112,9 @@
 <style>
   .right-slot {
     flex-shrink: 0;
-    /* Same reasoning as `.sidebar-slot` in Sidebar.svelte: flex-basis (not
-       width) keeps `.content-col`'s reflow in lockstep every frame instead
-       of a frame behind it. No `position` here — `.right-sidebar` below is
-       positioned against `.content-row`, not this slot, so it stays full
-       size and slides off on collapse instead of shrinking away with it. */
+    /* Same reasoning as `.sidebar-slot` in Sidebar.svelte: flex-basis keeps reflow in lockstep.
+       No `position` here since `.right-sidebar` is positioned against `.content-row`, so it
+       slides off on collapse instead of shrinking away. */
     flex-basis: clamp(var(--right-min), var(--right-pct), 50%);
     transition: flex-basis calc(0.2s * var(--anim-speed, 1)) ease;
   }
@@ -146,11 +124,9 @@
   .right-slot.resizing {
     transition: none;
   }
-  /* One eased flex-basis change for the collapse-threshold crossing itself
-     (either direction), same reasoning as Sidebar.svelte's
-     .sidebar-slot.resizing.collapse-anim — dragging still owns transition:none
-     the rest of the time, or every pointermove would ease behind the pointer
-     instead of tracking it. */
+  /* One eased flex-basis change for the collapse-threshold crossing (same as Sidebar.svelte's
+     .sidebar-slot.resizing.collapse-anim); dragging keeps transition:none otherwise or every
+     pointermove would ease behind the pointer. */
   .right-slot.resizing.crossing-anim {
     transition: flex-basis calc(0.2s * var(--anim-speed, 1)) ease;
   }

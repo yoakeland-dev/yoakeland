@@ -1,6 +1,4 @@
-// Wire types mirroring SPEC.md §2-3. Kept intentionally loose (data as
-// per-event interfaces rather than one giant discriminated union) since the
-// backend is free to add fields.
+// Wire types mirroring SPEC.md §2-3. Kept as per-event interfaces, not one discriminated union, since the backend is free to add fields.
 
 export interface Envelope<T = Record<string, unknown>> {
   type: string;
@@ -37,7 +35,7 @@ export interface PermissionRequestData {
   diff?: FileDiff | null;
 }
 
-/** ACP's tool kinds — what a `cli_*` agent's native tool call does (§3.2). */
+/** ACP's tool kinds: what a `cli_*` agent's native tool call does (§3.2). */
 export type NativeToolKind = "read" | "edit" | "delete" | "move" | "search" | "execute" | "think" | "fetch" | "other";
 
 /** Fields a native (`cli_*` agent) tool call carries on top of name/args, so
@@ -65,14 +63,9 @@ export interface ToolResultData {
 export interface TurnCompletedData {
   finishReason: "stop" | "length" | "cancelled" | "budget_exceeded" | "no_provider";
   sessionId: string;
-  /** The real server-assigned id of the prompt this turn was anchored to —
-   * the primary way a client learns a message's id, straight off the turn
-   * it just watched stream in, no get_session_history round trip needed
-   * (SPEC.md §3.2). Absent when the turn ended before any message existed
-   * to anchor to. */
+  /** Server-assigned id of the prompt this turn was anchored to, no get_session_history round trip needed. Absent if the turn ended before any message existed. */
   userMessageId?: string;
-  /** The real server-assigned id of the last message this turn appended
-   * (normally the final assistant reply). Absent if nothing was appended. */
+  /** Server-assigned id of the last message this turn appended (usually the final reply). Absent if nothing was appended. */
   messageId?: string;
   usage: {
     inputTokens: number;
@@ -110,24 +103,14 @@ export interface ProviderInfo {
   authMethod?: "manual" | "oauth";
 }
 
-// A provider is a credential, not a model choice (SPEC.md §6b) — models are
-// fetched per-provider via list_models.
-// Mirrors whichever upstream's own shape close to verbatim (SPEC.md §3.2
-// model_list) — OpenRouter's own context_length/pricing/reasoning fields,
-// OpenAI's hand-maintained reasoningEfforts, cli_claude's reasoningEfforts/
-// fastMode/contextWindows cross-walked from T3 Code's manifest (§6b), or
-// absent entirely (Anthropic, cli_codex). Deliberately no common schema:
-// branch on which provider you're looking at, not on which keys happen to
-// be present.
+// Mirrors whichever upstream's own shape close to verbatim (SPEC.md §3.2 model_list).
+// Deliberately no common schema: branch on which provider you're looking at, not on which keys are present.
 export interface ModelCapabilities {
   context_length?: number;
   pricing?: { prompt?: string; completion?: string; [key: string]: unknown };
   reasoning?: { supported_efforts?: string[]; default_effort?: string; mandatory?: boolean; [key: string]: unknown };
   reasoningEfforts?: string[];
-  // cli_claude only, cross-walked from T3 Code's manifest (SPEC.md §6b) —
-  // informational: set_model_options ignores reasoningEffort/thinkingBudget
-  // for cli_claude/cli_codex regardless of what's advertised here, and there
-  // is no field yet to actually toggle fastMode for any provider.
+  // Informational only: no field yet actually toggles fastMode for any provider.
   fastMode?: boolean;
   contextWindows?: string[];
   [key: string]: unknown;
@@ -153,11 +136,9 @@ export interface SessionSummary {
   messageCount: number;
   title?: string;
   archived?: boolean;
-  /** Paired session for a client-side split/sidebar layout (SPEC.md §3.1
-   * set_session_layout) — one-directional, set on the anchor session only. */
+  /** Paired session for a split/sidebar layout: one-directional, set on the anchor session only. */
   linkedSessionId?: string | null;
-  /** Server-persisted mode (§4c) — carried by session_list/session_updated so
-   * a sidebar badge doesn't need the session open to know it. */
+  /** Server-persisted mode (§4c) so a sidebar badge doesn't need the session open to know it. */
   mode?: ChatMode;
 }
 
@@ -204,8 +185,7 @@ export interface ServerStatus {
   memAvailBytes?: number;
   heapBytes: number;
   version?: string;
-  // v2.15 — see SPEC.md §3.1 ping.
-  queuedTurns?: number;
+  queuedTurns?: number; // added in v2.15
   rateLimits?: Record<string, ProviderRateLimits>;
   spend?: { todayUsd: number; monthUsd: number };
   budgets?: SpendBudget[];
@@ -220,11 +200,11 @@ export interface RateWindow {
 }
 
 export interface ProviderRateLimits {
-  /** "cli_claude" | "cli_codex" — which agent these numbers belong to. */
+  /** "cli_claude" | "cli_codex": which agent these numbers belong to. */
   kind?: string;
-  /** Subscription tier as the CLI reports it ("pro", "max", "plus", "free"…). */
+  /** Subscription tier as the CLI reports it. */
   plan?: string;
-  /** When the server last read these (RFC 3339). */
+  /** RFC 3339. */
   updatedAt?: string;
   fiveHour?: RateWindow;
   sevenDay?: RateWindow;
@@ -252,7 +232,7 @@ export interface GitStatus {
   files?: { path: string; status: string }[];
 }
 
-/** One unanswered ask from a `pending_asks` snapshot (§3.2) — the original
+/** One unanswered ask from a `pending_asks` snapshot (§3.2): the original
  * event's data flattened in, plus the ids needed to answer it. */
 export type PendingAsk = {
   sessionId: string;
@@ -285,7 +265,7 @@ export interface ProjectListData {
   paths: string[];
 }
 
-/** A registered per-person TCP credential (§3.1 register_token/list_tokens) —
+/** A registered per-person TCP credential (§3.1 register_token/list_tokens):
  * never carries the raw token, same scrubbing as ProviderInfo/apiKey. */
 export interface TokenInfo {
   name: string;
@@ -297,10 +277,6 @@ export interface TokenInfo {
 
 export type TerminalStatus = "starting" | "running" | "exited" | "error";
 
-/** One tab (terminalId) — client-side bookkeeping only, built up from
- * terminal_list/terminal_snapshot/terminal_output/terminal_exited. The pty
- * bytes themselves never live here (see terminalBus.ts); this is just what
- * the tab strip renders off. */
 /** One row of terminal_list / terminal_index (§3.2). */
 export interface TerminalSummary {
   terminalId: string;
@@ -313,6 +289,7 @@ export interface TerminalSummary {
   projectPath?: string;
 }
 
+/** Client-side bookkeeping only; the pty bytes never live here (see terminalBus.ts). */
 export interface TerminalTab {
   terminalId: string;
   sessionId: string;
@@ -320,19 +297,14 @@ export interface TerminalTab {
   cols: number;
   rows: number;
   status: TerminalStatus;
-  /** Shell binary name (§3.2 terminal_snapshot/terminal_list `label`) — the
-   * tab's fallback name. */
+  /** Shell binary name: the tab's fallback until `title` is set. */
   label: string;
-  /** The shell's own OSC 0/2 "set title" escape sequence, tracked by
-   * xterm.js's onTitleChange (TerminalView.svelte) — the "latest command
-   * name" a foreground program (or a well-behaved prompt) sets live. Absent
-   * until the shell sets one, in which case `label` is what a tab shows. */
+  /** The shell's own OSC 0/2 "set title" sequence, tracked live via xterm.js's onTitleChange. */
   title?: string;
   exitCode?: number;
   pid?: number;
   sandboxTier?: SandboxTier;
-  /** Last terminal_output sequence number applied — SPEC.md §3.2's
-   * gap-detection field. */
+  /** Last terminal_output sequence number applied (§3.2 gap-detection). */
   sequence: number;
 }
 
@@ -340,7 +312,7 @@ export interface TerminalTab {
 
 export type ChatMode = "read_only" | "read_write" | "autonomous" | "plan";
 
-/** The model called `ask_user_question` (SPEC.md §3.1/§3.2) — free-form when
+/** The model called `ask_user_question` (SPEC.md §3.1/§3.2): free-form when
  * `options` is absent, a picker otherwise. Available in every mode. */
 export interface AskUserQuestionData {
   question: string;
@@ -359,36 +331,23 @@ export interface ToolCallEntry extends NativeToolFields {
   diffs?: FileDiff[];
   permission?: PermissionRequestData;
   question?: AskUserQuestionData;
-  /** `message.text.length` at the moment this call was requested — lets the
-   * UI render the card inline at the point it actually happened in the
-   * stream instead of stacking every call above the text. Calls rebuilt
-   * from session history get the merged text length at the end of their
-   * round-trip, which lands them in the same place. */
+  /** `message.text.length` when this call was requested, so the UI can render the card inline
+   * at that point in the stream instead of stacking every call above the text. */
   textOffset?: number;
-  /** `message.thinking?.length` at the same moment — lets AssistantMessage
-   * slice `message.thinking` back into the reasoning chunk that occurred
-   * between two calls, same way `textOffset` does for answer text. A run of
-   * calls still only ends on answer text (`textOffset` moving); reasoning
-   * appearing mid-run doesn't end it, it becomes a `thought` step nested
-   * inside that run's WorkGroup instead (see AssistantMessage.svelte). Same
-   * history-rebuild caveat as `textOffset`. */
+  /** `message.thinking?.length` at the same moment, so AssistantMessage can slice `thinking` back
+   * into the reasoning chunk between two calls (mirrors `textOffset` for answer text). */
   thinkingOffset?: number;
 }
 
-/** One step in a run of activity between two spans of answer text
- * (AssistantMessage.svelte) — either a chunk of reasoning or a burst of
- * consecutive tool calls with no reasoning in between. `at` is the thought's
- * starting offset into `message.thinking`, used only as a stable render key. */
+/** One step between two spans of answer text: a reasoning chunk or a burst of tool calls.
+ * `at` is the thought's starting offset into `message.thinking`, used only as a stable render key. */
 export type AssistantStep =
   | { kind: "thought"; text: string; at: number }
   | { kind: "cluster"; calls: ToolCallEntry[] };
 
 export interface ChatMessage {
   id: string;
-  /** Other versions at this same point in the conversation — other edits of
-   * this user message, or other retried replies to the same prompt (§3.2
-   * `alternateIds`, §4d). Each is addressable via `switchBranch`. Absent (the
-   * common case) means nothing to cycle through. */
+  /** Other edits/retries at this point in the conversation (§3.2 `alternateIds`), addressable via `switchBranch`. */
   alternateIds?: string[];
   role: "user" | "assistant";
   turnId?: string;
@@ -398,37 +357,19 @@ export interface ChatMessage {
   streaming: boolean;
   finish?: TurnCompletedData;
   createdAt: number;
-  /** Who sent a `user` message (§3.2 session_history `author`) — persisted
-   * server-side with the message, so it survives a reload that repaints the
-   * transcript from history. Undefined for a message stored before the server
-   * kept one, or from a client that doesn't send it — render a generic
-   * label/nothing, don't treat absence as an error. */
+  /** Who sent a `user` message (§3.2 `author`). Undefined is not an error: older messages and some clients don't send it. */
   author?: string;
-  /** That sender's picture, persisted alongside the name (§3.2
-   * `authorAvatar`) — an emoji glyph or a data URL, whichever the sending
-   * client uses. */
+  /** That sender's picture (§3.2 `authorAvatar`): an emoji glyph or a data URL. */
   authorAvatar?: string;
   /** Server-side paths a `user` message attached (§3.1 user_prompt). */
   attachments?: string[];
-  /** Provider name / model id that generated this assistant reply —
-   * initially stamped client-side at send time (state.svelte.ts's
-   * addUserMessage, whatever the session is about to run with) and then
-   * overwritten with the server's persisted values once turn_completed /
-   * session_history confirm them (§3.2), so it stays correct across a
-   * session switch instead of reverting to undefined. Undefined only for a
-   * message stored before the backend persisted this field at all. */
+  /** Stamped client-side at send time, then overwritten with the server's persisted value
+   * once turn_completed/session_history confirm it (§3.2), so it survives a session switch. */
   provider?: string;
   model?: string;
-  /** How long the model round-trip that produced this assistant reply took
-   * (§3.2 `generationMs`) — undefined for a message stored before the
-   * backend persisted it, and for a still-streaming reply (use
-   * `finish.durationMs` instead, which covers the whole turn). */
+  /** The model round-trip's own duration (§3.2 `generationMs`); for the whole turn use `finish.durationMs`. */
   generationMs?: number;
-  /** This round-trip's own token/cost accounting (§3.2 `usage`) — not the
-   * whole turn's. `inputTokens` is already the full conversation resent as
-   * this round-trip's request, so it doubles as "tokens in, cumulative up
-   * to this point"; `outputTokens` is just this round-trip's own reply.
-   * Undefined for a message stored before the backend persisted it, and
-   * for a still-streaming reply. */
+  /** This round-trip's own token/cost accounting (§3.2 `usage`), not the whole turn's.
+   * `inputTokens` is the full resent conversation, so it's cumulative; `outputTokens` is just this reply. */
   usage?: { inputTokens: number; outputTokens: number; costUsd: number };
 }

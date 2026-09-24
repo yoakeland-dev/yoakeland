@@ -1,12 +1,6 @@
 <script lang="ts">
-  // Shared "Ctrl/Cmd+F" find overlay — originally TerminalView.svelte's own
-  // inline markup, extracted so ChatPanel.svelte's find-in-chat (a different
-  // search backend entirely — xterm's SearchAddon vs. a plain scan over
-  // message text) can reuse the same look/keyboard behavior instead of a
-  // second hand-rolled copy. This component owns only the widget: the query
-  // input, prev/next/close, and a "current/total" counter — every caller
-  // supplies its own onNext/onPrevious (what "next match" even means differs
-  // per backend) and matchIndex/matchCount to display.
+  // Owns only the widget (query input, prev/next/close, counter); every
+  // caller supplies its own onNext/onPrevious since "next match" differs per backend.
   import Icon from "./Icon.svelte";
 
   let {
@@ -22,16 +16,16 @@
     onClose,
   }: {
     query: string;
-    /** 0-based index of the current match, -1 when there isn't one — same
+    /** 0-based index of the current match, -1 when there isn't one, same
      * convention as xterm addon-search's ISearchResultChangeEvent. */
     matchIndex?: number;
     matchCount?: number;
     placeholder?: string;
     inputEl?: HTMLInputElement | null;
-    /** Extra class(es) on the root — a caller overrides position (top/right)
+    /** Extra class(es) on the root: a caller overrides position (top/right)
      * to fit its own container; the widget's own look stays fixed. */
     class?: string;
-    /** Fires on every keystroke — wire to an incremental/as-you-type search
+    /** Fires on every keystroke: wire to an incremental/as-you-type search
      * if the backend supports it (xterm's findNext does); omit otherwise. */
     onInput?: () => void;
     onNext: () => void;

@@ -1,22 +1,14 @@
-// Parses the OSC 633 subset internal/terminal/scripts/integration.{bash,zsh}
-// inject into the shell's own prompt hooks — see shellintegration.go for
-// why this needs no wire protocol change: the bytes already ride inside the
-// normal terminal_output/history stream every other pty write does, this
-// just interprets ones that were always flowing through.
-//
-// Subset handled (see the shell scripts for why this is a cut-down version
-// of VS Code's full OSC 633 set): `A` (prompt start — swallowed, no action
-// yet), `B` (prompt end — zsh only, swallowed), `C` (command start — zsh
-// only, swallowed), `D;<exitcode>` (previous command finished — drives the
-// gutter mark), `P;Cwd=<path>` (cwd report — drives the live tab cwd).
+// Parses the OSC 633 subset internal/terminal/scripts/integration.{bash,zsh} inject; rides the
+// normal terminal_output stream, no wire protocol change needed. Cut-down vs VS Code's full set:
+// `A`/`B`/`C` (prompt/command start, swallowed), `D;<exitcode>` (gutter mark), `P;Cwd=<path>` (tab cwd).
 import type { IDecoration, IMarker, Terminal } from "@xterm/xterm";
 
 const OSC_633 = 633;
 
 export interface ShellIntegration {
-  /** Alt+Up — jump the viewport to the nearest command boundary above it. */
+  /** Alt+Up: jump the viewport to the nearest command boundary above it. */
   goToPreviousCommand(): void;
-  /** Alt+Down — same, below the viewport. */
+  /** Alt+Down: same, below the viewport. */
   goToNextCommand(): void;
   dispose(): void;
 }
@@ -40,8 +32,7 @@ export function attachShellIntegration(term: Terminal, onCwd: (cwd: string) => v
         }
       }
     }
-    // "A"/"B"/"C" carry no payload we act on yet — still return true so
-    // none of the OSC 633 subset ever renders as literal garbage.
+    // Always return true so the OSC 633 subset never renders as literal garbage.
     return true;
   });
 
@@ -56,12 +47,8 @@ export function attachShellIntegration(term: Terminal, onCwd: (cwd: string) => v
   };
 }
 
-// markCommandBoundary drops a marker (and a small colored gutter
-// decoration, green/red by exitCode) on the line the cursor sits on right
-// now — the OSC 633;D handler fires from the shell's precmd hook, which
-// runs before the prompt text itself is printed, so the cursor is already
-// on the blank line the upcoming prompt will occupy. That's the same line
-// VS Code's own command decorations anchor to.
+// Fires from the shell's precmd hook, before the prompt text prints, so the cursor already sits
+// on the blank line the upcoming prompt will occupy.
 function markCommandBoundary(term: Terminal, marks: IMarker[], decorations: IDecoration[], exitCode: number) {
   const marker = term.registerMarker(0);
   if (!marker) return;

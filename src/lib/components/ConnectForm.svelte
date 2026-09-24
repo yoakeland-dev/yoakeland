@@ -1,12 +1,6 @@
 <script lang="ts">
-  // The actual local/remote connect fields + submit handlers — rendered by
-  // FirstServerPanel.svelte (nothing connected yet) and Settings →
-  // Servers' "Add server" (everything after that; the palette's
-  // "Add server…" lands there too, since a form doesn't belong in a list UI).
-  // ConnectTcp/connectLocalUnix (ipc.ts) are already additive as of the
-  // multi-server-connections work — calling this a second time just adds
-  // another entry to app.servers rather than replacing one — so this component itself needs no "is this the first
-  // server" branching at all.
+  // connectTcp/connectLocalUnix (ipc.ts) are additive: calling this a second
+  // time adds another entry to app.servers, so no "first server" branching needed here.
   import { isDesktop, pickFiles } from "../platform";
   import { tick, untrack } from "svelte";
   import { Tabs } from "bits-ui";
@@ -22,11 +16,8 @@
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
 
-  // prefill: a remembered remote's address, when it has no remembered token
-  // (or that token was rejected) — the user pairs again from here.
-  // showLocal off (Settings → Servers): the local server auto-connects at
-  // startup (autoConnect in ipc.ts), so adding one later is always a remote.
-  // FirstServerPanel — nothing connected at all yet — keeps the local tab.
+  // showLocal off (Settings > Servers): the local server auto-connects at
+  // startup, so adding one later is always a remote.
   let {
     onconnected,
     prefill,
@@ -41,23 +32,14 @@
 
   let tab = $state<"local" | "remote">(untrack(() => (showLocal && !prefill?.host ? "local" : "remote")));
 
-  // Local — a Unix domain socket (§2a): no token, the OS already restricts
-  // who can connect to this user account. A yoakeland server is expected to
-  // be its own standalone process, and isn't bound to any one project (§4b
-  // — that's picked afterward, per session, from the sidebar). We only ever
-  // try to launch one as a fallback, detached, after finding nothing already
-  // listening at socketPath (see connectLocalUnix).
+  // §2a: Unix domain socket, no token, OS already restricts who can connect.
   let binPath = $state("yoakeland");
   let socketPath = $state(FALLBACK_SOCKET_PATH);
   getDefaultSocketPath().then((p) => (socketPath = p));
 
-  // Remote (TCP) — always goes through the real auth handshake (§2a), and is
-  // never something this app would launch on your behalf. Keyboard-first
-  // steps rather than one long form: address, then the pairing code, with
-  // manual token/CA entry as its own step off of that (not an inline
-  // dropdown — opening one of those still leaves you needing several Tabs to
-  // actually reach the fields it revealed, which defeats the point) — see
-  // remoteFormBody below for the Enter-advances/Backspace-retreats wiring.
+  // Keyboard-first steps rather than one long form: address, then pairing
+  // code, with manual token/CA entry as its own step (not an inline dropdown,
+  // which would still need several Tabs to reach the revealed fields).
   let host = $state(untrack(() => prefill?.host ?? pagePrefill?.host ?? ""));
   let port = $state(untrack(() => prefill?.port ?? pagePrefill?.port ?? 7890));
   let token = $state("");
@@ -104,10 +86,8 @@
     }
   }
 
-  /** `xxx.xxx.xxx.xxx:yyyyy` (or `host:port`, or `[::1]:port`) pasted into
-   * either field splits itself into both instead of landing as one garbled
-   * value — paste-only (not every keystroke), so typing a literal ':' in a
-   * hostname or a raw IPv6 address never gets second-guessed. */
+  /** Paste-only (not every keystroke), so typing a literal ':' in a hostname
+   * or a raw IPv6 address never gets second-guessed. */
   function splitHostPort(text: string): { host: string; port: number } | null {
     const t = text.trim();
     const m = t.match(/^\[(.+)\]:(\d{1,5})$/) ?? t.match(/^([^:\s]+):(\d{1,5})$/);
@@ -126,11 +106,8 @@
     goToCode();
   }
 
-  // A pairing code (Settings > Server > People with access' "copy this now"
-  // box) bundles a token with the CA cert it was minted alongside — pasting
-  // one here fills both fields below in one step instead of two separate
-  // copy/pastes. Purely a shortcut into the same token/caPem fields, so
-  // there's nothing to submit here itself and no server-side round trip.
+  // A pairing code bundles a token with its CA cert; pasting one fills both
+  // fields below in one step. Purely a shortcut into token/caPem, no submit of its own.
   let pairingCode = $state("");
   let pairingError = $state<string | null>(null);
   function applyPairingCode(value: string) {
@@ -149,11 +126,8 @@
     if (decoded.caPem) caPem = decoded.caPem;
   }
 
-  // TLS is mandatory on the TCP listener now (§2a) — either yoakeland's own
-  // auto-managed CA (paired by importing its ca.pem, the common case) or an
-  // operator-supplied real certificate (leave this blank to trust the OS's
-  // own certificate store instead). Remembered per host:port so returning to
-  // a known server doesn't ask again.
+  // §2a: TLS is mandatory. Remembered per host:port so returning to a known
+  // server doesn't ask again.
   let caPem = $state("");
   let importingCa = $state(false);
   let caImportError = $state<string | null>(null);

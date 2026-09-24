@@ -22,8 +22,7 @@ protocol.registerSchemesAsPrivileged([
 let win = null;
 let overlayOn = false;
 
-// Mirrors the renderer's "Window controls" setting, because Windows only
-// accepts the controls overlay when a window is created.
+// Mirrors the renderer's "Window controls" setting; Windows only accepts the overlay at window creation.
 const prefsFile = () => path.join(app.getPath("userData"), "window.json");
 function chromeEnabled() {
   try {
@@ -83,8 +82,7 @@ function createWindow() {
   void win.loadURL(DEV_URL ?? "app://yoake/");
 }
 
-// Errors come back as `{ error }` so the renderer gets the plain message, not
-// Electron's "Error invoking remote method" wrapper.
+// Errors come back as `{ error }` so the renderer gets the plain message, not Electron's wrapper.
 function handle(name, fn) {
   ipcMain.handle(name, async (event, args) => {
     if (!event.senderFrame || !isAppUrl(event.senderFrame.url)) {

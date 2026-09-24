@@ -1,22 +1,13 @@
-// One derivation function drives both "predefined color schemes" and
-// "generate a scheme from one accent color" — a preset is just a shipped
-// accent value run through the same generator a custom color goes through.
-// This is what makes the whole UI shift color (surfaces, borders, dimmed
-// text — not just the accent swatch): every token below is the same hue,
-// carried at different saturation/lightness for its role.
+// A preset is just a shipped accent value run through the same generator a custom color goes
+// through: every token below is the same hue, carried at different saturation/lightness per role.
 
 export interface ThemeTokens {
-  /** Flat, deliberately — the panels floating on top carry the depth, and a
-   * gradient behind them just fought with the accent for attention. */
+  /** Flat, deliberately: a gradient here just fought with the accent for attention. */
   bg: string;
   panelBg: string;
   panelBorder: string;
-  /** `panelBorder` split into the two halves a bevel needs: a hairline reads a
-   * touch lighter along its top edge than its bottom one (applied per border
-   * via `border-block-color` — see app.css). A few points of alpha apart on
-   * purpose: the cue is meant to be felt, not seen. Note the light scheme
-   * inverts which end is which — there the border is dark ink on a pale
-   * surface, so "lighter" means *less* of it. */
+  /** `panelBorder` split into the two halves a bevel needs (`border-block-color`, app.css);
+   * light scheme inverts which end is lighter since its border is dark ink on a pale surface. */
   panelBorderTop: string;
   panelBorderBottom: string;
   sidebarFg: string;
@@ -78,11 +69,7 @@ export function deriveTheme(accentHex: string, mode: "dark" | "light"): ThemeTok
     };
   }
   return {
-    // Surfaces stay deliberately low-saturation (18-22%, not 35%) so the
-    // accent — carried at whatever saturation its own hex has, often 60-90%
-    // — reads as a clear pop against a neutral-with-a-hint-of-hue backdrop
-    // instead of blending into similarly-saturated surfaces (warm hues like
-    // orange especially muddy out otherwise).
+    // Surfaces stay low-saturation so the accent (often 60-90%) pops instead of blending in.
     bg: `hsl(${h} 15% 5%)`,
     panelBg: `hsl(${h} 12% 7%)`,
     panelBorder: `hsla(${h} 20% 95% / 0.08)`,
@@ -102,7 +89,7 @@ export function deriveTheme(accentHex: string, mode: "dark" | "light"): ThemeTok
   };
 }
 
-/** xterm.js's `ITheme` shape — every color it wants is a literal parseable
+/** xterm.js's `ITheme` shape: every color it wants is a literal parseable
  * value, not a `var(--x)` reference, since it does its own contrast/blend
  * math on them. */
 export interface TerminalColorTheme {
@@ -129,17 +116,9 @@ export interface TerminalColorTheme {
   brightWhite: string;
 }
 
-/** xterm.js's `theme` option (TerminalView.svelte) needs literal parseable
- * colors, not `var(--x)` references — it does its own contrast/blend math on
- * them. Background/foreground/cursor are carried over from the same derived
- * surface hue as the rest of the UI (deriveTheme above) so the terminal reads
- * as part of this app rather than a foreign pane; the 16 ANSI slots are a
- * fixed, independent convention programs already assume specific hues for
- * (red is red, green is green), so those are one hand-picked palette rather
- * than hue-derived — tuned for legibility on a dark surface, with the same
- * treatment reused (roughly) on light. This is what Settings > Appearance >
- * Terminal's "Use app theme colors" switch selects — the alternative to
- * picking one of TERMINAL_THEME_PRESETS below. */
+/** Background/foreground/cursor derive from the same surface hue as the rest of the UI
+ * (deriveTheme); the 16 ANSI slots are a fixed hand-picked palette instead, since programs
+ * already assume specific hues for them (red is red, green is green). */
 export function deriveTerminalTheme(accentHex: string, mode: "dark" | "light"): TerminalColorTheme {
   const h = Math.round(hexToHue(accentHex));
   if (mode === "light") {
@@ -192,11 +171,7 @@ export function deriveTerminalTheme(accentHex: string, mode: "dark" | "light"): 
   };
 }
 
-/** Fixed, named terminal color schemes — the alternative to
- * deriveTerminalTheme's "generate from the app's own accent" mode. Standard,
- * widely-published palettes (each already ubiquitous across terminal
- * emulators/editors), not invented here — kept verbatim so a program that
- * assumes e.g. Dracula's specific reds/greens still looks right. */
+/** Standard, widely-published palettes kept verbatim so e.g. Dracula's specific reds/greens still look right. */
 export interface TerminalThemePreset {
   id: string;
   name: string;
@@ -398,12 +373,8 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
 /** The hue slider under the color-wheel swatch: fixed saturation/lightness so
  * the whole ring stays equally vivid, only the hue moves. */
 export function hslToHex(h: number, s: number, l: number): string {
-  // s and l arrive as percentages (0-100) — both need to be fractions before
-  // the min(l, 1-l) trick below means anything; skipping that conversion
-  // (as an earlier version did) sends 1-l negative for any l over 1 and
-  // produces out-of-range, sometimes negative channel values that
-  // `.toString(16)` turns into malformed hex (e.g. "-3"), which browsers
-  // silently ignore as an invalid color.
+  // s/l must be fractions (not 0-100) before the min(l, 1-l) trick below, or it can produce
+  // negative channel values that `.toString(16)` turns into malformed, silently-ignored hex.
   const s1 = s / 100;
   const l1 = l / 100;
   const a = s1 * Math.min(l1, 1 - l1);
@@ -426,10 +397,8 @@ export const THEME_PRESETS: { name: string; accent: string }[] = [
   { name: "Mono", accent: "#94a3b8" },
 ];
 
-// OKLab/OKLCH conversion (Björn Ottosson's formulas). Averaging in sRGB muddies
-// hue toward gray whenever dark or busy pixels dominate — bucketing by hue in
-// OKLCH and weighting by chroma picks the color the eye actually notices,
-// instead of the flat gray-brown that falls out of an sRGB mean.
+// OKLab/OKLCH conversion (Björn Ottosson's formulas): bucketing by hue and weighting by chroma
+// picks the color the eye notices, instead of the flat gray-brown an sRGB mean produces.
 function srgbToLinear(c: number): number {
   const v = c / 255;
   return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
@@ -492,8 +461,7 @@ export function extractAccentFromImage(dataUrl: string): Promise<string> {
         const b = srgbToLinear(data[i + 2]);
         const [L, C, h] = linearToOklch(r, g, b);
         pixels.push({ L, C, h });
-        // chroma-squared weighting: near-gray pixels (shadows, haze, paper)
-        // barely vote for a hue, so a few saturated pixels can still win.
+        // chroma-squared weighting: near-gray pixels barely vote, so a few saturated pixels can win.
         bucketWeight[Math.floor(h / (360 / HUE_BUCKETS)) % HUE_BUCKETS] += C * C;
       }
 
@@ -504,10 +472,7 @@ export function extractAccentFromImage(dataUrl: string): Promise<string> {
       const bucketSize = 360 / HUE_BUCKETS;
       const bestHueCenter = bestBucket * bucketSize + bucketSize / 2;
 
-      // Average L/C of pixels near the winning hue, weighted by chroma —
-      // this is what makes a saturated photo yield a saturated accent and a
-      // washed-out one yield a muted accent, rather than clamping everything
-      // to one "safe" saturation.
+      // Weighted by chroma, so a saturated photo yields a saturated accent and a washed-out one a muted one.
       let sumL = 0, sumC = 0, sumW = 0;
       for (const p of pixels) {
         let dh = Math.abs(p.h - bestHueCenter);
@@ -524,9 +489,7 @@ export function extractAccentFromImage(dataUrl: string): Promise<string> {
       let C = hasColor ? sumC / sumW : 0;
       const h = hasColor ? bestHueCenter : 0;
 
-      // Floor chroma so the accent never goes fully gray (still a color, just
-      // a quiet one), and keep lightness in a band that reads on both light
-      // and dark surfaces without flattening the image's actual saturation.
+      // Floor chroma so the accent never goes fully gray; clamp lightness to read on both surfaces.
       C = Math.max(0.05, Math.min(C, 0.33));
       L = Math.max(0.55, Math.min(L, 0.82));
 

@@ -1,10 +1,6 @@
 <script lang="ts">
-  // Shared dropdown primitive on top of bits-ui's Select — one styled
-  // trigger/popover treatment for every plain "pick one of these" control in
-  // the app, with an optional search filter for longer lists. Custom
-  // per-item rendering (icons, truncated labels with a title tooltip, a
-  // trailing badge) is still up to the caller via the `item` snippet; this
-  // component owns layout/chrome/search, not item content.
+  // Shared "pick one of these" control on top of bits-ui's Select; owns
+  // layout/chrome/search, item content is up to the caller via `item`.
   import { Select } from "bits-ui";
   import Icon from "./Icon.svelte";
   import type { Snippet } from "svelte";
@@ -38,8 +34,8 @@
     value: string | undefined;
     placeholder?: string;
     triggerIcon?: string;
-    /** Custom leading element (e.g. a server monogram) in the icon's slot —
-     * crossfades with the chevron exactly like triggerIcon. Wins over it. */
+    /** Custom leading element (e.g. a server monogram) in the icon's slot,
+     * crossfades with the chevron exactly like triggerIcon; wins over it. */
     triggerLead?: Snippet;
     triggerTitle?: string;
     searchable?: boolean;
@@ -71,10 +67,7 @@
     title={triggerTitle}
   >
     {#if triggerLead || triggerIcon}
-      <!-- Icon and chevron crossfade in one slot rather than sitting side by
-           side: the chevron reads as "this icon opens a list" instead of as a
-           second glyph crowding the value. Same treatment as the model
-           picker's trigger. -->
+      <!-- Icon and chevron crossfade in one slot instead of sitting side by side. -->
       <span class="dropdown-trigger-icon">
         <span class="crossfade icon-face">
           {#if triggerLead}{@render triggerLead()}{:else}<Icon name={triggerIcon as any} size={12} />{/if}
@@ -84,8 +77,6 @@
         </span>
       </span>
     {:else}
-      <!-- No leading icon to trade places with, so the chevron is this
-           trigger's only affordance and stays put. -->
       <Icon name="chevron-down" size={12} />
     {/if}
     <span class="dropdown-value-wrap">
@@ -150,11 +141,8 @@
 </Select.Root>
 
 <style>
-  /* House style for a plain "pick one" control: transparent until hovered
-     or open, rather than a permanently visible box — matches the sidebar's
-     other inline chrome (its search field, the split/session rows) so a
-     dropdown trigger doesn't read as a heavier, more "form-like" control
-     than its neighbors. */
+  /* Transparent until hovered/open, matching the sidebar's other inline
+     chrome so this doesn't read as a heavier, more "form-like" control. */
   :global(.dropdown-trigger) {
     display: inline-flex;
     align-items: center;
@@ -183,10 +171,8 @@
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     outline: none;
   }
-  /* The icon/chevron slot (only rendered when the caller passes triggerIcon;
-     else the chevron is a plain trailing glyph). Both faces are stacked and
-     absolutely positioned so the slot keeps one fixed footprint, and the swap
-     is a crossfade rather than a jump. */
+  /* Both faces stacked and absolutely positioned so the slot keeps one fixed
+     footprint and the swap crossfades rather than jumps. */
   :global(.dropdown-trigger-icon) {
     position: relative;
     width: 0.86rem;
@@ -218,11 +204,8 @@
     ) {
     opacity: 1;
   }
-  /* The trigger hugs whatever value it's showing, so a short label doesn't
-     leave a gap where a longer item's text would have gone. The wrap gives
-     the value a definite width to clamp against, so an over-long label
-     ellipsizes (see --fc-pill's / .mode-trigger's max-width) instead of
-     stretching the trigger. The popup has its own width below. */
+  /* Gives the value a definite width to clamp against, so an over-long
+     label ellipsizes instead of stretching the trigger. */
   :global(.dropdown-value-wrap) {
     display: grid;
     flex: 1;
@@ -237,19 +220,12 @@
   :global(.dropdown-content) {
     display: flex;
     flex-direction: column;
-    /* Size to the longest item, never narrower than the trigger (so a short
-       list still reads as "attached" to it), and never wider than the
-       viewport has room for — avoidCollisions/shift on Select.Content
-       already repositions the popup so it doesn't run off-screen; this caps
-       its size for the same reason, so an oversized item list scrolls/
-       truncates instead of overflowing past the edge. */
+    /* Never narrower than the trigger, never wider than the viewport has
+       room for; caps size so an oversized list scrolls instead of overflowing. */
     width: max-content;
     min-width: var(--bits-floating-anchor-width, 12rem);
     max-width: var(--bits-floating-available-width, 90vw);
     max-height: var(--bits-floating-available-height, 22rem);
-    /* A floating surface — see the --float-* tokens in app.css: the plain panel
-       fill by default, translucent over a backdrop blur when Settings >
-       Appearance > Surfaces is set to Frosted. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--panel-border);

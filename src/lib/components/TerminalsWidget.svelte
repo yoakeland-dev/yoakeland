@@ -1,9 +1,6 @@
 <script lang="ts">
-  // Status-bar terminals: every terminal on every server (terminal_index,
-  // §3.2 — including ones started from other devices), so a shell left
-  // running in a chat you've moved away from isn't forgotten. Clicking one
-  // opens its chat with the drawer on that tab; the x kills it
-  // (terminal_close).
+  // Every terminal on every server (terminal_index, §3.2), including ones started from other
+  // devices, so a shell left running in a chat you've moved away from isn't forgotten.
   import { Popover } from "bits-ui";
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
   import { openChatSession, terminalClose } from "../ipc";

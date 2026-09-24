@@ -24,13 +24,8 @@
   const isBusy = $derived(call.status === "running" || call.status === "requested");
   const isError = $derived(call.status === "error" || call.status === "denied");
 
-  // A persistent green check on a card that's just sitting there done adds
-  // nothing you didn't already know — but the *moment* it finishes is worth
-  // a beat of feedback. So: flash the tool icon over to a (muted, not
-  // green) checkmark right as the status flips to done, then fade back to
-  // the tool's own icon a moment later. Skipped for a card that was already
-  // done on mount (reloaded history) — `prevStatus` starts undefined, which
-  // never matches the "just turned done" transition below.
+  // Flash a muted checkmark only at the moment status flips to done, not for cards already
+  // done on mount (reloaded history) - `prevStatus` starts undefined so that transition never fires.
   let prevStatus: ToolCallEntry["status"] | undefined = undefined;
   let flashDone = $state(false);
   $effect(() => {
@@ -129,9 +124,7 @@
   .head:hover {
     background: rgba(255, 255, 255, 0.03);
   }
-  /* Tool icon and chevron sit stacked in the same slot, cross-fading on
-     hover so the affordance to open the card only shows up when it's
-     actionable — resting state reads as "here's what kind of call this is". */
+  /* Icon and chevron cross-fade on hover: resting state shows the tool, hover shows it's openable. */
   .icon-slot {
     position: relative;
     width: 1rem;
@@ -224,10 +217,7 @@
   .status-done .status {
     color: var(--success);
   }
-  /* Zero-JS accordion: animating grid-template-rows between 0fr and 1fr lets
-     the browser animate to the row's real content height, so it stays
-     buttery smooth for a three-line diff or a huge command dump alike
-     without measuring anything in JS. */
+  /* Zero-JS accordion: grid-template-rows 0fr/1fr animates to real content height without JS. */
   .accordion {
     display: grid;
     grid-template-rows: 0fr;

@@ -1,9 +1,5 @@
 <script lang="ts">
-  // Status-bar servers (bottom left): the overlapping monograms, plus the
-  // active server's CPU and memory; the popup is a card per server built off
-  // the health snapshot every server-sent ping carries (SPEC.md §2a status).
-  // A server that isn't connected is named in the bar with its state, since
-  // that's the one thing worth noticing without opening anything.
+  // Health snapshot comes from each server's ping (SPEC.md §2a status).
   import { Popover } from "bits-ui";
   import { app, type ServerState } from "../state.svelte";
   import Icon from "./Icon.svelte";
@@ -21,8 +17,7 @@
     memUsed?: number;
     memTotal?: number;
   }
-  // Load average over core count stands in for CPU %; it can pass 100 when
-  // work is queued, which the bar caps and the number doesn't.
+  // Load average over core count stands in for CPU %; can exceed 100 when work is queued, so the bar caps it.
   function health(s: ServerState): Health {
     const st = s.connectionStatus === "connected" ? s.serverStatus : null;
     if (!st) return {};

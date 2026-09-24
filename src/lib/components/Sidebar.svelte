@@ -16,26 +16,19 @@
   import { slide } from "svelte/transition";
 
   const ALL_PROJECTS = "__all__";
-  // Key in a server's own collapsedProjects map for its whole section.
+  // Key in collapsedProjects for the server's whole section.
   const SERVER_SECTION = "__server__";
 
-  // Dragging past the minimum collapses outright, VS Code-style, instead of
-  // just hitting a hard floor — and dragging back out while the pointer is
+  // Dragging past the minimum collapses outright, VS Code-style; dragging back out while
   // still down re-opens it (see onResize), so overshooting costs nothing.
-  // Threshold is generous — a light overshoot while dragging shouldn't
-  // accidentally collapse the sidebar.
   const COLLAPSE_THRESHOLD = 90;
 
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
-  // Doubles as both "which project new chats default to" (selectProject's
-  // existing side effect — opens it, lists its sessions) and "which
-  // project's chats the sidebar shows" (projectFilter below). Deliberately
-  // NOT re-synced from server.currentProjectPath elsewhere (e.g. opening a
-  // session from a different project) — once the user picks "All projects"
-  // that choice should stick until they pick something else, not get
-  // silently narrowed back down by clicking into an unrelated chat.
+  // Doubles as "which project new chats default to" and "which project's chats the sidebar
+  // shows" (projectFilter below). Deliberately not re-synced from server.currentProjectPath
+  // elsewhere, so picking "All projects" sticks instead of narrowing back on an unrelated click.
   let selectedProjectPath = $state<string>(app.active?.currentProjectPath ?? ALL_PROJECTS);
   $effect(() => {
     if (cid && selectedProjectPath !== ALL_PROJECTS && selectedProjectPath !== server?.currentProjectPath) {
@@ -44,11 +37,8 @@
   });
   const projectFilter = $derived(selectedProjectPath === ALL_PROJECTS ? null : selectedProjectPath);
 
-  // A project can become known (recentProjects) without ever having been
-  // opened/selected here — added from Settings > Projects, or pushed by
-  // project_list from another connection (§4b) — in which case it has no
-  // sessionsByProject entry yet and would otherwise never show a group at
-  // all. Fetch it the moment it's known, on every connected server.
+  // A project can become known (recentProjects) via Settings > Projects or project_list (§4b)
+  // without a sessionsByProject entry yet, so it'd never show a group. Fetch the moment it's known.
   $effect(() => {
     for (const [scid, srv] of Object.entries(app.servers)) {
       if (srv.connectionStatus !== "connected") continue;
@@ -61,8 +51,7 @@
   const multiServer = $derived(serverEntries.length > 1);
   const connectedServers = $derived(serverEntries.filter(([, srv]) => srv.connectionStatus === "connected"));
 
-  // Projects in the user's dragged order; anything not placed by hand sorts
-  // by its most recent chat activity.
+  // Projects in dragged order; anything not placed by hand sorts by most recent chat activity.
   function lastActivity(srv: ServerState, project: string): number {
     let t = 0;
     for (const s of srv.sessionsByProject[project] ?? []) t = Math.max(t, Date.parse(s.updatedAt) || 0);
@@ -76,10 +65,8 @@
     return [...srv.recentProjects].sort((a, b) => idx(a) - idx(b) || lastActivity(srv, b) - lastActivity(srv, a));
   }
 
-  // The project picker: every server's projects, grouped under the server.
-  // With several servers, each header is itself selectable — everything on
-  // that server. Values are "connectionId::path", "server::connectionId", or
-  // ALL_PROJECTS.
+  // Every server's projects, grouped under it; with several servers each header is itself
+  // selectable. Values are "connectionId::path", "server::connectionId", or ALL_PROJECTS.
   const remoteProjectItems = $derived([
     { value: ALL_PROJECTS, label: "All projects" },
     ...serverEntries.flatMap(([gcid, srv]) => {
@@ -106,18 +93,14 @@
   const flat = $derived(!multiServer || !!pickerCid);
   // The picked project's server, shown in the picker's icon slot.
   const pickedServer = $derived(pickerCid ? app.servers[pickerCid] : null);
-  // selectedProjectPath/cid -> pickerValue (e.g. a session opened from a
-  // different project narrows the underlying selection some other way).
-  // A whole-server pick has no project, so "All projects" underneath it
-  // leaves it alone.
+  // selectedProjectPath/cid -> pickerValue. A whole-server pick has no project, so leave
+  // "All projects" alone underneath it.
   $effect(() => {
     if (cid && selectedProjectPath !== ALL_PROJECTS) pickerValue = `${cid}::${selectedProjectPath}`;
     else if (!untrack(() => pickerValue).startsWith("server::")) pickerValue = ALL_PROJECTS;
   });
-  // pickerValue -> selectedProjectPath/cid (the user actually picked
-  // something) — switches the active connection first when the chosen
-  // project belongs to a different one, so the effect above (and the
-  // existing selectProject effect) both then act against the right remote.
+  // pickerValue -> selectedProjectPath/cid: switches the active connection first when the
+  // chosen project belongs to a different one, so the effects above act against the right remote.
   $effect(() => {
     if (pickerValue.startsWith("server::")) {
       const newCid = pickerValue.slice(8);
@@ -143,8 +126,7 @@
     if (p) pickerValue = `${p.connectionId}::${p.path}`;
   }
 
-  // New chat goes to the project picked above; with "All projects" there's
-  // no obvious one, so ask (the palette's "New session in…" page).
+  // With "All projects" selected there's no obvious target, so ask (the palette's "New session in…" page).
   function newChat() {
     if (pickerCid && selectedProjectPath !== ALL_PROJECTS) void newChatIn(pickerCid, selectedProjectPath);
     else if (!hasAnyProject) void addProject(cid ?? connectedServers[0]?.[0] ?? null);
@@ -163,19 +145,16 @@
 
   let resizing = $state(false);
 
-  // The slot is what shrinks in the flex layout (0 when collapsed); the
-  // panel itself stays at a fixed width and slides off-screen via
-  // transform, so its content never squashes/reflows mid-transition.
+  // The slot shrinks in the flex layout (0 when collapsed); the panel itself stays fixed-width
+  // and slides off via transform, so content never squashes mid-transition.
   const slotWidth = $derived(app.sidebarCollapsed ? 0 : app.sidebarWidth);
 
   // The width this drag started from, so a drag that ends collapsed can put it
-  // back — see stopResize.
+  // back, see stopResize.
   let widthBeforeDrag = 0;
-  // True for a brief window right after a drag crosses the collapse
-  // threshold, in either direction — just long enough for one eased
-  // transition (see the collapse-anim rules below) before reverting to
-  // transition:none, or every subsequent pointermove while still dragging
-  // would ease instead of track.
+  // True briefly after a drag crosses the collapse threshold, just long enough for one eased
+  // transition (collapse-anim rules below) before reverting to transition:none, or later
+  // pointermoves would ease instead of track.
   let collapsedByDrag = $state(false);
   let collapseAnimTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -190,19 +169,13 @@
   }
   function onResize(e: PointerEvent) {
     if (!resizing) return;
-    // Dragging past the minimum collapses outright, VS Code-style, instead of
-    // just hitting a hard floor — but as a *live preview* rather than a
-    // one-shot: the pointer stays captured by the handle (which stays mounted
-    // for the whole drag, see below), so dragging back out past the threshold
-    // re-opens the sidebar and picks the width up again, all without letting
-    // go. Collapsing on the spot was the old behaviour and made the gesture a
-    // dead end the moment you overshot.
+    // A live preview, not one-shot: the handle stays mounted and pointer-captured for the
+    // whole drag, so dragging back out past the threshold re-opens the sidebar without
+    // letting go. One-shot collapse was the old behavior and made overshoot a dead end.
     const collapsed = e.clientX < SIDEBAR_MIN_WIDTH - COLLAPSE_THRESHOLD;
     if (collapsed !== app.sidebarCollapsed) {
-      // Both directions animate — the pointer is still driving the *next*
-      // width update, so the eased window has to end itself rather than stay
-      // on for the rest of the drag, or later pointermoves would ease behind
-      // the pointer instead of tracking it.
+      // The eased window ends itself rather than staying on for the rest of the drag, or
+      // later pointermoves would ease behind the pointer instead of tracking it.
       collapsedByDrag = true;
       clearTimeout(collapseAnimTimer);
       const duration = Math.round(200 * (app.settings.animationSpeed || 1)) + 50;
@@ -210,9 +183,8 @@
       app.setSidebarCollapsed(collapsed);
     }
     if (collapsed) return;
-    // The right sidebar's own width is plain CSS (see RightSidebar.svelte),
-    // proportional to whatever's left of this sidebar — it reflows on its
-    // own the moment `.content-row` resizes, no separate sync needed here.
+    // The right sidebar's width is plain CSS (see RightSidebar.svelte); it reflows on its own
+    // when `.content-row` resizes, no separate sync needed here.
     app.sidebarWidth = Math.min(
       SIDEBAR_MAX_WIDTH,
       Math.max(SIDEBAR_MIN_WIDTH, e.clientX),
@@ -222,12 +194,9 @@
     if (!resizing) return;
     resizing = false;
     document.body.style.cursor = "";
-    // Released while collapsed: the moves above clamped this sidebar down to
-    // SIDEBAR_MIN_WIDTH on the way past it, which is fine as live feedback but
-    // isn't a width anyone asked to keep — collapsing is "close it", not
-    // "make it 180 wide". Put the width this drag started from back (in
-    // memory only; storage was never told otherwise) so re-opening the
-    // sidebar comes back the size it was.
+    // Released while collapsed: the drag clamped width to SIDEBAR_MIN_WIDTH as live feedback,
+    // but collapsing is "close it", not "resize to that". Restore widthBeforeDrag (memory only)
+    // so re-opening comes back the size it was.
     if (app.sidebarCollapsed) app.sidebarWidth = widthBeforeDrag;
     else app.setSidebarWidth(app.sidebarWidth);
   }
@@ -240,11 +209,9 @@
     }
   }
 
-  // A session created by `newChat` but never sent doesn't exist on the
-  // server yet — hide it from the list until its first message goes out.
-  // `messageCount` alone would miss a just-sent local message before the
-  // server round-trips a session_updated/list_sessions; the local cache
-  // alone would miss any session this client hasn't opened yet — check both.
+  // A session created but never sent doesn't exist on the server yet, hide it until sent.
+  // Checks both: `messageCount` alone misses a just-sent local message before the server
+  // round-trips, and the local cache alone misses a session this client hasn't opened.
   function hasMessages(s: SessionSummary, srv: ServerState): boolean {
     return s.messageCount > 0 || (srv.messagesBySession[s.sessionId] ?? []).length > 0;
   }
@@ -260,14 +227,12 @@
     s: SessionSummary;
   }
   const key = (r: Row) => `${r.cid}:${r.s.sessionId}`;
-  // The picker narrows project lists to one server's project; Needs you,
-  // Running and Pinned stay global — they're what you'd otherwise miss.
+  // The picker narrows project lists; Needs you, Running and Pinned stay global regardless.
   const inFilter = (gcid: ConnectionId, project: string) =>
     (!pickerCid || gcid === pickerCid) && (!projectFilter || project === projectFilter);
 
-  // Every chat with a message, on every server. Sessions that are the
-  // secondary half of a saved split render under their partner instead
-  // (SplitEntry / ServerState.splitPartnerFor), so they're dropped here.
+  // A saved split's secondary session renders under its partner instead (SplitEntry /
+  // ServerState.splitPartnerFor), so it's dropped here.
   const allRows = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
       srv.recentProjects.flatMap((project) =>
@@ -278,9 +243,8 @@
     ),
   );
 
-  // Chats blocked on a permission ask or a question — top of the list until
-  // answered. Comes from the server's pending_asks list, so it includes chats
-  // this client never opened; those get a stub summary until listed.
+  // From pending_asks, so it includes chats this client never opened; those get a stub
+  // summary until listed.
   const needsYou = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
       [...new Set(srv.pendingAsks.map((a) => a.sessionId))]
@@ -303,8 +267,7 @@
   );
   const runningKeys = $derived(new Set(running.map(key)));
 
-  // Pinned chats across every server, in the order they were pinned —
-  // Ctrl+1–9 jumps to them.
+  // In pinned order; Ctrl+1-9 jumps to them.
   const pinned = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
       srv.pinnedSessions.flatMap((id) => {
@@ -332,7 +295,6 @@
       .sort(byRecent);
   }
 
-  // One section per server (a plain list with only one), its projects inside.
   const serverSections = $derived(
     serverEntries
       .filter(([gcid]) => !pickerCid || gcid === pickerCid)
@@ -362,8 +324,7 @@
 
   const unread = $derived(allRows.filter((r) => !isArchived(r.s) && r.srv.isUnread(r.s)).sort((a, b) => byRecent(a.s, b.s)));
 
-  // Search spans every server and project, titles and the cached message
-  // text alike, narrowed by the active chip. A body hit gets a snippet line.
+  // Spans every server/project, titles and cached message text, narrowed by the active chip.
   const results = $derived.by(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
@@ -396,7 +357,6 @@
 
   const SERVER_STATE = { connecting: "connecting…", disconnected: "reconnecting…", error: "unreachable" } as const;
 
-  // Right-click on a server's heading.
   function serverMenu(gcid: ConnectionId, srv: ServerState): ContextMenuItem[] {
     const open = !srv.collapsedProjects[SERVER_SECTION];
     const status = srv.connectionStatus;
@@ -412,7 +372,6 @@
     ];
   }
 
-  // Drag a project's header to reorder it within its server.
   let dragging = $state<{ cid: ConnectionId; project: string } | null>(null);
   let dropTarget = $state<string | null>(null);
   let dragArmed = false;
@@ -743,27 +702,17 @@
   .sidebar-slot {
     flex-shrink: 0;
     position: relative;
-    /* `flex-basis`, not `width` — this is a flex item next to `.content-col`'s
-       `flex: 1`, and animating `width` instead leaves that sibling's reflow
-       a frame behind the transition (a visible snap before it catches up).
-       Animating the property flexbox actually uses for sizing keeps both in
-       lockstep every frame, same as `.right-slot` in RightSidebar.svelte. */
+    /* `flex-basis`, not `width`: animating `width` leaves `.content-col`'s reflow a frame
+       behind (a visible snap), same reasoning as `.right-slot` in RightSidebar.svelte. */
     transition: flex-basis calc(0.2s * var(--anim-speed, 1)) ease;
   }
   .sidebar-slot.resizing {
     transition: none;
   }
-  /* A drag that crosses the collapse threshold slides the sidebar shut instead
-     of snapping. The transition is off for the whole drag (above) because the
-     width has to track the pointer rather than ease behind it, so closing — the
-     one state change in the gesture that isn't width tracking — opts back into
-     it here.
-     Deliberately keyed off the collapse state rather than `:not(.resizing)`, so
-     it survives the pointer release: on mouseup the rules below stop matching
-     and the base transition above takes over, but both declare the *same*
-     transition, so the slide in flight is not cancelled and runs to the end.
-     Only the collapse half does this — dragging back out restores the plain
-     tracking behaviour the moment the pointer moves again. */
+  /* Opts back into the transition for the collapse crossing itself, since the transition is
+     off for the rest of the drag (width tracks the pointer). Keyed off collapse state, not
+     `:not(.resizing)`, so it survives pointer release: both rules declare the same transition,
+     so the slide in flight isn't cancelled on mouseup. */
   .sidebar-slot.resizing.collapse-anim {
     transition: flex-basis calc(0.2s * var(--anim-speed, 1)) ease;
   }
@@ -782,7 +731,7 @@
        starts on the same line the panel's header does. */
     padding: var(--chat-margin) var(--pad-x) 0.6rem;
     gap: 0.55rem;
-    /* Chrome (labels, buttons, statuses) reads as UI, not content — so it
+    /* Chrome (labels, buttons, statuses) reads as UI, not content, so it
        isn't selectable by default; inputs opt back in below. */
     user-select: none;
   }
@@ -795,16 +744,12 @@
   .sidebar-slot.resizing .sidebar {
     transition: none;
   }
-  /* Same as the slot's rule above: the slide out is the exception to "no
-     transitions during a drag". */
+  /* Same exception as the slot's rule above. */
   .sidebar-slot.resizing.collapse-anim .sidebar {
     transition: transform calc(0.2s * var(--anim-speed, 1)) ease;
   }
-  /* Deliberately the same height as a chat header, starting at the same y —
-     so "Yoakeland" and the open chat's name share one baseline across the
-     whole window instead of each floating at its own height. The logo stays in
-     here rather than in any floating chrome, so it slides out with the sidebar
-     when it's collapsed. */
+  /* Same height as a chat header, starting at the same y, so the logo and chat name share
+     one baseline across the window. Kept here rather than floating chrome so it slides out with the sidebar. */
   .brand-row {
     display: flex;
     align-items: center;
@@ -857,9 +802,7 @@
     align-items: center;
     gap: 0.43rem;
   }
-  /* .project-trigger is layered on top of Dropdown.svelte's own generic
-     .dropdown-trigger styling (see triggerClass) — just the sidebar-specific
-     sizing, not a competing look. */
+  /* Layered on top of Dropdown.svelte's own .dropdown-trigger styling (triggerClass); only sizing here, not a competing look. */
   :global(.project-trigger) {
     flex: 1;
   }
@@ -1049,7 +992,7 @@
     cursor: pointer;
     text-align: left;
   }
-  /* Avatar and chevron share one slot, crossfading on hover — same as a
+  /* Avatar and chevron share one slot, crossfading on hover, same as a
      project's folder icon (ProjectGroup.svelte). */
   .lead {
     position: relative;
@@ -1115,7 +1058,7 @@
   .server-add:hover {
     color: var(--text);
   }
-  /* One indent step per tree level: remote → project → chat. */
+  /* One indent step per tree level: remote, then project, then chat. */
   .server-body.nested {
     --project-indent: 0.71rem;
   }
@@ -1172,8 +1115,7 @@
     position: relative;
     flex-shrink: 0;
   }
-  /* Presence, the way chat apps show it: online while any server is
-     connected (you're visible in its peer list), hollow when not. */
+  /* Online while any server is connected (visible in its peer list), hollow when not. */
   .presence {
     position: absolute;
     right: -1px;
@@ -1233,10 +1175,8 @@
     height: 100%;
     cursor: col-resize;
     touch-action: none;
-    /* The chat panel is painted after this sidebar and wins hit-testing across
-       the whole centre of this handle, leaving only its inner half grabbable.
-       Lifting it above the panel (still well under the floating chrome at 20)
-       gives the full band back. */
+    /* Without this, the chat panel (painted after) wins hit-testing across the handle's
+       centre, leaving only its inner half grabbable. */
     z-index: 5;
   }
 </style>

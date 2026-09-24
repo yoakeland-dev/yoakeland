@@ -1,17 +1,13 @@
 <script lang="ts">
-  // Snapshot browse/restore UI (SPEC.md §3.1/§3.2 list_snapshots/restore_snapshot/
-  // snapshot_restored) — state was already wired (snapshotsByProject), just no
-  // UI to trigger it.
+  // Snapshot browse/restore UI (SPEC.md §3.1/§3.2 list_snapshots/restore_snapshot/snapshot_restored).
   import { onDestroy } from "svelte";
   import { Dialog } from "bits-ui";
   import { app } from "../state.svelte";
   import { listSnapshots, restoreSnapshot } from "../ipc";
   import Icon from "./Icon.svelte";
 
-  // Per-server fields (snapshots, showSnapshots, ...) live on the active
-  // connection's own ServerState now — see the multi-server-connections
-  // plan. `cid` is needed by every ipc.ts call now that they're threaded
-  // per connection.
+  // Per-server fields live on the active connection's ServerState; `cid` is needed since
+  // ipc.ts calls are threaded per connection.
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
@@ -19,17 +15,12 @@
     server?.currentProjectPath ? server.snapshotsByProject[server.currentProjectPath] ?? [] : [],
   );
 
-  // Tracks the snapshot currently being restored so the dialog waits for the
-  // backend's snapshot_restored confirmation instead of closing optimistically
-  // right after sending the request. Bounded by a timeout since restore_snapshot
-  // carries no correlation id to match a failure back to this specific request.
+  // Waits for the backend's snapshot_restored confirmation instead of closing optimistically;
+  // bounded by a timeout since restore_snapshot carries no correlation id to match a failure to.
   let restoringId = $state<string | null>(null);
   let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  // bind:open below keeps showSnapshots in sync for every open/close path;
-  // this effect just runs the "just opened" side effect (refresh the list)
-  // on the false → true transition, matching the same idiom used in
-  // ModelPicker/DirectoryBrowser.
+  // Runs the "just opened" refresh on the false-to-true transition, matching ModelPicker/DirectoryBrowser.
   let wasOpen = false;
   $effect(() => {
     const isOpen = server?.showSnapshots ?? false;
@@ -102,7 +93,7 @@
 </Dialog.Root>
 
 <style>
-  /* Dims only — the dialog card above it is what frosts, so the blur is the
+  /* Dims only: the dialog card above it is what frosts, so the blur is the
      card's own and the background behind it stays readable. */
   :global(.snap-overlay) {
     position: fixed;
@@ -123,7 +114,7 @@
     max-height: 70vh;
     display: flex;
     flex-direction: column;
-    /* A floating surface — see the --float-* tokens in app.css. */
+    /* A floating surface, see the --float-* tokens in app.css. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);

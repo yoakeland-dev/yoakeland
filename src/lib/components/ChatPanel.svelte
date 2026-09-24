@@ -10,15 +10,8 @@
   import FindBar from "./FindBar.svelte";
   import { wallpaperGL } from "../wallpaperGL";
 
-  // `ownsChrome` / `sidePanel` — see ChatHeader.svelte's own doc comment for
-  // what each means; both just pass straight through. `sidePanel` also gates
-  // the `.sidebar-collapsed` left-margin swap below, since that's only ever
-  // about the *left* app sidebar this chat may be docked against — never true
-  // for the linked/side chat, which isn't adjacent to it.
-  // `panelEl` is bindable so +page.svelte can measure this chat's own panel
-  // box — the corner handle where the right sidebar meets the terminal needs
-  // it to compute the terminal's live height without duplicating its clamp
-  // math (see +page.svelte).
+  // `panelEl` lets +page.svelte measure this panel: the corner handle where
+  // the right sidebar meets the terminal needs it for its clamp math.
   let {
     sessionId,
     ownsChrome = true,
@@ -36,13 +29,9 @@
   const isEmpty = $derived(messages.length === 0);
   const isSyncing = $derived(server?.syncingSessions[sessionId] ?? false);
 
-  // Find-in-chat (FindBar.svelte, shared with TerminalView.svelte's own
-  // Ctrl+F — see that component's doc comment). A different backend from the
-  // terminal's xterm SearchAddon: there's no in-buffer text layer to search
-  // here, messages are rendered as markdown/tool-call cards, so this matches
-  // against each message's own plain-text field and navigates message-to-
-  // message rather than character-to-character — "N matches" means N
-  // messages containing the term, not N occurrences within them.
+  // Different backend from TerminalView's xterm SearchAddon: matches each
+  // message's plain-text field and navigates message-to-message, so "N
+  // matches" is N messages containing the term, not N occurrences.
   let chatFindOpen = $state(false);
   let chatFindQuery = $state("");
   let chatFindInputEl = $state<HTMLInputElement | null>(null);
@@ -103,10 +92,6 @@
         use:wallpaperGL={{ src: app.settings.wallpaper, style: app.settings.wallpaperStyle }}
       ></canvas>
     {/if}
-    <!-- The window's own right island (+page.svelte) only lands on this
-         header while it owns the chrome (`ownsChrome`). The sidebar toggle
-         only lands here once the left sidebar is collapsed away, and only
-         for the main chat. -->
     <ChatHeader
       {sessionId}
       reserveToggle={!sidePanel && app.sidebarCollapsed}
@@ -115,10 +100,8 @@
       overlay
     />
     {#if !ownsChrome}
-      <!-- This chat's own local island — same chrome-surface look as the
-           real window-corner one (app.css), just anchored to this panel's
-           own corner instead, for whichever chat doesn't currently own that
-           one (+page.svelte decides which). -->
+      <!-- Same chrome-surface look as the real window-corner island (app.css),
+           anchored to this panel's own corner instead. -->
       <div class="chrome-surface local-island">
         <button
           class="chrome-btn"
@@ -164,9 +147,8 @@
       </div>
       <ChatSidebar {sessionId} />
     </div>
-    <!-- Full-width, below the row above — opening it shrinks that whole row,
-         pushing both the chat body and ChatSidebar up together, rather than
-         carving its own corner out of just one of them. -->
+    <!-- Below the row, not inside it: opening it shrinks .row as a whole
+         rather than carving into just .body or ChatSidebar. -->
     <TerminalPanel {sessionId} />
     {#if isSyncing}
       <div class="syncing-badge"><span class="spinner"></span> Syncing…</div>
@@ -193,25 +175,17 @@
     border-radius: var(--radius-xl);
     margin: var(--chat-margin) var(--chat-margin) var(--chat-margin) 0;
     overflow: hidden;
-    /* Kept in step with .sidebar-slot's own flex-basis transition
-       (Sidebar.svelte) — without this, toggling .sidebar-collapsed below
-       snaps this margin instantly while the sidebar's reserved space next to
-       it animates, so the panel visibly jumps before catching up. */
+    /* Matches Sidebar.svelte's .sidebar-slot flex-basis transition, else the
+       panel jumps ahead of the sidebar's own animating margin. */
     transition: margin-left calc(0.2s * var(--anim-speed, 1)) ease;
   }
-  /* No sidebar to its left when collapsed — without this the panel touches
-     the window edge instead of matching its margin on every other side. */
   .panel.sidebar-collapsed {
     margin-left: var(--chat-margin);
   }
-  /* Flat main area (see app.css): square, edge to edge, with only a hairline
-     where it meets the sidebar or a neighbouring chat. */
   :global(:root[data-main="flat"]) .panel {
     border-radius: 0;
     border-width: 0 0 0 1px;
   }
-  /* Holds .body and ChatSidebar side by side, with TerminalPanel a sibling
-     below both (not inside this row) — see the template comment. */
   .row {
     flex: 1;
     display: flex;
@@ -224,9 +198,8 @@
     flex-direction: column;
     min-height: 0;
     min-width: 0;
-    /* Lets PromptInput's floating hero shrink its font off this panel's
-       actual width (cqi) rather than the viewport — the panel is narrower
-       than the window whenever a sidebar is open. */
+    /* PromptInput's floating hero sizes off this panel's width (cqi), not
+       the viewport, since a sidebar can narrow it. */
     container-type: inline-size;
   }
   .body :global(.list > *) {
@@ -251,18 +224,12 @@
     position: relative;
     z-index: 1;
   }
-  /* The header floats above .body here (ChatHeader's `overlay` prop), so it
-     needs to actually stack above it — same specificity as the rule above
-     otherwise, and which one wins would come down to stylesheet injection
-     order across files rather than anything declared here. */
+  /* Must beat the rule above on z-index, not just source order, since
+     stylesheet injection order across files isn't reliable. */
   :global(.panel > .header) {
     z-index: 2;
   }
-  /* Same corner as the real window island (+page.svelte), just measured
-     against this panel's own box instead of the window's — see
-     --chrome-inset-in-panel in app.css. Above the header (z-index: 3 vs. 2)
-     since it's meant to read as chrome sitting on top of the chat, the same
-     relationship the real island has with whatever header it lands on. */
+  /* Above the header (3 vs 2): reads as chrome sitting on top of the chat. */
   .local-island {
     position: absolute;
     top: var(--chrome-inset-in-panel);
@@ -279,8 +246,6 @@
     filter: grayscale(0.6);
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease, filter calc(0.15s * var(--anim-speed, 1)) ease;
   }
-  /* Floats over the transcript, so it's a floating surface like the popups —
-     see the --float-* tokens in app.css. */
   .syncing-badge {
     position: absolute;
     top: calc(var(--header-height) + 10px);
@@ -313,17 +278,12 @@
       transform: rotate(360deg);
     }
   }
-  /* FindBar's own default position (top: 0.4rem) sits under the floating
-     header (ChatHeader's `overlay` prop) here — push it below instead, same
-     offset .syncing-badge already uses for the same reason. `!important`
-     because FindBar's own scoped rule otherwise wins on specificity (its
-     class selector carries a Svelte scoping attribute ours doesn't). */
+  /* Pushes FindBar below the floating header; !important beats its own
+     scoped rule, which otherwise wins on specificity. */
   :global(.chat-find-bar) {
     top: calc(var(--header-height) + 10px) !important;
   }
-  /* Find-in-chat's "jumped here" cue (ChatPanel's scrollToChatMatch) — the
-     element itself lives inside MessageList's DOM, not this component's own
-     template, hence :global. */
+  /* :global since the element lives in MessageList's DOM, not this template. */
   :global(.chat-find-active) {
     animation: chatFindPulse calc(1.2s * var(--anim-speed, 1)) ease-out;
   }

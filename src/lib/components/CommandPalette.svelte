@@ -1,15 +1,6 @@
 <script lang="ts">
-  // Ctrl+K command palette: search-first access to most actions, threads and
-  // projects, plus the in-app folder browser (§3.1 list_directory) that
-  // replaced the native dialog for local and remote connections alike.
-  // Idle, it shows only what you'd start from (this chat, new sessions,
-  // recent chats); everything else appears once you type. Pages form a
-  // back-stack: Backspace on an empty search pops one, Escape pops one too
-  // if there's anywhere to pop back to, else closes.
-  // Browsing: Enter opens a folder (or a typed path), Ctrl+Enter picks the
-  // folder currently open. Servers: Enter connects/switches, Tab (or → at
-  // the end of the search) opens that server's actions. Adding one is a
-  // form, so that hands off to Settings → Servers.
+  // Ctrl+K command palette. Pages form a back-stack: Backspace on an empty
+  // search pops one, Escape pops one too if possible, else closes.
   import { Command, Dialog, DropdownMenu } from "bits-ui";
   import { tick, type ComponentProps } from "svelte";
   import { app, forgetKnownServer } from "../state.svelte";
@@ -48,11 +39,10 @@
 
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
-  // The chat actions target whichever chat is the main one.
   let sessionId = $derived(server?.currentSessionId ?? null);
 
-  // app.openPalette() while already open (e.g. "Add project" starting a
-  // folder pick) pushes onto the stack instead of resetting it.
+  // Reopening while already open (e.g. "Add project" starting a folder pick)
+  // pushes onto the stack instead of resetting it.
   const pageFor = (k: "root" | "projects" | "browse" | "servers"): Page => ({ kind: k });
   let wasOpen = false;
   let handledRequest = 0;
@@ -140,14 +130,12 @@
     listDirectory(bcid, path);
   }
 
-  // The browse page's server switcher: any connected server's disk can be
-  // browsed, whichever one the pick started on.
   const browsableServers = $derived(Object.entries(app.servers).filter(([, srv]) => srv.connectionStatus === "connected"));
   const browsingServer = $derived(app.browsingConnectionId ? app.servers[app.browsingConnectionId] : null);
   function browseServer(scid: string) {
     if (scid === app.browsingConnectionId) return;
     app.browsingConnectionId = scid;
-    // The other server's folders don't exist here — drop them from the back-stack.
+    // The other server's folders don't exist here, drop them from the back-stack.
     while (stack.length > 1 && stack[stack.length - 2].kind === "browse") stack = stack.slice(0, -1);
     stack = [...stack.slice(0, -1), { kind: "browse" }];
     search = "";
@@ -170,7 +158,6 @@
   const listing = $derived(page.kind === "browse" ? app.directoryListing : null);
   const canPick = $derived(!!listing && !listing.error);
   const folders = $derived(listing?.entries.filter((e) => e.isDir) ?? []);
-  // Anything path-like typed while browsing becomes a "go to" target.
   const typedPath = $derived(
     listing && (search.includes("/") || search.startsWith("~")) ? resolveTyped(search.trim(), listing.path) : null,
   );
@@ -181,7 +168,7 @@
       back();
       return;
     }
-    // Tab, or → with the caret already at the end, drills into a server.
+    // Tab, or Right with the caret already at the end, drills into a server.
     const input = e.currentTarget as HTMLInputElement;
     const drill =
       (e.key === "Tab" && !e.shiftKey) || (e.key === "ArrowRight" && input.selectionStart === search.length);
@@ -204,7 +191,7 @@
     label: string;
     icon: ComponentProps<typeof Icon>["name"];
     detail?: string;
-    /** Opens another page of the palette — gets a trailing chevron. */
+    /** Opens another page of the palette, gets a trailing chevron. */
     submenu?: boolean;
     run: () => void;
   }
@@ -257,12 +244,12 @@
       list.push({ id: "start:new-in", label: "New session in…", icon: "folder", submenu: true, run: () => push({ kind: "projects" }) });
       list.push({ id: "start:add-project", label: "Add project…", icon: "folder-plus", submenu: true, run: addProject });
     }
-    // The one action that doesn't need `cid` — it's how you'd get one.
+    // Doesn't need `cid`: it's how you'd get one.
     list.push({ id: "start:servers", label: "Servers…", icon: "server", submenu: true, run: () => push({ kind: "servers" }) });
     return list;
   });
 
-  // Only offered once you search — see the markup.
+  // Only offered once you search, see the markup.
   const viewActions = $derived.by((): Action[] => {
     const c = cid;
     const list: Action[] = [
@@ -294,7 +281,6 @@
     })),
   );
 
-  // Every thread this client knows of, most recently active first.
   const chats = $derived.by(() => {
     const out: { cid: string; id: string; title: string; project: string; updatedAt: string; archived: boolean }[] = [];
     for (const [scid, srv] of Object.entries(app.servers)) {
@@ -311,7 +297,6 @@
   const shownChats = $derived(
     searching ? chats : chats.filter((c) => !c.archived && !(c.cid === cid && c.id === sessionId)).slice(0, 8),
   );
-  // Every server's projects, labelled "server/project" for remotes.
   const allProjects = $derived(
     Object.entries(app.servers).flatMap(([scid, srv]) =>
       srv.recentProjects.map((path) => ({ cid: scid, path, label: srv.projectLabel(path) })),
@@ -330,8 +315,8 @@
 
   // ---- servers pages ----
 
-  // serverRows() reads localStorage for the remembered ones, which isn't
-  // reactive — bumped after forgetting one so the list re-derives.
+  // serverRows() reads localStorage, which isn't reactive; bump after
+  // forgetting one so the list re-derives.
   let rowsVersion = $state(0);
   const rows = $derived.by(() => {
     void rowsVersion;
@@ -361,7 +346,7 @@
   const serverActions = $derived.by((): Action[] => {
     const r = openRow;
     if (!r) return [];
-    // Connected servers are all equally live — nothing to "switch to".
+    // Connected servers are all equally live, nothing to "switch to".
     const list: Action[] =
       r.status === "connected"
         ? []
@@ -649,7 +634,7 @@
     left: 50%;
     transform: translateX(-50%);
     width: min(40rem, 92vw);
-    /* A floating surface — see the --float-* tokens in app.css. */
+    /* A floating surface, see the --float-* tokens in app.css. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);

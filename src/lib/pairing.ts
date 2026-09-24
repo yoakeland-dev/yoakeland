@@ -1,9 +1,5 @@
-// A "pairing code" bundles a remote-connect token with the server's CA
-// certificate (TokenRegisteredData.caPem, from yoakeland's register_token)
-// into one copy/paste instead of two manual steps — a token alone is only
-// as trustworthy as the TLS connection carrying it, and the CA is what lets
-// a client verify that connection actually terminates at the right server
-// (see SettingsPanel's "copy this now" box and ConnectForm's remote tab).
+// Bundles a remote-connect token with the server's CA cert into one copy/paste: a token alone is
+// only as trustworthy as the TLS connection carrying it, and the CA lets the client verify that.
 import { bytesToBase64, base64ToBytes } from "./base64";
 
 export interface PairingCode {

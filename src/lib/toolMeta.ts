@@ -1,6 +1,4 @@
-// Backend's tool set is a small fixed list (SPEC.md §5) — shared between
-// ToolCallCard (single call) and ToolCallGroup (collapsed run) so both
-// render the same icon/label/summary for a given tool name.
+// Shared between ToolCallCard and ToolCallGroup so both render the same icon/label for a tool name.
 import type { NativeToolFields, NativeToolKind } from "./types";
 
 export type ToolIconName =
@@ -25,8 +23,7 @@ export const toolMeta: Record<string, { icon: ToolIconName; label: string }> = {
   web_fetch: { icon: "world", label: "Web Fetch" },
 };
 
-// CLI agents (§6b) use their own tool names (`Bash`, `Edit`,
-// `commandExecution`, …), so a native call is identified by its ACP `kind`.
+// CLI agents use their own tool names (`Bash`, `commandExecution`, …), so a native call is identified by its ACP `kind`.
 const KIND_META: Record<NativeToolKind, { icon: ToolIconName; label: string; verb: (n: number) => string }> = {
   read: { icon: "file-text", label: "Read", verb: (n) => `read ${n} file${n === 1 ? "" : "s"}` },
   edit: { icon: "pencil", label: "Edit", verb: (n) => `made ${n} edit${n === 1 ? "" : "s"}` },
@@ -41,19 +38,18 @@ const KIND_META: Record<NativeToolKind, { icon: ToolIconName; label: string; ver
 
 type CallLike = { name: string; args?: Record<string, unknown> } & NativeToolFields;
 
-/** Icon/label for any call — yoakeland's own tools by name, a native one by
+/** Icon/label for any call: yoakeland's own tools by name, a native one by
  * its kind. */
 export function metaFor(call: CallLike): { icon: ToolIconName; label: string } {
   if (call.native) {
-    // The kind's label, not the agent's tool name — `commandExecution` and
-    // `Bash` should read the same.
+    // The kind's label, not the agent's tool name: `commandExecution` and `Bash` should read the same.
     const k = KIND_META[call.kind ?? "other"] ?? KIND_META.other;
     return { icon: k.icon, label: k.label };
   }
   return toolMeta[call.name] ?? { icon: "square", label: call.name };
 }
 
-/** Short "what it's doing" line for a sidebar row — the agent's own title
+/** Short "what it's doing" line for a sidebar row: the agent's own title
  * for a native call, else "Edit Sidebar.svelte" style from the summary. */
 export function activityFor(call: CallLike): string {
   if (call.title) return call.title;
@@ -62,16 +58,11 @@ export function activityFor(call: CallLike): string {
   return summary ? `${label} ${summary.split("/").pop()}` : label;
 }
 
-/** A one-line preview of what a call is doing — the file path for file
- * tools, the command for bash, the query for web search, falling back to
- * the raw args for anything else. Args come off the wire/persisted history,
- * so a missing or malformed value here shouldn't be able to crash a card. */
+/** One-line preview of a call's args. Args come off the wire/persisted history, so a
+ * missing or malformed value here shouldn't be able to crash a card. */
 export function summaryFor(call: { args?: Record<string, unknown> } & NativeToolFields): string {
   if (call.native) {
-    // The agent's own title already reads as a sentence ("Edit /repo/x.ts");
-    // otherwise its first location is the most useful thing to show.
-    // otherwise its first location is the most useful thing to show. A
-    // title that repeats the label ("Edit /x" next to "Edit") drops it.
+    // A title that repeats the label ("Edit /x" next to "Edit") drops it.
     if (call.title) {
       const label = (KIND_META[call.kind ?? "other"] ?? KIND_META.other).label;
       return call.title.startsWith(label + " ") ? call.title.slice(label.length + 1) : call.title;
@@ -102,13 +93,10 @@ const VERB: Record<string, (n: number) => string> = {
   web_fetch: (n) => (n === 1 ? "fetched a page" : `fetched ${n} pages`),
 };
 
-/** Natural-language brief for a closed run of calls, grouped by tool name so
- * "3 edits + 1 read" reads as one clause each rather than five lines. Shared
- * by ToolCallGroup (a plain run) and WorkGroup (a run that also had
- * reasoning interleaved, which prefixes its own "Thought, then " and wants
- * this lowercase to follow it as one sentence). */
+/** Natural-language brief for a closed run of calls, grouped by tool name ("3 edits + 1 read").
+ * `capitalize: false` lets WorkGroup prefix its own "Thought, then " as one sentence. */
 export function briefFor(calls: CallLike[], opts: { capitalize?: boolean } = {}): string {
-  // Native calls group by kind — agents disagree on tool names but not kinds.
+  // Native calls group by kind: agents disagree on tool names but not kinds.
   const keyOf = (c: CallLike) => (c.native ? `kind:${c.kind ?? "other"}` : c.name);
   const counts = new Map<string, number>();
   for (const c of calls) counts.set(keyOf(c), (counts.get(keyOf(c)) ?? 0) + 1);

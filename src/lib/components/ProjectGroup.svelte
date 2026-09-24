@@ -28,11 +28,10 @@
   const connected = $derived(server?.connectionStatus === "connected");
   const projectName = $derived(server?.projectName(projectPath) ?? projectPath);
 
-  // Remembered per server and project (ServerState.collapsedProjects).
   const open = $derived(!server?.collapsedProjects[projectPath]);
   const toggle = () => server?.setProjectCollapsed(projectPath, open);
 
-  // Unsent drafts don't count — they're hidden from the list too.
+  // Unsent drafts don't count, they're hidden from the list too.
   const hasAnyChat = $derived(
     (server?.sessionsByProject[projectPath] ?? []).some(
       (s) => s.messageCount > 0 || (server?.messagesBySession[s.sessionId]?.length ?? 0) > 0,
@@ -151,7 +150,7 @@
   </ContextMenu>
   {#if open}
     <div class="rows" transition:slide={{ duration: slideDuration }}>
-      <!-- Only when the project really has none — its chats may just be
+      <!-- Only when the project really has none, its chats may just be
            shown higher up (Needs you / Running / Pinned). -->
       {#if sessions.length === 0 && !hasAnyChat}
         <p class="empty">

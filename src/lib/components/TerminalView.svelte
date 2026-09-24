@@ -1,11 +1,7 @@
 <script lang="ts">
-  // One tab's real, live shell — a proper terminal emulator (xterm.js, the
-  // same engine VS Code/Hyper/Theia use: correct ANSI/color handling and a
-  // lightweight DOM renderer, not something hand-rolled). Mounted once per
-  // terminalId the user has actually looked at (TerminalPanel.svelte decides
-  // when) and then kept alive — hidden via CSS, never destroyed — for as
-  // long as the tab exists, so switching tabs/panes is instant and a
-  // backgrounded tab keeps receiving output instead of losing it.
+  // One tab's live shell via xterm.js. Mounted once per terminalId (TerminalPanel.svelte
+  // decides when) then kept alive, hidden via CSS, never destroyed for the tab's lifetime,
+  // so switching tabs/panes is instant and a backgrounded tab keeps receiving output.
   import { onDestroy, onMount } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
@@ -33,7 +29,7 @@
   }: {
     sessionId: string;
     terminalId: string;
-    /** True for a tab this client just minted (the "+ New Tab" path — sends
+    /** True for a tab this client just minted (the "+ New Tab" path, sends
      * terminal_open); false for one discovered via terminal_list, possibly
      * opened by another peer (sends terminal_attach instead). Only read at
      * mount time. */
@@ -55,9 +51,8 @@
   let lastSentCols = 0;
   let lastSentRows = 0;
 
-  // Ctrl/Cmd+F find bar (FindBar.svelte) — the search addon itself has no
-  // UI. Decorations (highlighting every match, not just the active one) are
-  // what makes onDidChangeResults actually fire — see SEARCH_DECORATIONS.
+  // FindBar.svelte's UI; the search addon has none of its own. Decorations (highlighting
+  // every match) are what makes onDidChangeResults actually fire, see SEARCH_DECORATIONS.
   let findOpen = $state(false);
   let findQuery = $state("");
   let findInputEl = $state<HTMLInputElement | null>(null);
@@ -155,16 +150,15 @@
       cursorBlink: true,
       scrollback: 5000,
       theme: currentTheme(),
-      // registerMarker/registerDecoration (terminalShellIntegration.ts's
-      // command gutter marks) are still proposed xterm.js API — VS Code's
-      // own xtermTerminal.ts sets this same flag for the same reason.
+      // registerMarker/registerDecoration (terminalShellIntegration.ts's gutter marks) are
+      // still proposed xterm.js API; VS Code sets this same flag for the same reason.
       allowProposedApi: true,
     });
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
 
-    // Wide-char/emoji column width (CJK, combining marks) — no UI, just
+    // Wide-char/emoji column width (CJK, combining marks): no UI, just
     // correct cell measurement.
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
@@ -180,10 +174,8 @@
       findMatchCount = e.resultCount;
     });
 
-    // GPU-accelerated renderer where available; a software/sandboxed WebGL
-    // context can fail to create or die mid-session (onContextLoss), in
-    // which case we drop it and fall back to xterm's default DOM renderer
-    // rather than leaving the terminal blank.
+    // A sandboxed WebGL context can fail to create or die mid-session (onContextLoss); drop
+    // it and fall back to xterm's default DOM renderer rather than leaving the terminal blank.
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => {
@@ -200,10 +192,9 @@
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
-      // stopPropagation on every branch we intercept here — returning
-      // `false` only tells xterm itself not to handle the key, the raw
-      // DOM event still bubbles otherwise, which would also trigger
-      // ChatPanel's own Ctrl+F (find-in-chat) at the same time as this one.
+      // stopPropagation on every branch here: returning `false` only tells xterm not to
+      // handle the key, the raw DOM event still bubbles and would also trigger ChatPanel's
+      // own Ctrl+F.
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.stopPropagation();
         openFind();
@@ -229,9 +220,8 @@
       if (cid) terminalInput(cid, sessionId, terminalId, new TextEncoder().encode(data));
     });
 
-    // The shell's own OSC 0/2 "set title" (a well-behaved prompt, or a
-    // fullscreen program like vim/htop) — requirement 3's "latest command
-    // name". Falls back to the tab's shell-binary `label` until one arrives.
+    // The shell's own OSC 0/2 "set title" (a well-behaved prompt, or vim/htop). Falls back
+    // to the tab's shell-binary `label` until one arrives.
     term.onTitleChange((title) => {
       const server = app.active;
       const tab = server?.terminalById[terminalId];
@@ -240,10 +230,8 @@
       }
     });
 
-    // Registered before the snapshot/chunk subscription below so OSC 633
-    // markers in replayed history (not just live output) are picked up too
-    // — the snapshot's `history` bytes are the same raw stream a live
-    // terminal_output chunk is, shell-integration sequences included.
+    // Registered before the snapshot/chunk subscription below so OSC 633 markers in replayed
+    // history are picked up too, not just live output.
     shellIntegration = attachShellIntegration(term, (cwd) => {
       const server = app.active;
       const tab = server?.terminalById[terminalId];
@@ -260,9 +248,8 @@
       term.write(msg.bytes);
     });
 
-    // One frame so the container has a committed layout box before fit()
-    // measures it — otherwise a tab created while its pane is still 0×0
-    // opens the pty at the wrong size.
+    // One frame so the container has a committed layout box before fit() measures it,
+    // otherwise a tab created while its pane is still 0x0 opens the pty at the wrong size.
     requestAnimationFrame(() => {
       if (!term || !fitAddon) return;
       fitAddon.fit();
@@ -290,12 +277,9 @@
     term?.dispose();
   });
 
-  // Settings > Appearance > Terminal can change the accent/scheme/preset/
-  // switch live — keep the terminal's own palette in step rather than only
-  // picking it up on the next tab open. Also drives --term-bg (below), so
-  // the fractional leftover strip xterm leaves when the pane's pixel size
-  // isn't an exact multiple of the cell grid reads as this theme's own
-  // background instead of a mismatched black rectangle.
+  // Keeps the palette in step with live theme changes rather than only on next tab open.
+  // Also drives --term-bg, so xterm's fractional leftover strip (pane size not an exact
+  // multiple of the cell grid) reads as this theme's background, not a mismatched black rectangle.
   $effect(() => {
     void app.settings.accent;
     void app.resolvedTheme;
@@ -346,21 +330,16 @@
     min-height: 0;
     /* padding set inline (Settings > Appearance > Terminal margins) */
     overflow: hidden;
-    /* --term-bg is kept in step with the active terminal color theme (see
-       the $effect above) — this container's own background matters because
-       .xterm/.xterm-viewport/.xterm-screen below aren't guaranteed to cover
-       every pixel of it (see next comment). */
+    /* This background matters because .xterm/.xterm-viewport/.xterm-screen below aren't
+       guaranteed to cover every pixel of it (see next comment). */
     background: var(--term-bg, var(--panel-bg));
   }
   .terminal-view.hidden {
     display: none;
   }
-  /* xterm.js's own stylesheet sizes .xterm to its content — this makes it
-     fill the pane instead, so fitAddon's measurement matches what's actually
-     on screen. When the pane's pixel size isn't an exact multiple of the
-     cell grid, xterm only paints whole cells, leaving a fractional strip at
-     the right/bottom edge — without this, that strip is xterm.css's own
-     default (black) instead of this theme's background. */
+  /* xterm.js's own stylesheet sizes .xterm to its content; this fills the pane instead, so
+     fitAddon's measurement matches the screen, and the fractional leftover strip (when pane
+     size isn't a multiple of the cell grid) uses this theme's background, not xterm.css's default black. */
   .terminal-view :global(.xterm),
   .terminal-view :global(.xterm-viewport),
   .terminal-view :global(.xterm-screen) {

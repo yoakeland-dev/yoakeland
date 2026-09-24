@@ -4,9 +4,6 @@
   import { navigateSessionHistory } from "../ipc";
   import Icon from "./Icon.svelte";
 
-  // reserveToggle / ownsChrome: pad clear of the floating sidebar toggle /
-  // right island. sidePanel: the right sidebar's chat (close button, no chat
-  // island). overlay: float above the body so content scrolls under the fade.
   let {
     sessionId,
     reserveToggle = false,
@@ -21,9 +18,6 @@
     overlay?: boolean;
   } = $props();
 
-  // Per-server fields live on the active connection's own ServerState now —
-  // see the multi-server-connections plan. `cid` is needed by every ipc.ts
-  // call now that they're threaded per connection.
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
@@ -36,8 +30,7 @@
     const project = server?.projectBySession[sessionId];
     return project ? server?.gitStatusByProject[project] : undefined;
   });
-  // -max-session-cost-usd (§3.1 ping status.budgets) applies per session, so
-  // it's shown against this session's own running total.
+  // §3.1 ping status.budgets: session-scope cap, shown against this session's total.
   const sessionCap = $derived(
     server?.serverStatus?.budgets?.find((b) => b.scope === "session" && b.period === "total")?.limitUsd,
   );
@@ -61,10 +54,8 @@
     )?.title || "New chat",
   );
 
-  // Titles change twice after a chat starts: once immediately (the
-  // client-derived guess) and again once the server sends back a properly
-  // generated name. Rather than snapping the label, fade the old one out
-  // then type the new one in — same treatment either time.
+  // Titles change twice (client guess, then server-generated name); fade out
+  // and retype rather than snap, same treatment either time.
   let displayTitle = $state(untrack(() => title));
   let titlePhase: "idle" | "out" | "in" = $state("idle");
   let syncedTitle = untrack(() => title);
@@ -110,13 +101,8 @@
 >
   <div class="left">
     {#if !sidePanel}
-      <!-- This chat's own island: the two history arrows and the title. It sits
-           in the header's flow rather than floating over the panel, so it slides
-           with the chat area (and with the header's own reserve-toggle padding
-           when the sidebar collapses, instead of needing to be dodged
-           separately). Arrows first, deliberately: the title types itself in a
-           character at a time (the effect above), and anything to the left of it
-           would shuffle sideways on every keystroke. -->
+      <!-- Arrows before the title: it types in a character at a time, so
+           anything to its left would shuffle sideways each keystroke. -->
       <div class="chrome-surface chat-island">
         <button
           class="chrome-btn"
@@ -208,25 +194,16 @@
     min-height: var(--header-height);
     flex-shrink: 0;
     position: relative;
-    /* Translucent, not solid — wallpaper and scrolled-up text both need to
-       stay visible through it, just dimmed. Fades out fully within the
-       header's own box, which is fine for a header that isn't floating over
-       scrollable content (e.g. a non-overlay header). */
+    /* Translucent, not solid: wallpaper and scrolled-up text stay visible through it. */
     background: linear-gradient(
       to bottom,
       color-mix(in srgb, var(--panel-bg) 70%, transparent) 40%,
       transparent
     );
-    /* The title slides rather than jumps when the sidebar collapses and the
-       toggle button lands on top of this header. */
     transition: padding calc(0.2s * var(--anim-speed, 1)) ease;
   }
-  /* Floats above the body (which fills the whole panel underneath it)
-     instead of sharing its flex flow, so scrolled content passes under this
-     header instead of stopping short of it. Its own fade only gets partway
-     down before running out of room, so it hands off to ::after below at a
-     matching tint (--header-fade-mid) rather than dropping to transparent
-     and fading a second time — one continuous fade, not two stacked ones. */
+  /* Floats above the body so scrolled content passes under it. Fade hands off
+     to ::after below at a matching tint so it reads as one continuous fade. */
   .header.overlay {
     position: absolute;
     top: 0;
@@ -250,20 +227,11 @@
     background: linear-gradient(to bottom, var(--header-fade-mid), transparent);
     pointer-events: none;
   }
-  /* Room for the floating chrome that overlaps this header — the sidebar toggle
-     on the left, the right island on the right. Both are positioned off the same
-     tokens they reserve against (app.css), so they can't drift apart. The reserve
-     for the toggle is the in-panel variant because padding here is measured from
-     inside this panel's own hairline, not from the window edge. The chat island
-     is in this header's own flow, so it needs no reserve of its own: it simply
-     moves right with the padding when the sidebar collapses. */
+  /* In-panel variant: padding here is measured from this panel's own
+     hairline, not the window edge. */
   .header.reserve-toggle {
     padding-left: var(--toggle-reserve-in-panel);
   }
-  /* Always reserved now — this header pads clear of whichever island
-     overlaps it, the real window-corner one when `ownsChrome`, or this
-     chat's own local one (ChatPanel.svelte) when it doesn't. The template
-     sets --header-chrome-reserve to pick which width applies. */
   .header.reserve-chrome {
     padding-right: var(--header-chrome-reserve);
   }
@@ -273,10 +241,7 @@
     gap: 0.55rem;
     min-width: 0;
   }
-  /* The chat island: the full chrome height, on the header's own content line, so
-     it lines up with the chrome pinned in the window's corners (+page.svelte).
-     Its width is its content's, which is why nothing else reserves against it —
-     the title ellipsizes instead of the island stretching. */
+  /* Height matches the chrome pinned in the window's corners (+page.svelte). */
   .chat-island {
     display: flex;
     align-items: center;
@@ -285,21 +250,13 @@
     flex-shrink: 0;
     max-width: 100%;
     padding: 0 var(--chrome-pad);
-    /* The card is taller than this header's own content line (--chrome-h vs
-       --header-line), so on its own it would hang off that line rather than
-       centre on it. Pulling it back up by half the overhang centres it, which is
-       what puts it on the same baseline as the chrome pinned in the window's
-       corners (+page.svelte) — the two are adjacent whenever the sidebar is
-       collapsed. */
+    /* Centres the card on the header's content line despite being taller than it. */
     margin-block: calc((var(--header-line) - var(--chrome-h)) / 2);
   }
   .chat-island .session-id {
     min-width: 0;
-    /* Room between the title and the island's right edge — the buttons side is
-       already covered by the island's own padding and gap. */
     padding-right: var(--space-1);
-    /* Capped rather than free to grow: a long generated title shouldn't push the
-       mode chip and the status badges off the row. */
+    /* A long generated title shouldn't push the mode chip and badges off the row. */
     max-width: 26rem;
   }
   .session-id {

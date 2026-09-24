@@ -41,9 +41,7 @@ export async function listen<T>(event: string, cb: (payload: T) => void): Promis
   return () => set.delete(fn);
 }
 
-// Browser mode: remote servers only, over the WebSocket yoakeland serves at
-// /ws on its remote port (cmd/yoakeland/web.go). Same command and event names
-// as electron/backend.js.
+// Browser mode: remote servers only, over the WebSocket yoakeland serves at /ws.
 
 const webListeners = new Map<string, Set<(payload: unknown) => void>>();
 const webEmit = (event: string, payload: unknown) => webListeners.get(event)?.forEach((cb) => cb(payload));

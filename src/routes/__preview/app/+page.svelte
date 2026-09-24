@@ -71,7 +71,7 @@
     "/srv/media-stack": [session("r1", "Jellyfin transcoding config", 45)],
   });
   // A chat on homelab stopped on a permission ask, and a third server that's
-  // dropped (its cached project stays listed, greyed) — so the status bar
+  // dropped (its cached project stays listed, greyed), so the status bar
   // and sidebar have something to say.
   remote.activeTurnBySession = { r1: "turn-2" };
   remote.pendingAsks = [
@@ -81,7 +81,7 @@
   app.spendToday = { day: new Date().toDateString(), usd: 4.82 };
   local.activeTurnBySession = { s2: "turn-1", s1: "turn-3" };
   // Two asks queued on the open chat (a CLI agent's question, then one of
-  // its native edits) — the composer shows the first with "1 of 2".
+  // its native edits): the composer shows the first with "1 of 2".
   const noteDiff = {
     filePath: "/home/aveline/Projects/yoake/yoake-gui/src/lib/components/SettingsPanel.svelte",
     unified: "",
@@ -206,8 +206,8 @@
       },
     },
     { id: "m3", role: "user", text: "Rename the Subscriptions heading too.", toolCalls: [], streaming: false, createdAt: now - 60_000 },
-    // A native (cli_claude) turn: text → Read → Edit (with its diff) → text,
-    // the same shape a reload rebuilds from session history.
+    // A native (cli_claude) turn: text, then Read, then Edit (with its diff),
+    // then text, the same shape a reload rebuilds from session history.
     {
       id: "m4",
       role: "assistant",
@@ -226,8 +226,8 @@
   local.messagesBySession = { s1: msgs, s2: [], s3: [], s4: [] };
   app.activeConnectionId = "local";
 
-  // ?flat — flat main area; ?open=model|mode — open that composer picker;
-  // &q=… — type into the model picker's search. For headless screenshots.
+  // ?flat: flat main area. ?open=model|mode: open that composer picker.
+  // &q=...: type into the model picker's search. For headless screenshots.
   const params = new URLSearchParams(location.search);
   if (params.has("flat")) app.settings.mainArea = "flat";
   onMount(() => {

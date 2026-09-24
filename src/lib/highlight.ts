@@ -1,9 +1,5 @@
-// Syntax highlighting for fenced code blocks in Markdown.svelte. Core build +
-// a hand-picked set of languages rather than highlight.js's full bundle
-// (~190 languages). Colors aren't a highlight.js theme — each token class
-// maps onto an ANSI slot of the terminal-style palette the user picked
-// (Settings → Appearance → Code blocks), via the --syn-* variables that
-// AppState.applySettings sets. See Markdown.svelte's .hljs-* rules.
+// Core build + hand-picked languages, not highlight.js's full ~190-language bundle.
+// Colors come from the user's terminal palette via --syn-* variables (AppState.applySettings), not a hljs theme.
 import hljs from "highlight.js/lib/core";
 import type { MarkedExtension, Tokens } from "marked";
 import bash from "highlight.js/lib/languages/bash";
@@ -49,11 +45,8 @@ hljs.registerAliases(["toml"], { languageName: "ini" });
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** Unknown or missing language → plain escaped text. No highlightAuto: it
- * re-guesses on every streamed token and guesses wrong on short snippets.
- * Each block gets a header (language + copy button); the copy click is
- * handled by Markdown.svelte's delegated onClick, since this is plain HTML
- * going through DOMPurify, not a component. */
+/** No highlightAuto: it re-guesses on every streamed token and guesses wrong on short snippets.
+ * The copy button's click is handled by Markdown.svelte's delegated onClick, since this is raw HTML, not a component. */
 export const highlightCode: MarkedExtension = {
   renderer: {
     code({ text, lang }: Tokens.Code) {

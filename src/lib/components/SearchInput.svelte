@@ -1,7 +1,5 @@
 <script lang="ts">
-  // The one search field style (sidebar threads, settings): quiet until
-  // focused, with a clear button once there's text. Escape clears a
-  // non-empty field instead of bubbling (e.g. closing the dialog it's in).
+  // Escape clears a non-empty field instead of bubbling (e.g. closing the dialog it's in).
   import Icon from "./Icon.svelte";
 
   let { value = $bindable(""), placeholder = "Search…" }: { value?: string; placeholder?: string } = $props();

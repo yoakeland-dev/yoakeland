@@ -1,11 +1,5 @@
-/** Backs a collapsed group header's sliding label (ToolCallGroup, WorkGroup)
- * so a finished step's label doesn't slide away in the same instant its
- * spinner turns into a checkmark — the checkmark gets a moment on screen
- * first, then the label slides to whatever's next. `get()` returns the
- * "real" (key, label) pair the header would show with no delay at all, plus
- * whether the run ended in error. Skipped entirely on an error transition —
- * there's nothing to hold a beat for, so it jumps straight to the new
- * (tinted) state. */
+/** Delays a collapsed group header's label change so the checkmark gets a moment on screen
+ * before the label slides to the next step. Skipped on an error transition (jumps straight there). */
 export function heldLabel(get: () => { key: string; label: string; hasError: boolean }, delayMs = 450) {
   const initial = get();
   let displayKey = $state(initial.key);

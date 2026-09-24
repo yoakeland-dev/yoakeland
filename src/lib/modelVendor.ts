@@ -1,6 +1,6 @@
 import type { CliKind, ModelInfo, ProviderInfo } from "./types";
 
-/** Every `cli_*` agent the server can drive (§6b) — the one table Settings'
+/** Every `cli_*` agent the server can drive (§6b): the one table Settings'
  * toggles, the picker's tabs and message footers all read from. */
 export const CLI_AGENTS: Record<CliKind, { title: string; icon: string; cli: string; defaultName: string }> = {
   cli_claude: { title: "Claude", icon: "claude", cli: "claude", defaultName: "claude-subscription" },
@@ -13,30 +13,18 @@ export const CLI_AGENTS: Record<CliKind, { title: string; icon: string; cli: str
   cli_deepseek: { title: "DeepSeek", icon: "deepseek", cli: "dsh", defaultName: "deepseek-cli" },
 };
 
-// Vendor icon/label lookup for a (provider, model) pair — shared between
-// ModelPicker.svelte (the picker itself) and any other UI that needs to show
-// which vendor/model produced something (e.g. AssistantMessage's footer).
-
-// One flattened row per (provider, model) pair — a provider is a credential,
-// not a model choice (SPEC.md §6b), so the picker's actual unit of
+// A provider is a credential, not a model choice (SPEC.md §6b); the picker's actual unit of
 // selection is the model, sourced per-provider from list_models.
 export interface Entry {
   provider: ProviderInfo;
   model: ModelInfo;
 }
 
-// Vendor tabs in the left rail — for *direct* (non-aggregator) api_key
-// providers only. cli_* agents get their own tabs (grouped by
-// transport, not brand, since there's only ever one or two of them) and
-// OpenRouter gets a single aggregator tab — see TabKey below. Splitting it
-// this way is the point: an OpenRouter key alone used to make every one of
-// its hundreds of cross-vendor models bucket into one wrong-icon tab.
+// Left-rail tabs for *direct* (non-aggregator) api_key providers only; cli_* agents and
+// OpenRouter get their own tabs so an OpenRouter key doesn't bucket hundreds of models under one wrong icon.
 export type Vendor = "anthropic" | "openai" | "deepseek" | "gemini" | "ollama";
 
-// LobeHub icon slugs (see node_modules/@lobehub/icons-static-svg/icons).
-// "claude" rather than "anthropic" for the vendor mark — Anthropic's own
-// logo is mono-only, Claude's has a colored variant, and it's the mark
-// people actually recognize.
+// "claude" rather than "anthropic" for the vendor mark: Anthropic's logo is mono-only, Claude's isn't.
 export const VENDOR_META: Record<Vendor, { label: string; icon: string }> = {
   anthropic: { label: "Anthropic", icon: "claude" },
   openai: { label: "OpenAI", icon: "openai" },
@@ -52,10 +40,8 @@ export const VENDOR_ORDER: Vendor[] = [
   "ollama",
 ];
 
-// Checked in order, first match wins — sniffed from the provider's own
-// name/model text since the wire protocol only reports httpProvider as
-// anthropic/openai/openrouter (§3.2), with no concept of e.g. a DeepSeek or
-// Ollama endpoint registered as a generic OpenAI-compatible `api_key`.
+// Sniffed from provider name/model text: the wire protocol's httpProvider is only
+// anthropic/openai/openrouter (§3.2), with no concept of e.g. a DeepSeek/Ollama endpoint.
 const VENDOR_SNIFFERS: [Vendor, RegExp][] = [
   ["deepseek", /deepseek/],
   ["gemini", /gemini|google/],
@@ -81,17 +67,9 @@ export function cliMeta(p: ProviderInfo): { title: string; icon: string } {
   return CLI_AGENTS[p.kind as CliKind] ?? { title: p.name, icon: "tool" };
 }
 
-// The icon shown per model row inside the OpenRouter tab — an aggregator's
-// whole point is routing to many different vendors, so unlike the left
-// rail this can't collapse to one icon. OpenRouter model IDs are
-// conventionally `<vendor-slug>/<model>`, and that vendor slug is usually
-// *also* a valid @lobehub/icons-static-svg slug (openai, deepseek,
-// mistral, qwen, zhipu, stepfun, ...) — LobeHub ships 150+ vendor marks, far
-// more than would be worth hand-listing here. So rather than a closed
-// allowlist (which silently falls back to a generic OpenRouter icon for
-// every vendor nobody thought to add), try the slug directly and only
-// remap the handful of cases where OpenRouter's own slug doesn't match
-// LobeHub's; LobeIcon's `fallback` prop still catches genuine misses.
+// OpenRouter model IDs are `<vendor-slug>/<model>`, and that slug is usually also a valid
+// LobeHub icon slug, so try it directly rather than hand-listing 150+ vendors; only remap
+// the handful of mismatches below, and let LobeIcon's `fallback` prop catch genuine misses.
 const VENDOR_ICON_ALIASES: Record<string, string> = {
   google: "gemini",
   "google-ai-studio": "gemini",
@@ -107,9 +85,7 @@ const VENDOR_ICON_ALIASES: Record<string, string> = {
   "arcee-ai": "arcee",
 };
 
-// Pretty labels for the vendors likely to show up often — everything else
-// falls back to title-casing the raw slug, which is a fine label even
-// without a manual entry (e.g. "Nousresearch").
+// Everything else falls back to title-casing the raw slug (e.g. "Nousresearch").
 const VENDOR_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
@@ -149,9 +125,7 @@ export function openRouterVendorMeta(modelId: string): {
 } {
   const prefix = modelId.split("/")[0]?.toLowerCase();
   if (!prefix) return { label: "OpenRouter", icon: "openrouter" };
-  // Google publishes more than one model *family* under the "google/"
-  // slug — Gemini and Gemma have distinct LobeHub marks, so the vendor
-  // prefix alone isn't enough here the way it is for single-family vendors.
+  // Google publishes both Gemini and Gemma under "google/"; they have distinct LobeHub marks.
   if (prefix === "google" && /gemma/.test(modelId.toLowerCase())) {
     return { label: "Gemma", icon: "gemma" };
   }
@@ -159,15 +133,9 @@ export function openRouterVendorMeta(modelId: string): {
   return { label: VENDOR_LABELS[icon] ?? prettifySlug(prefix), icon };
 }
 
-/** OpenRouter's own model names read "Vendor: Model Name" — that vendor
- * prefix becomes the bottom line (see vendorMetaFor) instead of cluttering
- * the title. cli_claude/cli_codex return a small fixed list of bare
- * aliases (SPEC.md §6b) with no displayName at all — "sonnet"/"opus" reads
- * as a debug string, so title-case it as a floor. cli_codex instead sends
- * displayName === id verbatim (SPEC.md §1031, no per-model manifest yet),
- * which reads the same way and gets the same floor. The real fix (a
- * proper displayName like "Claude Sonnet 4.5" from the server) is
- * server-side — see the provider checklist. */
+/** OpenRouter names read "Vendor: Model Name"; the vendor prefix moves to the bottom line
+ * (vendorMetaFor). CLI providers with no real displayName ("sonnet", or codex's id-as-name)
+ * get title-cased as a floor until the server sends a proper one. */
 export function titleFor(entry: Entry): string {
   const raw = entry.model.displayName || entry.model.id;
   if (isOpenRouter(entry.provider)) {

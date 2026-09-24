@@ -14,34 +14,25 @@
   const author = $derived(message.author);
   const authorAvatar = $derived(message.authorAvatar);
 
-  // Editing discards whatever was generated after this message (archived,
-  // not deleted — SPEC.md §4d), which may have run tool calls; the composer
-  // doesn't currently reach into the following message to check, so the
-  // tooltip states the caveat unconditionally rather than only when it's
-  // known to apply.
+  // SPEC.md §4d: editing archives everything generated after this message,
+  // which may have run tool calls; the tooltip states that unconditionally
+  // since the composer can't check if it actually applies.
   function edit() {
     const cid = app.activeConnectionId;
     if (!cid) return;
     startEditingMessage(cid, sessionId, message.id, message.text);
   }
 
-  // How tall the bubble is allowed to get before it clips, in px. Real height
-  // (not a character count) so it clips correctly regardless of formatting —
-  // a message full of short markdown headings wraps very differently than
-  // one long paragraph of the same length.
+  // Real height, not a character count, so it clips correctly regardless of
+  // formatting (headings wrap very differently than a paragraph of the same length).
   const COLLAPSED_MAX = 180;
 
   let expanded = $state(false);
-  // Measured on the *inner* content wrapper, never on the clipped `.clip`
-  // itself — once `.clip` is capped its own box stops changing size, so a
-  // ResizeObserver on it would never fire again no matter how much taller
-  // the (still off-screen) content grows.
+  // Measured on the inner content wrapper, never `.clip` itself: once capped,
+  // `.clip`'s box stops changing size and a ResizeObserver on it would never fire again.
   let contentEl: HTMLDivElement | undefined = $state();
   let fullHeight = $state(0);
 
-  // ResizeObserver keeps this current as markdown reflows (window resize, UI
-  // font-size setting) so an already-expanded bubble is never mis-clipped by
-  // a stale measurement.
   $effect(() => {
     if (!contentEl) return;
     const el = contentEl;
@@ -52,18 +43,12 @@
 
   const overflowing = $derived(fullHeight > COLLAPSED_MAX + 4);
   const capped = $derived(overflowing && !expanded);
-  // Before the first measurement (fullHeight still 0) this must be "none",
-  // not a stale px value — otherwise the bubble clips to 0 for a frame.
-  // fullHeight is measured on contentEl, which has no padding of its own —
-  // but max-height applies to .clip's border-box, which does (0.71rem top +
-  // 0.71rem bottom). Miss that and the box is ~1.42rem short, clipping the
-  // last line (or the inline "Show less" button) off every time.
+  // Before the first measurement this must be "none", not a stale px value,
+  // else the bubble clips to 0 for a frame. The +1.42rem covers .clip's own
+  // padding (0.71rem top+bottom), which fullHeight (measured on contentEl) doesn't include.
   const maxHeight = $derived(
     capped ? `${COLLAPSED_MAX}px` : fullHeight ? `calc(${fullHeight}px + 1.42rem)` : "none",
   );
-  // Extra bottom padding reserved for the fade + "Show all" overlay while
-  // capped, so it never sits on top of the last line of text. Animated
-  // alongside max-height so the overlay slides into place as it grows.
   const clipPadBottom = $derived(capped ? "3rem" : "0.71rem");
 </script>
 
@@ -196,7 +181,7 @@
     overflow: hidden;
     /* Telegram-style tracking avatar: pinned near the top of the scroll
        viewport while a long message scrolls past, but never past this row's
-       own bounds — it scrolls away normally once the message ends. */
+       own bounds: it scrolls away normally once the message ends. */
     position: sticky;
     top: 8px;
   }

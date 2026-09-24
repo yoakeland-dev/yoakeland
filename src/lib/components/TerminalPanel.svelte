@@ -1,17 +1,11 @@
 <script lang="ts">
-  // Bottom drawer inside a single chat's own panel (ChatPanel.svelte) — a
-  // real, per-chat multi-tab terminal (SPEC.md §3.1/§3.2 terminal_*),
-  // independent per session rather than one shared drawer. `overflow: hidden`
-  // + height:0 when closed means there's nothing in flow to scroll to —
-  // collapsing it isn't just moving it off-screen, the content genuinely
-  // isn't reachable.
+  // Per-chat multi-tab terminal drawer (SPEC.md §3.1/§3.2 terminal_*), independent per
+  // session. `overflow: hidden` + height:0 when closed means the content genuinely isn't
+  // reachable, not just moved off-screen.
   //
-  // Resizable up to half the chat panel's own height, same
-  // clamp(min, ratio%, 50%)-against-the-parent trick RightSidebar.svelte uses
-  // for its own (horizontal) resize, just on the vertical axis and without
-  // the slide-off/collapse-by-drag behavior — this panel already has an
-  // explicit open/close toggle (ChatHeader.svelte), so the handle's only job
-  // is resizing, not also collapsing.
+  // Resizable up to half the panel's height, same clamp(min, ratio%, 50%) trick as
+  // RightSidebar.svelte but vertical and without slide-off/collapse-by-drag: this panel
+  // already has an explicit open/close toggle (ChatHeader.svelte).
   import { app, TERMINAL_MIN_HEIGHT } from "../state.svelte";
   import Icon from "./Icon.svelte";
   import TerminalView from "./TerminalView.svelte";
@@ -26,36 +20,22 @@
   const activeId = $derived(server?.activeTerminalBySession[sessionId]);
   const splitOn = $derived(server?.terminalSplitBySession[sessionId] ?? false);
   const splitId = $derived(server?.splitTerminalBySession[sessionId]);
-  // A brand-new chat's sessionId is minted locally and never told to the
-  // server until its first message goes out (see ServerState.newSessionInProject) —
-  // there's no session for a terminal to run in yet, so show that instead of
-  // an empty drawer or a "+ New Tab" that would just fail against an unknown
-  // session id.
+  // A brand-new chat's sessionId is minted locally and never told to the server until its
+  // first message goes out, so there's no session for a terminal to run in yet.
   const isDraft = $derived(!(server?.messagesBySession[sessionId] ?? []).length);
 
-  // Ids this client itself minted via "+ New Tab" — these send terminal_open
-  // on their TerminalView's first mount; every other id (discovered via
-  // terminal_list, possibly opened by another peer) sends terminal_attach
-  // instead. `ChatPanel`/`+page.svelte` keep one long-lived TerminalPanel
-  // instance across every chat the user ever switches to (only `sessionId`
-  // changes), so this — like every other bit of local state below — has to
-  // stay meaningless for any id outside the *current* session's `tabIds`;
-  // An id is dropped again once its TerminalView has actually sent
-  // terminal_open (`onopened`) — closing the drawer or switching chats
-  // unmounts the view, and a remount must attach, not re-open (the server
-  // rejects a second terminal_open for a live id). Plain Set, not $state:
-  // `fresh` is only read at mount.
+  // Ids minted by this client via "+ New Tab" send terminal_open on first mount; every
+  // other id (from terminal_list, or opened by a peer) sends terminal_attach instead. An id
+  // is dropped once its TerminalView has sent terminal_open, since a remount must attach,
+  // not re-open (the server rejects a second terminal_open for a live id). Plain Set, not
+  // $state: only read at mount.
   const freshIds = new Set<string>();
   let draggingId = $state<string | null>(null);
   let slotEl = $state<HTMLDivElement | null>(null);
 
-  // Opening the drawer with nothing running yet in *this* session (first
-  // time here, or every tab got closed) — spin up a first tab rather than
-  // showing an empty pane with no way back in. Gated on `listed` so this
-  // can't fire before terminal_list (sent on chat open, ipc.ts) has actually
-  // confirmed there's nothing already running — otherwise opening the drawer
-  // right after switching chats would race that response and spawn a
-  // redundant tab on top of ones the session already had.
+  // Spins up a first tab when the drawer opens with nothing running, rather than showing an
+  // empty pane with no way back in. Gated on `terminalsListedBySession` so it can't fire
+  // before terminal_list confirms nothing's already running, or it'd race a redundant tab.
   $effect(() => {
     if (open && !isDraft && server?.terminalsListedBySession[sessionId] && tabIds.length === 0 && !activeId) newTerminal();
   });
@@ -91,7 +71,7 @@
   }
 
   /** Alt/Cmd-click a tab while split is on to load it into the split pane
-   * instead of the main one — a plain click always targets the main pane. */
+   * instead of the main one. A plain click always targets the main pane. */
   function selectTab(id: string, e: MouseEvent) {
     if (!server) return;
     if (splitOn && (e.altKey || e.metaKey)) server.setSplitTerminalTab(sessionId, id);
@@ -204,12 +184,12 @@
       {#each tabIds as id (id)}
         {@const isSplit = splitOn && id === splitId}
         <!-- A flat, single-parent list positioned via grid-column (not two
-             separately-nested lists) — reassigning which pane an id fills
+             separately-nested lists): reassigning which pane an id fills
              (main/split, via setActiveTerminalTab/setSplitTerminalTab) is
              then just a style change, never a reparent, so the id's
              TerminalView (and its live xterm instance) never remounts. Every
              tab in the session mounts (and attaches/opens) as soon as the
-             drawer is open, not just the one(s) currently in a pane — so
+             drawer is open, not just the one(s) currently in a pane, so
              switching tabs is instant and a backgrounded tab keeps
              receiving output while this drawer stays open. -->
         <div class="pane-slot" class:right={isSplit} style:display={id === activeId || isSplit ? "block" : "none"}>
@@ -240,9 +220,8 @@
     display: flex;
     flex-direction: column;
     border-top: 1px solid transparent;
-    /* Same fill as the chat panel itself, no blur — this drawer is part of
-       the page, not a surface floating over it (see --panel-bg's own doc
-       comment in app.css). */
+    /* Same fill as the chat panel, no blur: this drawer is part of the page, not a surface
+       floating over it (see --panel-bg's doc comment in app.css). */
     background: var(--panel-bg);
     transition:
       height calc(0.2s * var(--anim-speed, 1)) ease,
@@ -256,7 +235,7 @@
     transition: none;
   }
 
-  /* Compact, always-there control row once open — the tab strip itself
+  /* Compact, always-there control row once open: the tab strip itself
      (`.tabs`) is the part that disappears down to nothing with only one
      terminal running (`{#if tabIds.length > 1}` above), not this row. */
   .bar {

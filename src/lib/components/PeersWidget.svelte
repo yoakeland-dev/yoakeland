@@ -1,9 +1,5 @@
 <script lang="ts">
-  // Status-bar devices: your other devices connected to any of your servers
-  // (§3.2 peer_list), one row per device however many servers it's on —
-  // matched by the stable deviceId each client sends. A row says which chat
-  // that device is in, and clicking it opens the same chat here. Hidden when
-  // no other device is connected.
+  // One row per device (matched by deviceId, §3.2 peer_list) even if it's on several servers.
   import { Popover } from "bits-ui";
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
   import { disconnectPeer, openChatSession, thisDeviceId } from "../ipc";
@@ -36,8 +32,7 @@
       for (const p of srv.peers) {
         // Ourselves: this connection, or this install on another server.
         if (p.peerId === srv.selfPeerId || p.deviceId === me) continue;
-        // Clients that don't send a deviceId can't be matched across
-        // servers or reconnects; each connection is its own row.
+        // No deviceId means it can't be matched across servers/reconnects; each connection is its own row.
         const key = p.deviceId ?? `${srv.connectionId}:${p.peerId}`;
         const c: Conn = { cid: srv.connectionId, srv, p };
         const d = byKey.get(key);

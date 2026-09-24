@@ -26,19 +26,10 @@
     | { key: string; kind: "toolgroup"; calls: ToolCallEntry[] }
     | { key: string; kind: "workgroup"; steps: AssistantStep[] };
 
-  // Tool calls are appended with the text/thinking length they occurred at
-  // (state.svelte.ts), so the reply can be sliced back into the order things
-  // actually happened. A run — everything between two spans of answer text —
-  // is built up as an ordered list of steps (a thought, or a cluster of
-  // consecutive tool calls with no thought between them) and only decided
-  // *after* it closes: a run with no thought in it at all renders as a plain
-  // ToolCallGroup (unchanged, the common case for non-reasoning providers);
-  // a run with a thought anywhere in it renders as a WorkGroup, which nests
-  // each cluster back into its own ToolCallGroup rather than flattening
-  // everything — a reasoning model that thinks before every single tool call
-  // still collapses into one row, not one row per call. A thought with no
-  // tool call ever attached to it (plain reasoning-then-answer, no tools at
-  // all) falls out of the same logic as a standalone `thinking` segment.
+  // Rebuilds each run (span between answer text) into steps; a run with no
+  // thought renders as a plain ToolCallGroup, one with a thought as a
+  // WorkGroup nesting each cluster, so a model thinking before every call
+  // still collapses into one row instead of one per call.
   const segments = $derived.by((): Segment[] => {
     const calls = [...message.toolCalls].sort(
       (a, b) => (a.textOffset ?? 0) - (b.textOffset ?? 0),
@@ -116,9 +107,7 @@
       }
       pendingCluster.push(call);
     }
-    // Trailing reasoning (after the last tool call, before the final answer,
-    // or the entirety of a message with no tool calls at all) joins whatever
-    // run is still open before that run is decided — matches the
+    // Trailing reasoning joins whatever run is still open, matching the
     // think-then-write order a live stream actually happened in.
     if (thinkCursor < thinkingLen) {
       flushCluster();
@@ -140,12 +129,8 @@
     return segs;
   });
 
-  // Provider/model on the message — stamped client-side at send time
-  // (state.svelte.ts) and, once persisted, also carried by a reply rebuilt
-  // from session history (§3.2's `provider`/`model` per message). Resolved
-  // against the live provider/model lists for an icon + display name;
-  // absent if that provider/model has since been removed, or for a message
-  // stored before the backend persisted these fields, in which case the
+  // Resolved against the live provider/model lists (§3.2 `provider`/`model`
+  // per message); null if removed since, or predates the field, so the
   // footer just omits the model chip.
   const modelEntry = $derived.by((): Entry | null => {
     if (!message.provider || !message.model) return null;
@@ -170,12 +155,8 @@
     );
   });
 
-  // The persisted per-message usage (§3.2 `usage`) once a reload has it;
-  // falls back to the live turn's own usage while streaming/just-completed,
-  // before that persisted value exists yet. `inputTokens` is already the
-  // full conversation resent as this round-trip's request, so it doubles as
-  // "tokens in, cumulative up to this point" — `outputTokens` is just this
-  // reply.
+  // `inputTokens` is the full conversation resent with this request, so it
+  // doubles as cumulative tokens-in; `outputTokens` is just this reply.
   const usage = $derived(message.usage ?? message.finish?.usage ?? null);
 
   const durationS = $derived.by(() => {

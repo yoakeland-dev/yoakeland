@@ -46,7 +46,7 @@
 
   onMount(() => {
     // TerminalView subscribes to the bus one animation frame after mount
-    // (see its own onMount) — give it a moment before publishing.
+    // (see its own onMount), so give it a moment before publishing.
     setTimeout(() => {
       publishTerminalSnapshot("term-1", new TextEncoder().encode(ANSI_SAMPLE));
       publishTerminalSnapshot("term-2", new TextEncoder().encode("\x1b[35msecond tab, different shell\x1b[0m\r\n$ "));

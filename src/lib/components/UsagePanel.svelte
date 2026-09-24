@@ -1,7 +1,5 @@
 <script lang="ts">
-  // Placeholder for the usage page (tokens / cost per server, provider and
-  // project). Opened from the sidebar's footer button; the bars are decoration
-  // until there's real data behind them.
+  // Placeholder for the usage page; the bars are decoration until there's real data behind them.
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
 

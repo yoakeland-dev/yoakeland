@@ -1,30 +1,20 @@
 <script module lang="ts">
-  // @lobehub/icons-static-svg ships every vendor/model mark as a plain .svg
-  // file in node_modules (no CDN, no network at runtime — see its README's
-  // "CDN Usage" section, which we deliberately don't use instead). The glob
-  // below is resolved by Vite at build time into one lazy-loadable chunk per
-  // icon, bundled locally into the app — nothing is fetched over the network
-  // at runtime, just loaded from disk on first use and cached after that.
+  // Deliberately not using @lobehub's CDN option: Vite resolves this glob at
+  // build time into one lazy chunk per icon, bundled locally, nothing fetched at runtime.
   const svgLoaders = import.meta.glob("/node_modules/@lobehub/icons-static-svg/icons/*.svg", {
     query: "?raw",
     import: "default",
   }) as Record<string, () => Promise<string>>;
 
-  // Raw file content, cached per slug (not per candidate list — see below).
-  // "" is a cached miss (no such file), distinct from "not yet requested".
+  // "" marks a cached miss (no such file), distinct from "not yet requested".
   const cache = new Map<string, string>();
 
   let nextUid = 0;
 
-  // Many of Lobe's colored marks embed a gradient in <defs> with a *fixed*
-  // id (e.g. `fill="url(#lobe-icons-qwen-_R_0_)"`) — fine for one copy, but
-  // this app renders the same icon many times at once (a vendor tab plus one
-  // row per model of that vendor). Duplicate IDs in one document make SVG
-  // paint-server references undefined: some copies pick up the first
-  // instance's gradient, and it goes blank/wrong the moment that first
-  // instance unmounts (a tab switch, a filtered list). Namespacing every id
-  // (and everything that points at it) with a per-instance suffix keeps each
-  // rendered icon self-contained.
+  // Many of Lobe's colored marks embed a gradient with a *fixed* id; with the
+  // same icon rendered many times at once, duplicate IDs make SVG paint-server
+  // references undefined (one instance unmounting can blank another's fill).
+  // Namespacing every id with a per-instance suffix keeps each icon self-contained.
   function namespaceIds(raw: string, uid: number): string {
     const ids = new Set<string>();
     const idRe = /\bid="([^"]+)"/g;
@@ -50,7 +40,7 @@
     fallback,
   }: {
     /** Icon slug from @lobehub/icons-static-svg, e.g. "openai", "claude",
-     * "deepseek", "gemini", "ollama" — see node_modules/@lobehub/icons-static-svg/icons
+     * "deepseek", "gemini", "ollama", see node_modules/@lobehub/icons-static-svg/icons
      * for the full list. */
     name: string;
     /** "auto" (default) prefers the brand-color mark and falls back to the
@@ -59,7 +49,7 @@
     variant?: "auto" | "color" | "mono";
     size?: number;
     /** Slug tried after `name` (and its own color/mono variants) come up
-     * empty — e.g. an aggregator's own mark as a safety net for a vendor
+     * empty, e.g. an aggregator's own mark as a safety net for a vendor
      * this icon set doesn't ship. */
     fallback?: string;
   } = $props();
@@ -86,7 +76,7 @@
         if (raw === undefined) {
           const load = svgLoaders[`/node_modules/@lobehub/icons-static-svg/icons/${slug}.svg`];
           if (!load) {
-            cache.set(slug, ""); // no such file — cache the miss too
+            cache.set(slug, ""); // no such file, cache the miss too
             continue;
           }
           raw = await load();
@@ -104,8 +94,7 @@
     };
   });
 
-  // In rem, not px — matches Icon.svelte, so these scale with Settings >
-  // Appearance > UI font size instead of staying pixel-fixed.
+  // rem, not px, matches Icon.svelte's scaling with UI font size.
   const REM_BASE = 14;
 </script>
 

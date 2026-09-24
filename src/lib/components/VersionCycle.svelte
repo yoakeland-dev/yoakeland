@@ -6,13 +6,8 @@
 
   let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
 
-  // alternateIds (§3.2) is an unordered set of "other versions at this
-  // point" — no explicit sequence comes over the wire. Every id observed so
-  // far in this protocol is "m" + a monotonically issued number (SPEC.md's
-  // own examples), so sorting on that numeric suffix recovers a real
-  // creation order and a real "i / N" position instead of a fabricated one.
-  // Falls back to encounter order (still cycles correctly, just an arbitrary
-  // starting position) if an id doesn't match that shape.
+  // alternateIds (§3.2) arrive unordered; ids are "m" + a monotonic number, so sorting on
+  // that suffix recovers real creation order. Falls back to encounter order if an id doesn't match.
   function order(id: string): number {
     const n = parseInt(id.replace(/[^0-9]/g, ""), 10);
     return Number.isFinite(n) ? n : 0;

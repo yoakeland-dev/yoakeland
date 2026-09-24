@@ -1,9 +1,7 @@
 <script lang="ts">
-  // Two groups of pages: app-wide ones (Profile, Appearance, Terminal,
-  // Servers — stored on this device) and server-scoped ones (General,
-  // Providers, Projects, Access — stored on whichever server the page header
-  // points at). Every scalar setting is one .setting-row: label + hint on
-  // the left, its control on the right; toggles are always a Switch.
+  // App-wide pages (Profile, Appearance, Terminal, Servers) store on this device;
+  // server-scoped pages (General, Providers, Projects, Access) store on whichever
+  // server the page header points at.
   import { Dialog, Tabs, Switch } from "bits-ui";
   import { untrack, type ComponentProps } from "svelte";
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
@@ -44,24 +42,18 @@
 
   const QUICK_AVATARS = ["🐣", "🦊", "🐙", "🐢", "🐝", "🐺"];
 
-  // Everything server-scoped (providers, peers, tokens, remote-access state,
-  // recent projects, ...) now lives on a connection's own ServerState — see
-  // the multi-server-connections plan. Defaults to whichever connection the
-  // rest of the app is focused on, but the picker below (Phase 4 — shown
-  // only once there's more than one to pick from) can point these tabs at a
-  // different one without changing what the main window is showing.
+  // Defaults to whichever connection the rest of the app is focused on, but the picker
+  // below (shown only with more than one server) can point these tabs elsewhere without
+  // changing what the main window shows.
   let selectedConnectionId = $state<ConnectionId | null>(null);
   let cid = $derived(selectedConnectionId ?? app.activeConnectionId);
   let server = $derived(cid ? app.servers[cid] : null);
   const serverItems = $derived(Object.entries(app.servers).map(([id, s]) => ({ value: id, label: s.label })));
 
-  // ---- Providers tab (credentials only — model selection lives in
-  // ModelPicker.svelte, sourced from list_models) ----
-  // OpenRouter is registered as a plain API key here, same as Anthropic/
-  // OpenAI — no OAuth sign-in flow. OAuth added a second, asymmetric path for
-  // one vendor only, for no real benefit over pasting a key like every other
-  // provider; the server-side openrouter_oauth_* handlers can stay (SPEC.md
-  // §3.1) for now, this is just the client no longer offering it.
+  // ---- Providers tab (credentials only; model selection lives in ModelPicker.svelte) ----
+  // OpenRouter uses a plain API key here like Anthropic/OpenAI, no OAuth: it added an
+  // asymmetric path for one vendor with no real benefit over pasting a key. The server-side
+  // openrouter_oauth_* handlers can stay (SPEC.md §3.1); the client just stops offering it.
   let providerName = $state("");
   let httpProvider = $state<"anthropic" | "openai" | "openrouter">("anthropic");
   let apiKey = $state("");
@@ -87,10 +79,9 @@
     resetProviderForm();
   }
 
-  // Subscription CLIs are a one-per-machine login, not a named credential
-  // you'd ever want two of — so unlike api_key/OpenRouter, these get a fixed
-  // name and a plain on/off switch instead of a registration form. (The
-  // wire protocol still requires a `name` on register_provider.)
+  // Subscription CLIs are a one-per-machine login, not a credential you'd want two of, so
+  // they get a fixed name and an on/off switch instead of a registration form (the wire
+  // protocol still requires a `name` on register_provider).
   const cliRows = $derived(
     (Object.entries(CLI_AGENTS) as [CliKind, (typeof CLI_AGENTS)[CliKind]][]).map(([kind, meta]) => ({
       kind,
@@ -163,7 +154,7 @@
     void serversVersion;
     return serverRows();
   });
-  // Non-null while the add form is open — {} for a blank one, or a
+  // Non-null while the add form is open: {} for a blank one, or a
   // remembered remote's address (app.openAddServer, e.g. from the palette).
   let addPrefill = $state<{ host?: string; port?: number } | null>(null);
   $effect(() => {
@@ -243,16 +234,11 @@
     apply();
   }
 
-  // ---- Custom hue slider: replaces the OS color picker so choosing an
-  // accent stays in-panel and looks the same across platforms. Fixed
-  // saturation/lightness (see hslToHex) — only hue is adjustable. Tracked
-  // as its own state (not purely derived from the accent hex) because
-  // hue -> hex -> hue round-trips through 8-bit rounding: re-deriving the
-  // hue from the just-set accent on every drag step snapped the thumb to a
-  // slightly different angle than the one actually dragged to, reading as
-  // "picks the wrong color" and "jumps". Still re-synced from the accent
-  // whenever it changes from outside this slider (e.g. a wallpaper-derived
-  // accent, which doesn't go through here at all).
+  // ---- Custom hue slider (fixed saturation/lightness, see hslToHex) ----
+  // Tracked as its own state rather than derived from the accent hex: hue -> hex -> hue
+  // round-trips through 8-bit rounding, so re-deriving on every drag step snapped the thumb
+  // to a slightly different angle than dragged to. Still re-synced when the accent changes
+  // from outside this slider (e.g. a wallpaper-derived accent).
   let hue = $state(hexToHue(app.settings.accent));
   let hueSyncedAccent = app.settings.accent;
 
@@ -271,9 +257,8 @@
     setAccent(hex);
   }
 
-  // Mode cards preview the *actual* derived surfaces for the current accent
-  // — not a fixed gray — so recoloring the accent (hue slider or wallpaper)
-  // visibly recolors these too instead of leaving them looking unrelated.
+  // Mode cards preview the actual derived surfaces for the current accent, not a fixed gray,
+  // so recoloring the accent visibly recolors these too.
   const darkPreview = $derived(deriveTheme(app.settings.accent, "dark"));
   const lightPreview = $derived(deriveTheme(app.settings.accent, "light"));
 
@@ -286,7 +271,7 @@
   function skeletonLine(modeId: string): string {
     if (modeId === "dark") return darkPreview.sidebarFgDim;
     if (modeId === "light") return lightPreview.sidebarFgDim;
-    // Split diagonal needs one line color that reads on both halves — the
+    // Split diagonal needs one line color that reads on both halves: the
     // mode-specific ones above are each tuned for just one side.
     return "rgba(128, 128, 128, 0.7)";
   }
@@ -295,10 +280,8 @@
     app.applySettings();
   }
 
-  // Interface scale: uiFontSize is the root font size every rem hangs off,
-  // shown as a percentage of the 14px default. Applied on release, not per
-  // step — rescaling the whole UI under the pointer mid-drag moves the
-  // slider away from it.
+  // Applied on release, not per step: rescaling the whole UI under the pointer mid-drag
+  // would move the slider away from it.
   const BASE_UI_FONT_SIZE = 14;
   let scalePct = $state(Math.round((app.settings.uiFontSize / BASE_UI_FONT_SIZE) * 100));
   function applyScale() {
@@ -339,9 +322,8 @@
     if (wallpaperInput) wallpaperInput.value = "";
   }
 
-  /** Re-derives the accent from the current wallpaper. A switch rather than a
-   * one-shot button: turning it on keeps the two in step, so swapping the
-   * wallpaper later recolors the UI without a second trip to Settings. */
+  /** A switch, not a one-shot button: turning it on keeps accent and wallpaper in step,
+   * so swapping the wallpaper later recolors the UI without a second trip here. */
   async function syncAccentToWallpaper() {
     if (!app.settings.accentFromWallpaper || !app.settings.wallpaper) return;
     extracting = true;
@@ -358,10 +340,8 @@
     void syncAccentToWallpaper();
   }
 
-  // ---- Search: dims non-matching tabs, rows and section headings (rather
-  // than hiding them, so the page doesn't reflow under you), and jumps to the
-  // first tab with a match when the open one has none. Every tab's content
-  // stays mounted (bits-ui only toggles `hidden`), so all of them are indexed.
+  // ---- Search: dims non-matching rows rather than hiding them, so the page doesn't reflow.
+  // Every tab's content stays mounted (bits-ui only toggles `hidden`), so all are indexed. ----
   const TAB_ORDER = ["profile", "appearance", "terminal", "servers", "general", "providers", "projects", "access"];
   const TAB_LABELS: Record<string, string> = {
     profile: "profile you name avatar picture",
@@ -402,9 +382,8 @@
         heading?.classList.toggle("search-dim", !lit);
       });
       firstMatchByTab[tab] = first;
-      // A per-key write, never a read-then-assign: this runs inside the
-      // action's own update effect, and reading tabHasMatch here would make
-      // that effect depend on what it writes (an infinite update loop).
+      // A per-key write, never a read-then-assign: reading tabHasMatch here would make this
+      // effect depend on what it writes (infinite loop).
       tabHasMatch[tab] = !q || wholeTab || !!first;
     }
     update(params);
@@ -414,7 +393,7 @@
   const noMatches = $derived(!!settingsSearch.trim() && TAB_ORDER.every((t) => tabHasMatch[t] === false));
 
   // Re-runs when the matches change (i.e. per query), not when the user
-  // clicks a tab — so manually opening a non-matching tab doesn't bounce.
+  // clicks a tab, so manually opening a non-matching tab doesn't bounce.
   $effect(() => {
     if (!settingsSearch.trim()) return;
     const matches = Object.fromEntries(TAB_ORDER.map((t) => [t, tabHasMatch[t]]));
@@ -467,7 +446,7 @@
   </Switch.Root>
 {/snippet}
 
-<!-- A handful of mutually exclusive options, all visible at once — a
+<!-- A handful of mutually exclusive options, all visible at once, a
      dropdown only earns its extra click once the list is too long to show. -->
 {#snippet segmented(options: { value: string; label: string }[], value: string, pick: (v: string) => void)}
   <div class="segmented" role="radiogroup">
@@ -1176,11 +1155,8 @@
 </Dialog.Root>
 
 <style>
-  /* Dims, deliberately without blurring: what's behind a modal stays legible as
-     the app you came from, and the dialog card above it is the one thing that
-     frosts (see --float-blur below) — the two layers blurring as well as dimming
-     just muddies the whole screen and stops the card reading as a pane of glass
-     over it. */
+  /* Dims without blurring: the dialog card is the only thing that frosts (--float-blur below).
+     Blurring both layers would muddy the screen and lose the "pane of glass" look. */
   :global(.settings-overlay) {
     position: fixed;
     inset: 0;
@@ -1191,9 +1167,8 @@
   :global(.settings-overlay[data-state="closed"]) {
     animation: scrimOut var(--dialog-exit-duration) ease-in;
   }
-  /* Dropdown.svelte's popover is portalled to <body>, but its own z-index
-     (--z-dropdown) sits below this modal's (--z-overlay-content) — bump it
-     above so it isn't rendered behind the settings panel. */
+  /* Dropdown.svelte's own z-index sits below this modal's; bump it above so it isn't
+     rendered behind the settings panel. */
   :global(.above-modal) {
     z-index: var(--z-context-menu);
   }
@@ -1205,7 +1180,7 @@
     width: min(56rem, 94vw);
     height: min(44rem, 88vh);
     display: flex;
-    /* A dialog card is a floating surface like any other — see the --float-*
+    /* A dialog card is a floating surface like any other, see the --float-*
        tokens in app.css. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
@@ -1401,7 +1376,7 @@
     min-height: 2rem;
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
-  /* The control side never shrinks — the text side wraps instead. */
+  /* The control side never shrinks, the text side wraps instead. */
   .setting-row > :last-child {
     flex-shrink: 0;
   }
@@ -1775,12 +1750,8 @@
   .mode-card.active .mode-card-label {
     color: var(--text);
   }
-  /* Each skeleton is colored with the *actual* derived theme for the current
-     accent (see skeletonStyle() — set inline, per mode, not here) rather
-     than a fixed gray, so the preview stays in step with whatever accent is
-     picked instead of looking unrelated to it. Still shows Light's own
-     palette while you're sitting in Dark mode, letting the three be compared
-     side by side. */
+  /* Colored with the actual derived theme per mode (set inline, see skeletonStyle()), not a
+     fixed gray, so all three previews stay comparable side by side regardless of current mode. */
   .mode-skeleton {
     width: 100%;
     height: 5.7rem;
@@ -1853,10 +1824,8 @@
     opacity: 0.4;
     cursor: not-allowed;
   }
-  /* Track carries the actual rainbow (accurate hue → position mapping, since
-     stops sit at exact 60° increments); the thumb matches the track's
-     height exactly (box-sizing: border-box) so it fills the groove with no
-     gap, and is colored to the live accent. */
+  /* Track stops sit at exact 60-degree increments for accurate hue-to-position mapping;
+     the thumb matches track height exactly (border-box) so it fills the groove with no gap. */
   .hue-slider {
     flex: 1;
     -webkit-appearance: none;
@@ -1900,18 +1869,14 @@
     border-radius: 999px;
     background: transparent;
   }
-  /* "Use app theme colors" ON makes the preset dropdown below it moot —
-     dimmed and inert rather than removed, so the row stays put and the
-     picked preset doesn't disappear from view (it's still there for when
-     the switch goes back off). */
+  /* Dimmed and inert rather than removed, so the picked preset stays visible for when the
+     "Use app theme colors" switch goes back off. */
   .disabled-row {
     opacity: 0.45;
     pointer-events: none;
   }
-  /* The color-theme dropdown's per-item preview (Terminal section) — three
-     small dots (red/green/blue, the ANSI slots most recognizable at a
-     glance) over the preset's own background, not a full swatch, so it
-     reads at list-item size without needing its own legend. */
+  /* Three ANSI dots (red/green/blue, the most recognizable at a glance) over the preset's
+     background, not a full swatch, so it reads at list-item size. */
   .term-theme-swatch {
     flex-shrink: 0;
     display: flex;

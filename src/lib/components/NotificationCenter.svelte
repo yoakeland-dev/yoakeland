@@ -1,8 +1,6 @@
 <script lang="ts">
-  // Bottom-right bell (VSCode-style): every server's shared notification feed
-  // (§3.2 notification) merged, newest first — there's no "current" server,
-  // so none of them is left out. Dismissing here dismisses for every device
-  // on that server — it echoes notification_dismissed to all its peers.
+  // §3.2 notification: dismissing here dismisses for every device on that
+  // server (echoes notification_dismissed to all its peers).
   import { Popover } from "bits-ui";
   import { app, type ConnectionId } from "../state.svelte";
   import { dismissNotification, openNotificationTarget } from "../ipc";
@@ -18,9 +16,7 @@
       .flatMap((s) => s.notifications.map((n) => ({ ...n, cid: s.connectionId as ConnectionId })))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   );
-  // Every unanswered ask on every server — including other projects' chats
-  // this client never opened (pending_asks, §3.2). Not dismissable: they go
-  // away when answered.
+  // §3.2 pending_asks. Not dismissable: they go away when answered.
   const asks = $derived(
     servers.flatMap((s) => s.pendingAsks.map((a) => ({ ...a, cid: s.connectionId as ConnectionId }))),
   );

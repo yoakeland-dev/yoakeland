@@ -1,12 +1,8 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
 
-  // `live` marks this as the trailing, still-streaming reasoning chunk of a
-  // message with no tool calls at all (a standalone thought). Collapsed by
-  // default either way — thinking stays opt-in to view, live or not — but if
-  // the user has already opened it, a still-growing thought gets the same
-  // blinking-cursor treatment the visible answer text uses while streaming,
-  // instead of just silently updating.
+  // `live`: standalone thought still streaming with no tool calls. Collapsed by default;
+  // if the user already opened it, it gets the same blinking-cursor treatment as answer text.
   let { text, live = false }: { text: string; live?: boolean } = $props();
 
   let open = $state(false);
@@ -37,8 +33,7 @@
     cursor: pointer;
     padding: 0.29rem 0;
   }
-  /* Same cross-fade slot as ToolCallCard/ToolCallGroup: the brain icon sits
-     at rest, the chevron only takes over on hover to signal "expandable". */
+  /* Same cross-fade slot as ToolCallCard/ToolCallGroup: chevron only takes over on hover. */
   .icon-slot {
     position: relative;
     width: 1rem;
@@ -76,10 +71,8 @@
   .thinking-toggle:focus-visible .chevron-icon.open {
     transform: scale(1) rotate(90deg);
   }
-  /* Zero-JS accordion: grid-template-rows animates between 0fr and 1fr, so the
-     row's content (of whatever height) is what gets measured, not a guessed
-     max-height. The inner div needs its own overflow:hidden — a 0fr grid
-     track still lets its content paint past the row without one. */
+  /* Zero-JS accordion: grid-template-rows 0fr/1fr measures real content height instead of a
+     guessed max-height. Inner div needs its own overflow:hidden or a 0fr track still lets content paint past it. */
   .accordion {
     display: grid;
     grid-template-rows: 0fr;

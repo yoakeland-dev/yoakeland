@@ -27,17 +27,14 @@
   // ChatHeader.svelte.
   const win = windowControls;
 
-  // Whichever chat is the rightmost visible surface owns the floating right
-  // island — the linked/side chat when it's actually shown, the main chat
-  // otherwise (including while the side chat is collapsed, since it's then
-  // slid off-screen rather than genuinely visible). Every other chat renders
-  // its own local island instead (ChatPanel.svelte's `.local-island`). Note
-  // this island's two buttons (terminal, chat sidebar) are always about
-  // *whichever chat owns them* — not about the linked-chat/split-view feature
-  // itself, which is a separate thing entirely (ServerState.sidebarSessionId,
-  // opened via a session row's "open in side panel" button, closed via the
-  // linked chat's own header). `linkedVisible` here only decides which chat
-  // is rightmost, nothing about the split-view pairing's own lifecycle.
+  // Whichever chat is rightmost owns the floating right island: the linked
+  // chat when it's actually shown, otherwise the main chat (including while
+  // the side chat is collapsed, since it's then slid off-screen, not
+  // genuinely visible). Every other chat renders its own local island
+  // instead (ChatPanel.svelte's `.local-island`). `linkedVisible` only picks
+  // which chat is rightmost; it says nothing about the split-view pairing's
+  // own lifecycle (that's ServerState.sidebarSessionId, opened/closed from a
+  // session row or the linked chat's own header).
   const linkedVisible = $derived(
     !!app.active?.sidebarSessionId && !app.rightSidebarCollapsed,
   );
@@ -46,7 +43,7 @@
   );
 
   // The corner handle where the right sidebar's own terminal drawer meets
-  // that sidebar's resize handle — bottom-left of the sidebar, once its
+  // that sidebar's resize handle, bottom-left of the sidebar, once its
   // terminal is open. Like VSCode's Panel/Auxiliary-bar corner, dragging it
   // changes both the sidebar's width and the terminal's height at once. Only
   // makes sense when both are actually open; otherwise there's no
@@ -64,8 +61,8 @@
 
   // Mirrors TerminalPanel.svelte's own clamp(min, ratio, 50%) math against
   // its real containing block (this specific ChatPanel's box), so the corner
-  // lands exactly on the two lines it's meant to sit between — no CSS var
-  // plumbing across component boundaries needed for a single handle. The
+  // lands exactly on the two lines it's meant to sit between, so no CSS var
+  // plumbing across component boundaries is needed for a single handle. The
   // sidebar's own left edge doubles as the x position directly: its `.panel`
   // has no left margin, so it's already flush with `.right-slot`'s left
   // edge, which is the same line RightSidebar.svelte's own handle sits on.
@@ -93,7 +90,7 @@
   });
 
   // Catches everything a ratio change doesn't: window resizes, left-sidebar
-  // resizes/collapses — anything that reflows .content-row or the panel
+  // resizes/collapses, anything that reflows .content-row or the panel
   // without touching either ratio.
   $effect(() => {
     if (!contentRowEl || !rightPanelEl) return;
@@ -157,7 +154,7 @@
     };
     media.addEventListener("change", onSchemeChange);
 
-    // Ctrl/Cmd+K opens the command palette from anywhere — except inside a
+    // Ctrl/Cmd+K opens the command palette from anywhere, except inside a
     // terminal, where Ctrl+K belongs to the shell (readline's kill-line).
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "k") return;
@@ -173,9 +170,9 @@
     };
   });
 
-  // There's always a session to show — no empty placeholder screen. Before a
+  // There's always a session to show, no empty placeholder screen. Before a
   // project is picked (or right after switching one, which clears the
-  // current session — see selectProject in ipc.ts) this hands the chat view
+  // current session, see selectProject in ipc.ts) this hands the chat view
   // a fresh session immediately; the composer disables sending until a
   // project is actually bound (PromptInput's projectPath check).
   $effect(() => {
@@ -306,7 +303,7 @@
 
   /* `position: relative` makes this the containing block RightSidebar.svelte
      sizes its `.right-slot`/`.right-sidebar` pair against (both use the same
-     `clamp(min, ratio%, 50%)`) — that's what keeps the right sidebar's width
+     `clamp(min, ratio%, 50%)`), which keeps the right sidebar's width
      proportional in real time to left-sidebar resizes/collapses and window
      resizes alike, with no JS syncing the two. */
   .content-row {
@@ -319,7 +316,7 @@
   }
 
   /* Sits exactly on the line where the terminal's top edge meets the right
-     sidebar's left edge — dragging it changes both ratios at once, same as
+     sidebar's left edge; dragging it changes both ratios at once, same as
      VSCode's Panel/Auxiliary-bar corner. The two lines it affects light up
      via TerminalPanel.svelte's/RightSidebar.svelte's own resize-handle
      styles, both driven off the same app.*Resizing flags this sets. */
@@ -336,7 +333,7 @@
   /* --- Floating window chrome. Both pinned pieces sit at --chrome-inset from the
      window's top, left and right edges (app.css), so those three margins are
      even by construction, and both wear the shared .chrome-surface recipe and
-     its one .chrome-btn rule — so the whole chrome layer follows Settings >
+     its one .chrome-btn rule, so the whole chrome layer follows Settings >
      Appearance > Surfaces as a unit. */
   .sidebar-toggle,
   .right-island {
@@ -366,7 +363,7 @@
     display: block;
   }
 
-  /* Every control that isn't about this chat, in one container — the app toggles
+  /* Every control that isn't about this chat, in one container: the app toggles
      then the window buttons, in that order, so the window buttons stay on the
      outside edge where they're expected. Laid out at exactly --chrome-island-w,
      the width its reserve token is summed from, so a header padding itself clear
@@ -378,7 +375,7 @@
     padding: 0 var(--chrome-pad);
     z-index: var(--z-window-chrome);
     /* bits-ui's Dialog sets `body { pointer-events: none }` while open and only
-       re-enables it on its own overlay/content — this sits outside that, so it
+       re-enables it on its own overlay/content. This sits outside that, so it
        must opt back in itself or become unclickable/undraggable whenever any
        dialog is open. */
     pointer-events: auto;

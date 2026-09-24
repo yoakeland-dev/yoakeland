@@ -6,12 +6,8 @@
   import ToolCallGroup from "./ToolCallGroup.svelte";
   import Icon from "./Icon.svelte";
 
-  // Only used for a run that mixes reasoning with tool calls — a run of pure
-  // tool calls renders as a plain ToolCallGroup instead (AssistantMessage.svelte
-  // only reaches for this wrapper when `steps` actually contains a thought).
-  // `live` marks whether this is the trailing, still-streaming run — needed
-  // because a thought step carries no status of its own to check, unlike a
-  // tool call.
+  // Used only when `steps` contains a thought; pure tool-call runs render as a plain
+  // ToolCallGroup instead. `live` covers a thought step, which carries no status of its own.
   let { steps, live }: { steps: AssistantStep[]; live: boolean } = $props();
 
   let expanded = $state(false);
@@ -21,8 +17,7 @@
   const isRunning = $derived(live || allCalls.some((c) => IN_FLIGHT.has(c.status)));
   const hasError = $derived(allCalls.some((c) => c.status === "error" || c.status === "denied"));
 
-  // Always has at least one thought (that's the only reason this component
-  // is used over a plain ToolCallGroup), so the prefix is unconditional.
+  // Always has at least one thought (the reason this component is used at all), so the prefix is unconditional.
   const brief = $derived(`Thought, then ${briefFor(allCalls, { capitalize: false })}`);
 
   const lastStep = $derived(steps[steps.length - 1]);
@@ -39,18 +34,14 @@
     return summary ? `${label} — ${summary}` : label;
   });
 
-  // Same held-label treatment as ToolCallGroup's header — no persistent
-  // checkmark for "done" (that's the trailing stop's job, once expanded),
-  // just a momentary flash right as something finishes.
+  // Same held-label treatment as ToolCallGroup's header: momentary flash only, no persistent checkmark.
   const held = heldLabel(() => ({
     key: isRunning ? latestKey : "done",
     label: isRunning ? latestLabel : brief,
     hasError,
   }));
 
-  // At rest this is fundamentally a thought — same brain icon ThinkingBlock
-  // uses for a standalone one — rather than showing nothing at all. Flash
-  // and spinner still take over it same as ToolCallGroup's icon slot.
+  // At rest, uses the same brain icon as a standalone ThinkingBlock thought.
 </script>
 
 <div class="group">
@@ -78,7 +69,7 @@
       <div class="body">
         <!-- A list of stops: a thought is its own bordered paragraph (the
              line marks it as reasoning), and a run of tool calls is its own
-             subgroup — the exact same ToolCallGroup a thought-free run
+             subgroup, the exact same ToolCallGroup a thought-free run
              renders at the top level, collapsed to "Ran N commands" until
              opened. Tool calls stay grouped together until a thought (or
              the run ending) breaks them up, same as AssistantMessage.svelte
@@ -122,8 +113,7 @@
     font-family: ui-monospace, monospace;
     text-align: left;
   }
-  /* Same cross-fade slot as ToolCallCard/ToolCallGroup: status icon at rest,
-     chevron only once hovering signals "this expands". */
+  /* Same cross-fade slot as ToolCallCard/ToolCallGroup. */
   .icon-slot {
     position: relative;
     width: 1rem;
@@ -208,9 +198,8 @@
     flex-direction: column;
     gap: 0.43rem;
   }
-  /* ToolCallGroup's own top-level margin is for sitting between other
-     message segments — as one stop among several here, the body's own `gap`
-     already spaces it, so the margin would just double up. */
+  /* ToolCallGroup's own margin is for sitting between message segments; here the body's `gap`
+     already spaces it, so the margin would double up. */
   .body :global(.group) {
     margin: 0;
   }
