@@ -174,6 +174,10 @@
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
     padding: 0.43rem;
     z-index: var(--z-popover);
+    animation: floatIn var(--float-enter-duration) ease-out;
+  }
+  :global(.mode-panel[data-state="closed"]) {
+    animation: floatOut var(--float-exit-duration) ease-in;
   }
   .mode-list {
     display: flex;

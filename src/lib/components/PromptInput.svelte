@@ -1,5 +1,7 @@
 <script lang="ts">
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+  import { scale } from "svelte/transition";
+  import { cubicIn, cubicOut } from "svelte/easing";
   import { app } from "../state.svelte";
   import {
     sendPrompt,
@@ -252,6 +254,19 @@
     if (value && cid) selectProject(cid, value);
   }
 
+  // Only worth switching *between* once there's more than one — with 0 or 1
+  // servers there's nothing to pick, so the plain "add/connect" button stays
+  // (see Sidebar.svelte's own remoteLabel for the same fallback naming).
+  function serverLabel(s: { serverIdentity?: string | null; connectionMode: string }): string {
+    return s.serverIdentity ?? (s.connectionMode === "local" ? "Local" : "Remote");
+  }
+  const serverItems = $derived(
+    Object.entries(app.servers).map(([scid, s]) => ({ value: scid, label: serverLabel(s) })),
+  );
+  function setActiveServer(value: string | undefined) {
+    if (value) app.activeConnectionId = value;
+  }
+
   // While a permission_request is outstanding for this session, the composer
   // morphs into an approval card — the diff, three decisions (reject/allow
   // once/always allow), and the same text box repurposed as an optional
@@ -455,7 +470,11 @@
         ></textarea>
 
         {#if mentionMatches.length > 0}
-          <ul class="mentions">
+          <ul
+            class="mentions"
+            in:scale={{ start: 0.98, duration: 160, easing: cubicOut }}
+            out:scale={{ start: 0.98, duration: 120, easing: cubicIn }}
+          >
             {#each mentionMatches as file, i (file)}
               <li>
                 <button
@@ -578,18 +597,29 @@
         searchPlaceholder="Search projects…"
         triggerClass="fc-pill"
       />
-      <button
-        type="button"
-        class="fc-pill"
-        title={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect to a server"}
-        onclick={() => (app.showConnectModal = true)}
-      >
-        <Icon
-          name={app.connectionMode === "local" ? "computer" : "cloud"}
-          size={12}
+      {#if Object.keys(app.servers).length > 1}
+        <Dropdown
+          items={serverItems}
+          bind:value={() => cid ?? undefined, setActiveServer}
+          placeholder="Select a server…"
+          triggerIcon={app.connectionMode === "local" ? "computer" : "cloud"}
+          triggerTitle="Switch server"
+          triggerClass="fc-pill"
         />
-        {app.connectionMode}
-      </button>
+      {:else}
+        <button
+          type="button"
+          class="fc-pill"
+          title={Object.keys(app.servers).length > 0 ? "Add another server" : "Connect to a server"}
+          onclick={() => (app.showConnectModal = true)}
+        >
+          <Icon
+            name={app.connectionMode === "local" ? "computer" : "cloud"}
+            size={12}
+          />
+          {app.connectionMode}
+        </button>
+      {/if}
     </div>
   </div>
 </div>
@@ -946,6 +976,13 @@
   .stack.morphing textarea {
     transition: height var(--morph) ease;
   }
+  /* Same in/out feel as every bits-ui floating surface (app.css's floatIn/
+     floatOut) — but this one's a plain {#if} block, not bits-ui, so there's
+     no PresenceManager to keep it mounted through a CSS-only exit animation.
+     Svelte's own `scale` transition instead (durations mirror
+     --float-enter/exit-duration's un-multiplied base values — small enough
+     that skipping the --anim-speed hookup here isn't worth its own reactive
+     read of the custom property). */
   .mentions {
     position: absolute;
     bottom: 100%;

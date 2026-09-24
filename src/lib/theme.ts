@@ -102,6 +102,299 @@ export function deriveTheme(accentHex: string, mode: "dark" | "light"): ThemeTok
   };
 }
 
+/** xterm.js's `ITheme` shape — every color it wants is a literal parseable
+ * value, not a `var(--x)` reference, since it does its own contrast/blend
+ * math on them. */
+export interface TerminalColorTheme {
+  background: string;
+  foreground: string;
+  cursor: string;
+  cursorAccent: string;
+  selectionBackground: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+}
+
+/** xterm.js's `theme` option (TerminalView.svelte) needs literal parseable
+ * colors, not `var(--x)` references — it does its own contrast/blend math on
+ * them. Background/foreground/cursor are carried over from the same derived
+ * surface hue as the rest of the UI (deriveTheme above) so the terminal reads
+ * as part of this app rather than a foreign pane; the 16 ANSI slots are a
+ * fixed, independent convention programs already assume specific hues for
+ * (red is red, green is green), so those are one hand-picked palette rather
+ * than hue-derived — tuned for legibility on a dark surface, with the same
+ * treatment reused (roughly) on light. This is what Settings > Appearance >
+ * Terminal's "Use app theme colors" switch selects — the alternative to
+ * picking one of TERMINAL_THEME_PRESETS below. */
+export function deriveTerminalTheme(accentHex: string, mode: "dark" | "light"): TerminalColorTheme {
+  const h = Math.round(hexToHue(accentHex));
+  if (mode === "light") {
+    return {
+      background: `hsl(${h} 20% 100%)`,
+      foreground: `hsl(${h} 20% 9%)`,
+      cursor: accentHex,
+      cursorAccent: `hsl(${h} 20% 100%)`,
+      selectionBackground: `hsla(${h} 30% 10% / 0.15)`,
+      black: "#3f4451",
+      red: "#c91b1b",
+      green: "#4b8b13",
+      yellow: "#b5890c",
+      blue: "#1c6ecf",
+      magenta: "#a626a4",
+      cyan: "#0184bc",
+      white: "#a0a1a7",
+      brightBlack: "#696c77",
+      brightRed: "#e05561",
+      brightGreen: "#5eb95e",
+      brightYellow: "#d2a02a",
+      brightBlue: "#4aa5f0",
+      brightMagenta: "#c162de",
+      brightCyan: "#00acc1",
+      brightWhite: "#1c1e26",
+    };
+  }
+  return {
+    background: `hsl(${h} 12% 7%)`,
+    foreground: `hsl(${h} 10% 92%)`,
+    cursor: accentHex,
+    cursorAccent: `hsl(${h} 12% 7%)`,
+    selectionBackground: `hsla(${h} 20% 95% / 0.18)`,
+    black: "#3b3f4c",
+    red: "#e06c75",
+    green: "#98c379",
+    yellow: "#e5c07b",
+    blue: "#61afef",
+    magenta: "#c678dd",
+    cyan: "#56b6c2",
+    white: "#c9ccd6",
+    brightBlack: "#5c6370",
+    brightRed: "#e88a93",
+    brightGreen: "#addb8f",
+    brightYellow: "#f0d090",
+    brightBlue: "#7cc4f3",
+    brightMagenta: "#d493e6",
+    brightCyan: "#7fd3de",
+    brightWhite: "#f2f3f7",
+  };
+}
+
+/** Fixed, named terminal color schemes — the alternative to
+ * deriveTerminalTheme's "generate from the app's own accent" mode. Standard,
+ * widely-published palettes (each already ubiquitous across terminal
+ * emulators/editors), not invented here — kept verbatim so a program that
+ * assumes e.g. Dracula's specific reds/greens still looks right. */
+export interface TerminalThemePreset {
+  id: string;
+  name: string;
+  colors: TerminalColorTheme;
+}
+
+export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
+  {
+    id: "dracula",
+    name: "Dracula",
+    colors: {
+      background: "#282a36",
+      foreground: "#f8f8f2",
+      cursor: "#f8f8f2",
+      cursorAccent: "#282a36",
+      selectionBackground: "#44475a",
+      black: "#21222c",
+      red: "#ff5555",
+      green: "#50fa7b",
+      yellow: "#f1fa8c",
+      blue: "#bd93f9",
+      magenta: "#ff79c6",
+      cyan: "#8be9fd",
+      white: "#f8f8f2",
+      brightBlack: "#6272a4",
+      brightRed: "#ff6e6e",
+      brightGreen: "#69ff94",
+      brightYellow: "#ffffa5",
+      brightBlue: "#d6acff",
+      brightMagenta: "#ff92df",
+      brightCyan: "#a4ffff",
+      brightWhite: "#ffffff",
+    },
+  },
+  {
+    id: "nord",
+    name: "Nord",
+    colors: {
+      background: "#2e3440",
+      foreground: "#d8dee9",
+      cursor: "#d8dee9",
+      cursorAccent: "#2e3440",
+      selectionBackground: "#434c5e",
+      black: "#3b4252",
+      red: "#bf616a",
+      green: "#a3be8c",
+      yellow: "#ebcb8b",
+      blue: "#81a1c1",
+      magenta: "#b48ead",
+      cyan: "#88c0d0",
+      white: "#e5e9f0",
+      brightBlack: "#4c566a",
+      brightRed: "#bf616a",
+      brightGreen: "#a3be8c",
+      brightYellow: "#ebcb8b",
+      brightBlue: "#81a1c1",
+      brightMagenta: "#b48ead",
+      brightCyan: "#8fbcbb",
+      brightWhite: "#eceff4",
+    },
+  },
+  {
+    id: "one-dark",
+    name: "One Dark",
+    colors: {
+      background: "#282c34",
+      foreground: "#abb2bf",
+      cursor: "#528bff",
+      cursorAccent: "#282c34",
+      selectionBackground: "#3e4451",
+      black: "#282c34",
+      red: "#e06c75",
+      green: "#98c379",
+      yellow: "#e5c07b",
+      blue: "#61afef",
+      magenta: "#c678dd",
+      cyan: "#56b6c2",
+      white: "#abb2bf",
+      brightBlack: "#5c6370",
+      brightRed: "#e06c75",
+      brightGreen: "#98c379",
+      brightYellow: "#e5c07b",
+      brightBlue: "#61afef",
+      brightMagenta: "#c678dd",
+      brightCyan: "#56b6c2",
+      brightWhite: "#ffffff",
+    },
+  },
+  {
+    id: "gruvbox-dark",
+    name: "Gruvbox Dark",
+    colors: {
+      background: "#282828",
+      foreground: "#ebdbb2",
+      cursor: "#ebdbb2",
+      cursorAccent: "#282828",
+      selectionBackground: "#504945",
+      black: "#282828",
+      red: "#cc241d",
+      green: "#98971a",
+      yellow: "#d79921",
+      blue: "#458588",
+      magenta: "#b16286",
+      cyan: "#689d6a",
+      white: "#a89984",
+      brightBlack: "#928374",
+      brightRed: "#fb4934",
+      brightGreen: "#b8bb26",
+      brightYellow: "#fabd2f",
+      brightBlue: "#83a598",
+      brightMagenta: "#d3869b",
+      brightCyan: "#8ec07c",
+      brightWhite: "#ebdbb2",
+    },
+  },
+  {
+    id: "monokai",
+    name: "Monokai",
+    colors: {
+      background: "#272822",
+      foreground: "#f8f8f2",
+      cursor: "#f8f8f0",
+      cursorAccent: "#272822",
+      selectionBackground: "#49483e",
+      black: "#272822",
+      red: "#f92672",
+      green: "#a6e22e",
+      yellow: "#f4bf75",
+      blue: "#66d9ef",
+      magenta: "#ae81ff",
+      cyan: "#a1efe4",
+      white: "#f8f8f2",
+      brightBlack: "#75715e",
+      brightRed: "#f92672",
+      brightGreen: "#a6e22e",
+      brightYellow: "#f4bf75",
+      brightBlue: "#66d9ef",
+      brightMagenta: "#ae81ff",
+      brightCyan: "#a1efe4",
+      brightWhite: "#f9f8f5",
+    },
+  },
+  {
+    id: "solarized-dark",
+    name: "Solarized Dark",
+    colors: {
+      background: "#002b36",
+      foreground: "#839496",
+      cursor: "#839496",
+      cursorAccent: "#002b36",
+      selectionBackground: "#073642",
+      black: "#073642",
+      red: "#dc322f",
+      green: "#859900",
+      yellow: "#b58900",
+      blue: "#268bd2",
+      magenta: "#d33682",
+      cyan: "#2aa198",
+      white: "#eee8d5",
+      brightBlack: "#002b36",
+      brightRed: "#cb4b16",
+      brightGreen: "#586e75",
+      brightYellow: "#657b83",
+      brightBlue: "#839496",
+      brightMagenta: "#6c71c4",
+      brightCyan: "#93a1a1",
+      brightWhite: "#fdf6e3",
+    },
+  },
+  {
+    id: "solarized-light",
+    name: "Solarized Light",
+    colors: {
+      background: "#fdf6e3",
+      foreground: "#657b83",
+      cursor: "#657b83",
+      cursorAccent: "#fdf6e3",
+      selectionBackground: "#eee8d5",
+      black: "#073642",
+      red: "#dc322f",
+      green: "#859900",
+      yellow: "#b58900",
+      blue: "#268bd2",
+      magenta: "#d33682",
+      cyan: "#2aa198",
+      white: "#eee8d5",
+      brightBlack: "#002b36",
+      brightRed: "#cb4b16",
+      brightGreen: "#586e75",
+      brightYellow: "#657b83",
+      brightBlue: "#839496",
+      brightMagenta: "#6c71c4",
+      brightCyan: "#93a1a1",
+      brightWhite: "#fdf6e3",
+    },
+  },
+];
+
 /** The hue slider under the color-wheel swatch: fixed saturation/lightness so
  * the whole ring stays equally vivid, only the hue moves. */
 export function hslToHex(h: number, s: number, l: number): string {

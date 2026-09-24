@@ -5,6 +5,7 @@ import type { ChatMode, Envelope } from "./types";
 import { app, ServerState, type ConnectionId } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
 import { isDesktop } from "./platform";
+import { bytesToBase64 } from "./base64";
 
 let wired = false;
 
@@ -226,7 +227,10 @@ function afterConnect(connectionId: ConnectionId) {
   // Reconcile whatever session was open (restored from the local cache
   // before this connection existed) against the server's own history, so a
   // reconnect after being offline picks up anything that changed meanwhile.
-  if (server.currentSessionId) getSessionHistory(connectionId, server.currentSessionId);
+  if (server.currentSessionId) {
+    getSessionHistory(connectionId, server.currentSessionId);
+    listTerminals(connectionId, server.currentSessionId);
+  }
 }
 
 /** Self-reported identity sent on the opt-in `auth` frame (§2a) — same shape
@@ -539,6 +543,7 @@ export function openChatSession(connectionId: ConnectionId, sessionId: string) {
   if (server.connectionStatus === "connected") {
     getSessionHistory(connectionId, sessionId);
     reassertSessionSettings(connectionId, sessionId);
+    listTerminals(connectionId, sessionId);
   }
 }
 
@@ -556,6 +561,7 @@ export function navigateSessionHistory(connectionId: ConnectionId, direction: "b
   if (server.connectionStatus === "connected") {
     getSessionHistory(connectionId, target);
     reassertSessionSettings(connectionId, target);
+    listTerminals(connectionId, target);
   }
 }
 
@@ -672,6 +678,7 @@ export function openInSidePanel(connectionId: ConnectionId, sessionId: string) {
   if (server.connectionStatus === "connected") {
     getSessionHistory(connectionId, sessionId);
     reassertSessionSettings(connectionId, sessionId);
+    listTerminals(connectionId, sessionId);
   }
 }
 
@@ -956,4 +963,81 @@ export function listTokens(connectionId: ConnectionId) {
 
 export function removeToken(connectionId: ConnectionId, name: string) {
   void send(connectionId, { type: "remove_token", data: { name } });
+}
+
+// ---- Built-in terminal (SPEC.md §3.1/§3.2 terminal_*) ----
+
+/** Starts a brand-new shell bound to `sessionId`. `terminalId` is always
+ * client-chosen (state.svelte.ts's registerTerminalTab mints it) — never
+ * server-allocated, so the tab can render immediately instead of waiting on
+ * a round trip. */
+export function terminalOpen(
+  connectionId: ConnectionId,
+  sessionId: string,
+  terminalId: string,
+  opts: { cwd?: string; cols: number; rows: number },
+) {
+  const server = app.servers[connectionId];
+  const projectPath = server?.projectBySession[sessionId];
+  void send(connectionId, {
+    type: "terminal_open",
+    sessionId,
+    data: { sessionId, projectPath, terminalId, cwd: opts.cwd, cols: opts.cols, rows: opts.rows },
+  });
+}
+
+/** Subscribes this connection to a terminal that may already be running —
+ * opened earlier by this client or another tab/device/peer with this chat
+ * open (§3.1). `restartIfExited` is the "reopen this closed tab" action. */
+export function terminalAttach(
+  connectionId: ConnectionId,
+  sessionId: string,
+  terminalId: string,
+  cols: number,
+  rows: number,
+  restartIfExited = false,
+) {
+  void send(connectionId, {
+    type: "terminal_attach",
+    sessionId,
+    data: { sessionId, terminalId, cols, rows, restartIfExited },
+  });
+}
+
+/** Raw pty input — base64, not a plain JSON string, since terminal I/O isn't
+ * guaranteed to be valid UTF-8 (§3.1). */
+export function terminalInput(connectionId: ConnectionId, sessionId: string, terminalId: string, bytes: Uint8Array) {
+  void send(connectionId, {
+    type: "terminal_input",
+    sessionId,
+    data: { sessionId, terminalId, data: bytesToBase64(bytes) },
+  });
+}
+
+/** A pane being resized / a split ratio changing — sends SIGWINCH server-side,
+ * no response (§3.1). */
+export function terminalResize(
+  connectionId: ConnectionId,
+  sessionId: string,
+  terminalId: string,
+  cols: number,
+  rows: number,
+) {
+  void send(connectionId, { type: "terminal_resize", sessionId, data: { sessionId, terminalId, cols, rows } });
+}
+
+/** Kills the shell and drops the tab for good — unlike the shell exiting on
+ * its own, this isn't reopenable via terminal_attach (§3.1). No optimistic
+ * local removal, same precedent as deleteSession: wait for the server's
+ * terminal_closed (state.svelte.ts). */
+export function terminalClose(connectionId: ConnectionId, sessionId: string, terminalId: string) {
+  void send(connectionId, { type: "terminal_close", sessionId, data: { sessionId, terminalId } });
+}
+
+/** Enumerates every open tab in one chat (§3.1) — call whenever that chat is
+ * opened (openChatSession/openInSidePanel below), not once globally, so the
+ * tab strip/status icons are populated (and stay current) even before the
+ * terminal drawer itself is opened. */
+export function listTerminals(connectionId: ConnectionId, sessionId: string) {
+  void send(connectionId, { type: "list_terminals", sessionId, data: { sessionId } });
 }

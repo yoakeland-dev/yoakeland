@@ -23,7 +23,7 @@
     removeToken,
     removeProject,
   } from "../ipc";
-  import { extractAccentFromImage, hexToHue, hslToHex, deriveTheme } from "../theme";
+  import { extractAccentFromImage, hexToHue, hslToHex, deriveTheme, TERMINAL_THEME_PRESETS } from "../theme";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
   import type { ProviderInfo } from "../types";
   import Icon from "./Icon.svelte";
@@ -601,6 +601,80 @@
               <input type="number" min="1" max="365" bind:value={app.settings.autoArchiveDays} onchange={apply} />
             </div>
           </section>
+
+          <section class="settings-section">
+            <h3 class="section-heading">Terminal</h3>
+
+            <div class="field">
+              <span class="label">Horizontal margin ({app.settings.terminalMarginX}px)</span>
+              <input type="range" min="0" max="40" step="1" bind:value={app.settings.terminalMarginX} oninput={apply} />
+            </div>
+            <div class="field">
+              <span class="label">Vertical margin ({app.settings.terminalMarginY}px)</span>
+              <input type="range" min="0" max="40" step="1" bind:value={app.settings.terminalMarginY} oninput={apply} />
+            </div>
+
+            <div class="field">
+              <div class="setting-row">
+                <div class="setting-text">
+                  <span class="label">Use app theme colors</span>
+                  <p class="hint">Colors the terminal from the accent/mode above instead of a fixed preset.</p>
+                </div>
+                <label class="switch-row">
+                  <Switch.Root
+                    class="switch-root"
+                    checked={app.settings.terminalUseAppTheme}
+                    onCheckedChange={(checked) => ((app.settings.terminalUseAppTheme = checked), apply())}
+                  >
+                    <Switch.Thumb class="switch-thumb" />
+                  </Switch.Root>
+                </label>
+              </div>
+              <div class="setting-row" class:disabled-row={app.settings.terminalUseAppTheme}>
+                <div class="setting-text">
+                  <span class="label">Color theme</span>
+                  <p class="hint">Used when "Use app theme colors" is off.</p>
+                </div>
+                <Dropdown
+                  items={TERMINAL_THEME_PRESETS.map((p) => ({ value: p.id, label: p.name }))}
+                  bind:value={
+                    () => app.settings.terminalColorTheme,
+                    (v) => ((app.settings.terminalColorTheme = v), apply())
+                  }
+                  contentClass="above-modal"
+                >
+                  {#snippet item({ value, label, selected })}
+                    {@const preset = TERMINAL_THEME_PRESETS.find((p) => p.id === value)}
+                    <span class="term-theme-swatch" style="background: {preset?.colors.background}">
+                      <span style="background: {preset?.colors.red}"></span>
+                      <span style="background: {preset?.colors.green}"></span>
+                      <span style="background: {preset?.colors.blue}"></span>
+                    </span>
+                    <span class="dropdown-item-label">{label}</span>
+                    {#if selected}<Icon name="check" size={11} />{/if}
+                  {/snippet}
+                </Dropdown>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="setting-row">
+                <div class="setting-text">
+                  <span class="label">Smooth scrolling</span>
+                  <p class="hint">Eases scroll-wheel movement instead of jumping a line at a time.</p>
+                </div>
+                <label class="switch-row">
+                  <Switch.Root
+                    class="switch-root"
+                    checked={app.settings.terminalSmoothScroll}
+                    onCheckedChange={(checked) => ((app.settings.terminalSmoothScroll = checked), apply())}
+                  >
+                    <Switch.Thumb class="switch-thumb" />
+                  </Switch.Root>
+                </label>
+              </div>
+            </div>
+          </section>
           </div>
         </Tabs.Content>
 
@@ -989,7 +1063,10 @@
     inset: 0;
     background: rgba(6, 7, 11, 0.5);
     z-index: var(--z-overlay-backdrop);
-    animation: settingsFade calc(0.15s * var(--anim-speed, 1)) ease;
+    animation: scrimIn var(--dialog-enter-duration) ease-out;
+  }
+  :global(.settings-overlay[data-state="closed"]) {
+    animation: scrimOut var(--dialog-exit-duration) ease-in;
   }
   :global(.content) {
     position: fixed;
@@ -1013,19 +1090,16 @@
     padding: var(--space-2);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
     z-index: var(--z-overlay-content);
-    animation: settingsIn calc(0.18s * var(--anim-speed, 1)) ease;
+    animation: dialogIn var(--dialog-enter-duration) ease-out;
+  }
+  :global(.content[data-state="closed"]) {
+    animation: dialogOut var(--dialog-exit-duration) ease-in;
   }
   /* Dropdown.svelte's popover is portalled to <body>, but its own z-index
      (--z-dropdown) sits below this modal's (--z-overlay-content) — bump it
      above so it isn't rendered behind the settings panel. */
   :global(.above-modal) {
     z-index: var(--z-context-menu);
-  }
-  @keyframes settingsFade {
-    from { opacity: 0; }
-  }
-  @keyframes settingsIn {
-    from { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
   }
   .head {
     display: flex;
@@ -1355,6 +1429,34 @@
     flex-direction: column;
     gap: 0.21rem;
     min-width: 0;
+  }
+  /* "Use app theme colors" ON makes the preset dropdown below it moot —
+     dimmed and inert rather than removed, so the row stays put and the
+     picked preset doesn't disappear from view (it's still there for when
+     the switch goes back off). */
+  .disabled-row {
+    opacity: 0.45;
+    pointer-events: none;
+  }
+  /* The color-theme dropdown's per-item preview (Terminal section) — three
+     small dots (red/green/blue, the ANSI slots most recognizable at a
+     glance) over the preset's own background, not a full swatch, so it
+     reads at list-item size without needing its own legend. */
+  .term-theme-swatch {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.14rem;
+    width: 1.57rem;
+    height: 1.14rem;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .term-theme-swatch span {
+    width: 0.29rem;
+    height: 0.29rem;
+    border-radius: 50%;
   }
   .wallpaper-setting-controls {
     flex-shrink: 0;

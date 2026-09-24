@@ -538,13 +538,10 @@
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
     padding: 0.57rem;
     z-index: var(--z-popover);
-    animation: pickerIn calc(0.16s * var(--anim-speed, 1)) ease;
+    animation: floatIn var(--float-enter-duration) ease-out;
   }
-  @keyframes pickerIn {
-    from {
-      opacity: 0;
-      transform: translateY(0.29rem) scale(0.98);
-    }
+  :global(.picker-panel[data-state="closed"]) {
+    animation: floatOut var(--float-exit-duration) ease-in;
   }
   .picker-body {
     display: flex;

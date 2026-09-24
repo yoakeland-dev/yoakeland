@@ -1,14 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { app } from "$lib/state.svelte";
+  import { app, RIGHT_SIDEBAR_MIN_WIDTH, TERMINAL_MIN_HEIGHT } from "$lib/state.svelte";
   import { isDesktop } from "$lib/platform";
   import { wireEvents, autoConnect } from "$lib/ipc";
   import ConnectScreen from "$lib/components/ConnectScreen.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import RightSidebar from "$lib/components/RightSidebar.svelte";
-  import TerminalPanel from "$lib/components/TerminalPanel.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import DirectoryBrowser from "$lib/components/DirectoryBrowser.svelte";
@@ -27,6 +26,119 @@
   // belongs to the chat panel rather than the window, so it lives in
   // ChatHeader.svelte.
   const win = isDesktop ? getCurrentWindow() : null;
+
+  // Whichever chat is the rightmost visible surface owns the floating right
+  // island — the linked/side chat when it's actually shown, the main chat
+  // otherwise (including while the side chat is collapsed, since it's then
+  // slid off-screen rather than genuinely visible). Every other chat renders
+  // its own local island instead (ChatPanel.svelte's `.local-island`). Note
+  // this island's two buttons (terminal, chat sidebar) are always about
+  // *whichever chat owns them* — not about the linked-chat/split-view feature
+  // itself, which is a separate thing entirely (ServerState.sidebarSessionId,
+  // opened via a session row's "open in side panel" button, closed via the
+  // linked chat's own header). `linkedVisible` here only decides which chat
+  // is rightmost, nothing about the split-view pairing's own lifecycle.
+  const linkedVisible = $derived(
+    !!app.active?.sidebarSessionId && !app.rightSidebarCollapsed,
+  );
+  const chromeSessionId = $derived(
+    linkedVisible ? app.active!.sidebarSessionId! : app.active?.currentSessionId,
+  );
+
+  // The corner handle where the right sidebar's own terminal drawer meets
+  // that sidebar's resize handle — bottom-left of the sidebar, once its
+  // terminal is open. Like VSCode's Panel/Auxiliary-bar corner, dragging it
+  // changes both the sidebar's width and the terminal's height at once. Only
+  // makes sense when both are actually open; otherwise there's no
+  // intersection to grab.
+  let rightPanelEl = $state<HTMLElement | null>(null);
+  let contentRowEl = $state<HTMLDivElement | null>(null);
+  let cornerDragging = $state(false);
+  let cornerPos = $state({ top: 0, left: 0 });
+
+  const cornerVisible = $derived(
+    linkedVisible &&
+      !!app.active?.sidebarSessionId &&
+      !!app.active.terminalOpenBySession[app.active.sidebarSessionId],
+  );
+
+  // Mirrors TerminalPanel.svelte's own clamp(min, ratio, 50%) math against
+  // its real containing block (this specific ChatPanel's box), so the corner
+  // lands exactly on the two lines it's meant to sit between — no CSS var
+  // plumbing across component boundaries needed for a single handle. The
+  // sidebar's own left edge doubles as the x position directly: its `.panel`
+  // has no left margin, so it's already flush with `.right-slot`'s left
+  // edge, which is the same line RightSidebar.svelte's own handle sits on.
+  function measureCorner() {
+    if (!rightPanelEl || !contentRowEl) return;
+    const panelRect = rightPanelEl.getBoundingClientRect();
+    const rowRect = contentRowEl.getBoundingClientRect();
+    const termHeight = Math.min(
+      panelRect.height * 0.5,
+      Math.max(TERMINAL_MIN_HEIGHT, app.terminalHeightRatio * panelRect.height),
+    );
+    cornerPos = {
+      left: panelRect.left - rowRect.left,
+      top: panelRect.top - rowRect.top + panelRect.height - termHeight,
+    };
+  }
+
+  // Live-updates while either ratio changes (dragging either panel's own
+  // handle, or this corner's).
+  $effect(() => {
+    app.terminalHeightRatio;
+    app.rightSidebarRatio;
+    cornerVisible;
+    measureCorner();
+  });
+
+  // Catches everything a ratio change doesn't: window resizes, left-sidebar
+  // resizes/collapses — anything that reflows .content-row or the panel
+  // without touching either ratio.
+  $effect(() => {
+    if (!contentRowEl || !rightPanelEl) return;
+    const ro = new ResizeObserver(measureCorner);
+    ro.observe(contentRowEl);
+    ro.observe(rightPanelEl);
+    return () => ro.disconnect();
+  });
+
+  function startCornerResize(e: PointerEvent) {
+    cornerDragging = true;
+    app.rightSidebarResizing = true;
+    app.terminalResizing = true;
+    document.body.style.cursor = "nwse-resize";
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function onCornerResize(e: PointerEvent) {
+    if (!cornerDragging || !rightPanelEl || !contentRowEl) return;
+    const rowRect = contentRowEl.getBoundingClientRect();
+    const fromRight = Math.min(rowRect.width * 0.5, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, rowRect.right - e.clientX));
+    app.rightSidebarRatio = Math.min(0.5, Math.max(0, fromRight / rowRect.width));
+
+    const panelRect = rightPanelEl.getBoundingClientRect();
+    const fromBottom = Math.min(panelRect.height * 0.5, Math.max(TERMINAL_MIN_HEIGHT, panelRect.bottom - e.clientY));
+    app.terminalHeightRatio = Math.min(0.5, Math.max(0, fromBottom / panelRect.height));
+  }
+  function stopCornerResize() {
+    if (!cornerDragging) return;
+    cornerDragging = false;
+    app.rightSidebarResizing = false;
+    app.terminalResizing = false;
+    document.body.style.cursor = "";
+    app.setRightSidebarRatio(app.rightSidebarRatio);
+    app.setTerminalHeightRatio(app.terminalHeightRatio);
+  }
+  function cornerHoverStart() {
+    if (cornerDragging) return;
+    app.rightSidebarResizing = true;
+    app.terminalResizing = true;
+  }
+  function cornerHoverEnd() {
+    if (cornerDragging) return;
+    app.rightSidebarResizing = false;
+    app.terminalResizing = false;
+  }
 
   // Lets app.css pick the right --chrome-island-w / --chrome-reserve: the window
   // buttons join the right island only in the Tauri shell, and no media query can
@@ -82,26 +194,27 @@
   </button>
   {#if app.active?.currentSessionId || win}
     <div class="chrome-surface right-island" data-tauri-drag-region>
-      {#if app.active?.currentSessionId}
+      {#if chromeSessionId}
         <button
           class="chrome-btn"
-          class:active={app.terminalOpen}
-          title={app.terminalOpen ? "Hide terminal" : "Show terminal"}
-          aria-label={app.terminalOpen ? "Hide terminal" : "Show terminal"}
-          onclick={() => app.toggleTerminal()}
+          class:active={app.active?.terminalOpenBySession[chromeSessionId]}
+          title={app.active?.terminalOpenBySession[chromeSessionId] ? "Hide terminal" : "Show terminal"}
+          aria-label={app.active?.terminalOpenBySession[chromeSessionId] ? "Hide terminal" : "Show terminal"}
+          onclick={() => app.active?.toggleTerminal(chromeSessionId)}
         >
           <Icon name="terminal-2" size={14} />
         </button>
         <button
           class="chrome-btn"
-          title={app.rightSidebarCollapsed ? "Show panel" : "Hide panel"}
-          aria-label={app.rightSidebarCollapsed ? "Show panel" : "Hide panel"}
-          onclick={() => app.toggleRightSidebar()}
+          class:active={app.active?.chatSidebarOpenBySession[chromeSessionId]}
+          title={app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide sidebar" : "Show sidebar"}
+          aria-label={app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide sidebar" : "Show sidebar"}
+          onclick={() => app.active?.toggleChatSidebar(chromeSessionId)}
         >
           <Icon
-            name={app.rightSidebarCollapsed
-              ? "sidebar-right-expand"
-              : "sidebar-right-collapse"}
+            name={app.active?.chatSidebarOpenBySession[chromeSessionId]
+              ? "sidebar-right-collapse"
+              : "sidebar-right-expand"}
             size={14}
           />
         </button>
@@ -131,16 +244,29 @@
   {/if}
   <div class="main">
     <Sidebar />
-    <div class="content-col">
-      <div class="content-row">
-        {#if app.active?.currentSessionId}
-          <ChatPanel sessionId={app.active.currentSessionId} />
-        {:else if !app.active}
-          <FirstServerPanel />
-        {/if}
-        <RightSidebar />
-      </div>
-      <TerminalPanel />
+    <div class="content-row" bind:this={contentRowEl}>
+      {#if app.active?.currentSessionId}
+        <ChatPanel
+          sessionId={app.active.currentSessionId}
+          ownsChrome={!linkedVisible}
+        />
+      {:else if !app.active}
+        <FirstServerPanel />
+      {/if}
+      <RightSidebar bind:panelEl={rightPanelEl} />
+      {#if cornerVisible}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="corner-resize-handle"
+          style="top: {cornerPos.top}px; left: {cornerPos.left}px;"
+          onpointerdown={startCornerResize}
+          onpointermove={onCornerResize}
+          onpointerup={stopCornerResize}
+          onpointercancel={stopCornerResize}
+          onpointerenter={cornerHoverStart}
+          onpointerleave={cornerHoverEnd}
+        ></div>
+      {/if}
     </div>
   </div>
   <StatusBar />
@@ -166,17 +292,6 @@
     overflow-x: hidden;
   }
 
-  /* Everything to the right of the (fixed) left sidebar — the chat area, the
-     right sidebar, and the terminal drawer all live in this column, so
-     opening the terminal shrinks only this area instead of the left sidebar
-     too. */
-  .content-col {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-  }
   /* `position: relative` makes this the containing block RightSidebar.svelte
      sizes its `.right-slot`/`.right-sidebar` pair against (both use the same
      `clamp(min, ratio%, 50%)`) — that's what keeps the right sidebar's width
@@ -189,6 +304,21 @@
     min-width: 0;
     min-height: 0;
     overflow-x: hidden;
+  }
+
+  /* Sits exactly on the line where the terminal's top edge meets the right
+     sidebar's left edge — dragging it changes both ratios at once, same as
+     VSCode's Panel/Auxiliary-bar corner. The two lines it affects light up
+     via TerminalPanel.svelte's/RightSidebar.svelte's own resize-handle
+     styles, both driven off the same app.*Resizing flags this sets. */
+  .corner-resize-handle {
+    position: absolute;
+    width: 0.86rem;
+    height: 0.86rem;
+    transform: translate(-50%, -50%);
+    cursor: nwse-resize;
+    touch-action: none;
+    z-index: 6;
   }
 
   /* --- Floating window chrome. Both pinned pieces sit at --chrome-inset from the
@@ -251,10 +381,6 @@
        must opt back in itself or become unclickable/undraggable whenever any
        dialog is open. */
     pointer-events: auto;
-  }
-
-  .right-island .chrome-btn.active {
-    color: var(--accent);
   }
 
   .right-island .chrome-btn.window-close:hover {

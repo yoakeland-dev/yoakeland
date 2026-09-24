@@ -94,6 +94,10 @@
     inset: 0;
     background: rgba(6, 7, 11, 0.5);
     z-index: var(--z-overlay-backdrop);
+    animation: scrimIn var(--dialog-enter-duration) ease-out;
+  }
+  :global(.browser-overlay[data-state="closed"]) {
+    animation: scrimOut var(--dialog-exit-duration) ease-in;
   }
   :global(.browser-content) {
     position: fixed;
@@ -114,6 +118,10 @@
     padding: var(--space-2);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
     z-index: var(--z-overlay-content);
+    animation: dialogIn var(--dialog-enter-duration) ease-out;
+  }
+  :global(.browser-content[data-state="closed"]) {
+    animation: dialogOut var(--dialog-exit-duration) ease-in;
   }
   .head {
     display: flex;

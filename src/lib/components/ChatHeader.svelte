@@ -10,9 +10,15 @@
   //                     is collapsed and only for the top-left header. (The
   //                     chat island is *in* this header's flow, so it moves
   //                     with the padding rather than needing to be dodged.)
-  //   `reserveChrome` — the right island (terminal, right panel and, on
-  //                     desktop, the window buttons) for whichever header is
-  //                     the rightmost surface at the time.
+  // `ownsChrome` — whether *this* chat currently owns the floating right
+  // island (terminal, chat sidebar and, on desktop, the window buttons) —
+  // true for whichever chat is the rightmost visible surface. When true, this
+  // header pads itself clear of the island the same way `reserveToggle` pads
+  // clear of the sidebar toggle. When false, the island belongs to some other
+  // (rightmost) chat instead, so ChatPanel.svelte renders this chat its own
+  // local island (same chrome-surface look, own corner) instead of relying on
+  // chrome it doesn't own — see +page.svelte and ChatPanel.svelte for how the
+  // two chat panels divide ownership of the one *window* island between them.
   // `draggable` marks the headers that touch the window's top edge — the only
   // ones that should move the window when dragged. `sidePanel` swaps the
   // panel toggle for a close button (clears the right sidebar's chat instead
@@ -25,14 +31,14 @@
     sessionId,
     draggable = true,
     reserveToggle = false,
-    reserveChrome = false,
+    ownsChrome = true,
     sidePanel = false,
     overlay = false,
   }: {
     sessionId: string;
     draggable?: boolean;
     reserveToggle?: boolean;
-    reserveChrome?: boolean;
+    ownsChrome?: boolean;
     sidePanel?: boolean;
     overlay?: boolean;
   } = $props();
@@ -113,10 +119,10 @@
      attribute is *present*, and `false` on a data-attribute renders as the
      string "false" — which would make every tile drag the window. -->
 <header
-  class="header"
+  class="header reserve-chrome"
   class:reserve-toggle={reserveToggle}
-  class:reserve-chrome={reserveChrome}
   class:overlay
+  style={`--header-chrome-reserve: var(${ownsChrome ? "--chrome-reserve" : "--local-island-reserve"})`}
   data-tauri-drag-region={draggable || undefined}
 >
   <div class="left">
@@ -190,26 +196,6 @@
         >${(lastFinish.spend.sessionTotalUsd ?? 0).toFixed(2)} session</span
       >
     {/if}
-    {#if sidePanel}
-      {#if project}
-        <button
-          class="icon-btn"
-          title="Snapshots"
-          onclick={() => {
-            if (server) server.showSnapshots = true;
-          }}
-        >
-          <Icon name="history" size={14} />
-        </button>
-      {/if}
-      <button
-        class="icon-btn"
-        title="Close side panel"
-        onclick={() => server?.closeSidePanel()}
-      >
-        <Icon name="xmark" size={14} />
-      </button>
-    {/if}
   </div>
 </header>
 
@@ -275,8 +261,12 @@
   .header.reserve-toggle {
     padding-left: var(--toggle-reserve-in-panel);
   }
+  /* Always reserved now — this header pads clear of whichever island
+     overlaps it, the real window-corner one when `ownsChrome`, or this
+     chat's own local one (ChatPanel.svelte) when it doesn't. The template
+     sets --header-chrome-reserve to pick which width applies. */
   .header.reserve-chrome {
-    padding-right: var(--chrome-reserve);
+    padding-right: var(--header-chrome-reserve);
   }
   .left {
     display: flex;
@@ -376,25 +366,5 @@
     font-size: var(--text-heading-size);
     color: var(--text-dim);
     white-space: nowrap;
-  }
-  .icon-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--header-line);
-    height: var(--header-line);
-    background: none;
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-sm);
-    color: var(--text-dim);
-    cursor: pointer;
-    transition:
-      color calc(0.12s * var(--anim-speed, 1)) ease,
-      background calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  .icon-btn:hover {
-    color: var(--text);
-    background: var(--sidebar-hover);
   }
 </style>

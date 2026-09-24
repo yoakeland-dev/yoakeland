@@ -242,6 +242,10 @@
     padding: var(--space-half);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     z-index: var(--z-dropdown);
+    animation: floatIn var(--float-enter-duration) ease-out;
+  }
+  :global(.dropdown-content[data-state="closed"]) {
+    animation: floatOut var(--float-exit-duration) ease-in;
   }
   :global(.dropdown-search) {
     display: flex;

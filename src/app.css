@@ -129,6 +129,13 @@
      panel's own hairline cancels out of it — it pushes that content line down by
      the same pixel it adds above the card. */
   --chrome-inset: calc(var(--chat-margin) + var(--header-pad-y) - var(--chrome-pad));
+  /* The same inset for a chrome card positioned against a *panel's* own box
+     instead of the window's — e.g. a chat's own island when it doesn't own
+     the real window-corner one (ChatPanel.svelte). Same reasoning as
+     --toggle-reserve-in-panel below: subtract the window-to-panel gap
+     (--chat-margin) and the panel's own hairline that --chrome-inset already
+     folds in for the window-relative case. */
+  --chrome-inset-in-panel: calc(var(--chrome-inset) - var(--chat-margin) - 1px);
   /* The toggle is a lone button, so it's square at the chrome height — same band
      as the islands, no wider than it needs to be. */
   --toggle-w: var(--chrome-h);
@@ -150,6 +157,14 @@
      hairline), plus breathing room. Only --chrome-island-w changes per platform,
      so this follows it for free — no second copy to keep in step. */
   --chrome-reserve: calc(var(--chrome-island-w) + var(--chrome-inset) - var(--chat-margin) - 1px + 0.6rem);
+  /* A chat's own local island (ChatPanel.svelte) is always exactly the
+     terminal + sidebar-toggle pair — never the window buttons, so it can't
+     just reuse --chrome-island-w once that's widened by [data-window-chrome]
+     above. A fixed 2-button width instead, and the matching reserve for
+     whichever header it lands on, using the in-panel inset since it's
+     measured against the panel's own box rather than the window's. */
+  --local-island-w: calc(2 * var(--chrome-btn-w) + 1 * var(--chrome-gap) + 2 * var(--chrome-pad) + 2px);
+  --local-island-reserve: calc(var(--local-island-w) + var(--chrome-inset-in-panel) + 0.6rem);
 
   /* Shared stacking order for anything that portals to document.body (bits-ui
      Select/Popover/Dialog/DropdownMenu content, and the one hand-rolled
@@ -208,8 +223,62 @@
   --float-border-top: var(--panel-border-top);
   --float-border-bottom: var(--panel-border-bottom);
 
+  /* One in/out animation for every floating surface in the app (popovers,
+     dropdowns, the context menu, dialogs, the @mention list) — see the
+     `floatIn`/`floatOut`/`dialogIn`/`dialogOut`/`scrimIn`/`scrimOut`
+     keyframes below. Exit is quicker than enter (decelerate in, accelerate
+     out reads as snappier on close) — same asymmetry, one shared pair of
+     durations, rather than each surface picking its own. bits-ui's Popover/
+     Select/Menu/Dialog all keep a closing surface mounted for exactly as
+     long as its CSS animation runs (PresenceManager), so an out-keyframe
+     here is enough — no JS timing to coordinate. */
+  --float-enter-duration: calc(0.16s * var(--anim-speed, 1));
+  --float-exit-duration: calc(0.12s * var(--anim-speed, 1));
+  --dialog-enter-duration: calc(0.18s * var(--anim-speed, 1));
+  --dialog-exit-duration: calc(0.14s * var(--anim-speed, 1));
+
   font-family: var(--ui-font-family);
   font-size: var(--ui-font-size);
+}
+
+/* floatIn/Out: popovers, dropdowns, the context menu, the @mention list —
+   any small panel anchored to a trigger rather than centered on the window.
+   dialogIn/Out: the centered modal card itself (assumes the
+   `translate(-50%, -50%)` centering transform every dialog in this app
+   already rests at). scrimIn/Out: a dialog's backdrop. */
+@keyframes floatIn {
+  from {
+    opacity: 0;
+    transform: translateY(0.29rem) scale(0.98);
+  }
+}
+@keyframes floatOut {
+  to {
+    opacity: 0;
+    transform: translateY(0.29rem) scale(0.98);
+  }
+}
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
+  }
+}
+@keyframes dialogOut {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
+  }
+}
+@keyframes scrimIn {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes scrimOut {
+  to {
+    opacity: 0;
+  }
 }
 
 /* Frosted surfaces — see the --float-* tokens above. Keyed off a data
@@ -304,6 +373,10 @@
 .chrome-surface .chrome-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.chrome-surface .chrome-btn.active {
+  color: var(--accent);
 }
 
 * {

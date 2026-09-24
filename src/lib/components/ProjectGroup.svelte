@@ -38,11 +38,7 @@
   // is something the user does per project, not a default the sidebar picks.
   let open = $state(true);
 
-  const slideDuration = $derived(
-    app.settings.animationSpeed === 0
-      ? 0
-      : Math.round(180 / app.settings.animationSpeed),
-  );
+  const slideDuration = $derived(Math.round(180 * app.settings.animationSpeed));
 
   const statusIcon = {
     working: "loader-2",

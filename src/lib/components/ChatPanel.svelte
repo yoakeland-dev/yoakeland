@@ -4,18 +4,98 @@
   import MessageList from "./MessageList.svelte";
   import PromptInput from "./PromptInput.svelte";
   import PlanPanel from "./PlanPanel.svelte";
+  import TerminalPanel from "./TerminalPanel.svelte";
+  import ChatSidebar from "./ChatSidebar.svelte";
+  import Icon from "./Icon.svelte";
+  import FindBar from "./FindBar.svelte";
   import { wallpaperGL } from "../wallpaperGL";
 
-  let { sessionId }: { sessionId: string } = $props();
+  // `ownsChrome` / `sidePanel` — see ChatHeader.svelte's own doc comment for
+  // what each means; both just pass straight through. `sidePanel` also gates
+  // the `.sidebar-collapsed` left-margin swap below, since that's only ever
+  // about the *left* app sidebar this chat may be docked against — never true
+  // for the linked/side chat, which isn't adjacent to it.
+  // `panelEl` is bindable so +page.svelte can measure this chat's own panel
+  // box — the corner handle where the right sidebar meets the terminal needs
+  // it to compute the terminal's live height without duplicating its clamp
+  // math (see +page.svelte).
+  let {
+    sessionId,
+    ownsChrome = true,
+    sidePanel = false,
+    panelEl = $bindable(null),
+  }: {
+    sessionId: string;
+    ownsChrome?: boolean;
+    sidePanel?: boolean;
+    panelEl?: HTMLElement | null;
+  } = $props();
 
-  const isEmpty = $derived(
-    (app.active?.messagesBySession[sessionId] ?? []).length === 0,
-  );
-  const isSyncing = $derived(app.active?.syncingSessions[sessionId] ?? false);
+  const server = $derived(app.active);
+  const messages = $derived(server?.messagesBySession[sessionId] ?? []);
+  const isEmpty = $derived(messages.length === 0);
+  const isSyncing = $derived(server?.syncingSessions[sessionId] ?? false);
+
+  // Find-in-chat (FindBar.svelte, shared with TerminalView.svelte's own
+  // Ctrl+F — see that component's doc comment). A different backend from the
+  // terminal's xterm SearchAddon: there's no in-buffer text layer to search
+  // here, messages are rendered as markdown/tool-call cards, so this matches
+  // against each message's own plain-text field and navigates message-to-
+  // message rather than character-to-character — "N matches" means N
+  // messages containing the term, not N occurrences within them.
+  let chatFindOpen = $state(false);
+  let chatFindQuery = $state("");
+  let chatFindInputEl = $state<HTMLInputElement | null>(null);
+  let chatFindIndex = $state(-1);
+  const chatFindMatchIds = $derived.by(() => {
+    const q = chatFindQuery.trim().toLowerCase();
+    if (!q) return [];
+    return messages.filter((m) => m.text.toLowerCase().includes(q)).map((m) => m.id);
+  });
+  $effect(() => {
+    chatFindIndex = chatFindMatchIds.length ? 0 : -1;
+  });
+
+  function openChatFind() {
+    chatFindOpen = true;
+    requestAnimationFrame(() => chatFindInputEl?.focus());
+  }
+  function closeChatFind() {
+    chatFindOpen = false;
+  }
+  function scrollToChatMatch() {
+    const id = chatFindMatchIds[chatFindIndex];
+    if (!id) return;
+    const el = document.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.add("chat-find-active");
+    setTimeout(() => el.classList.remove("chat-find-active"), 1200);
+  }
+  function chatFindNext() {
+    if (!chatFindMatchIds.length) return;
+    chatFindIndex = (chatFindIndex + 1) % chatFindMatchIds.length;
+    scrollToChatMatch();
+  }
+  function chatFindPrevious() {
+    if (!chatFindMatchIds.length) return;
+    chatFindIndex = (chatFindIndex - 1 + chatFindMatchIds.length) % chatFindMatchIds.length;
+    scrollToChatMatch();
+  }
+  function onChatKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      openChatFind();
+    }
+  }
 </script>
 
 <div class="chat-area">
-  <section class="panel" class:sidebar-collapsed={app.sidebarCollapsed}>
+  <section
+    class="panel"
+    class:sidebar-collapsed={!sidePanel && app.sidebarCollapsed}
+    bind:this={panelEl}
+  >
     {#if app.settings.wallpaper}
       <canvas
         class="wallpaper"
@@ -23,22 +103,71 @@
         use:wallpaperGL={{ src: app.settings.wallpaper, style: app.settings.wallpaperStyle }}
       ></canvas>
     {/if}
-    <!-- The right island (+page.svelte) only lands on this header when there's
-         no right sidebar open to its right to catch it instead; the sidebar
-         toggle only lands here once the sidebar is collapsed away. -->
+    <!-- The window's own right island (+page.svelte) only lands on this
+         header while it owns the chrome (`ownsChrome`). The sidebar toggle
+         only lands here once the left sidebar is collapsed away, and only
+         for the main chat. -->
     <ChatHeader
       {sessionId}
-      reserveToggle={app.sidebarCollapsed}
-      reserveChrome={app.rightSidebarCollapsed}
+      reserveToggle={!sidePanel && app.sidebarCollapsed}
+      {ownsChrome}
+      {sidePanel}
       overlay
     />
-    <div class="body" class:syncing={isSyncing} inert={isSyncing}>
-      <MessageList {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
-      <PromptInput {sessionId} floating={isEmpty} />
-      {#if app.active?.openPlanSessionId === sessionId}
-        <PlanPanel {sessionId} />
-      {/if}
+    {#if !ownsChrome}
+      <!-- This chat's own local island — same chrome-surface look as the
+           real window-corner one (app.css), just anchored to this panel's
+           own corner instead, for whichever chat doesn't currently own that
+           one (+page.svelte decides which). -->
+      <div class="chrome-surface local-island">
+        <button
+          class="chrome-btn"
+          class:active={server?.terminalOpenBySession[sessionId]}
+          title={server?.terminalOpenBySession[sessionId] ? "Hide terminal" : "Show terminal"}
+          onclick={() => server?.toggleTerminal(sessionId)}
+        >
+          <Icon name="terminal-2" size={14} />
+        </button>
+        <button
+          class="chrome-btn"
+          class:active={server?.chatSidebarOpenBySession[sessionId]}
+          title={server?.chatSidebarOpenBySession[sessionId] ? "Hide sidebar" : "Show sidebar"}
+          onclick={() => server?.toggleChatSidebar(sessionId)}
+        >
+          <Icon
+            name={server?.chatSidebarOpenBySession[sessionId] ? "sidebar-right-collapse" : "sidebar-right-expand"}
+            size={14}
+          />
+        </button>
+      </div>
+    {/if}
+    <div class="row">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="body" class:syncing={isSyncing} inert={isSyncing} onkeydown={onChatKeydown}>
+        <MessageList {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
+        <PromptInput {sessionId} floating={isEmpty} />
+        {#if app.active?.openPlanSessionId === sessionId}
+          <PlanPanel {sessionId} />
+        {/if}
+        {#if chatFindOpen}
+          <FindBar
+            bind:query={chatFindQuery}
+            bind:inputEl={chatFindInputEl}
+            matchIndex={chatFindIndex}
+            matchCount={chatFindMatchIds.length}
+            class="chat-find-bar"
+            onNext={chatFindNext}
+            onPrevious={chatFindPrevious}
+            onClose={closeChatFind}
+          />
+        {/if}
+      </div>
+      <ChatSidebar {sessionId} />
     </div>
+    <!-- Full-width, below the row above — opening it shrinks that whole row,
+         pushing both the chat body and ChatSidebar up together, rather than
+         carving its own corner out of just one of them. -->
+    <TerminalPanel {sessionId} />
     {#if isSyncing}
       <div class="syncing-badge"><span class="spinner"></span> Syncing…</div>
     {/if}
@@ -75,12 +204,20 @@
   .panel.sidebar-collapsed {
     margin-left: var(--chat-margin);
   }
+  /* Holds .body and ChatSidebar side by side, with TerminalPanel a sibling
+     below both (not inside this row) — see the template comment. */
+  .row {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
   .body {
     flex: 1;
     position: relative;
     display: flex;
     flex-direction: column;
     min-height: 0;
+    min-width: 0;
     /* Lets PromptInput's floating hero shrink its font off this panel's
        actual width (cqi) rather than the viewport — the panel is narrower
        than the window whenever a sidebar is open. */
@@ -114,6 +251,22 @@
      order across files rather than anything declared here. */
   :global(.panel > .header) {
     z-index: 2;
+  }
+  /* Same corner as the real window island (+page.svelte), just measured
+     against this panel's own box instead of the window's — see
+     --chrome-inset-in-panel in app.css. Above the header (z-index: 3 vs. 2)
+     since it's meant to read as chrome sitting on top of the chat, the same
+     relationship the real island has with whatever header it lands on. */
+  .local-island {
+    position: absolute;
+    top: var(--chrome-inset-in-panel);
+    right: var(--chrome-inset-in-panel);
+    height: var(--chrome-h);
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: var(--chrome-gap);
+    padding: 0 var(--chrome-pad);
   }
   .body.syncing {
     opacity: 0.45;
@@ -153,6 +306,30 @@
   @keyframes spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+  /* FindBar's own default position (top: 0.4rem) sits under the floating
+     header (ChatHeader's `overlay` prop) here — push it below instead, same
+     offset .syncing-badge already uses for the same reason. `!important`
+     because FindBar's own scoped rule otherwise wins on specificity (its
+     class selector carries a Svelte scoping attribute ours doesn't). */
+  :global(.chat-find-bar) {
+    top: calc(var(--header-height) + 10px) !important;
+  }
+  /* Find-in-chat's "jumped here" cue (ChatPanel's scrollToChatMatch) — the
+     element itself lives inside MessageList's DOM, not this component's own
+     template, hence :global. */
+  :global(.chat-find-active) {
+    animation: chatFindPulse calc(1.2s * var(--anim-speed, 1)) ease-out;
+  }
+  @keyframes chatFindPulse {
+    0% {
+      box-shadow: 0 0 0 2px var(--accent);
+      border-radius: var(--radius-sm);
+    }
+    100% {
+      box-shadow: 0 0 0 2px transparent;
+      border-radius: var(--radius-sm);
     }
   }
 </style>

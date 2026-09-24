@@ -83,13 +83,17 @@
   function remoteLabel(srv: ServerState): string {
     return srv.serverIdentity ?? (srv.connectionMode === "local" ? "Local" : "Remote");
   }
-  const multiRemote = $derived(Object.keys(app.servers).length > 1);
   const remoteProjectItems = $derived([
     { value: ALL_PROJECTS, label: "All projects" },
     ...Object.entries(app.servers).flatMap(([scid, srv]) =>
       srv.recentProjects.map((p) => ({
+        // Qualified whenever the owning connection isn't local — this list
+        // spans every connection at once, so a bare name would be ambiguous
+        // between e.g. two different servers that both have a "yoake-gui"
+        // checkout. A local project stays unqualified: this is the common
+        // case and the one that needs no disambiguating.
         value: `${scid}::${p}`,
-        label: multiRemote ? `${remoteLabel(srv)}: ${basename(p)}` : basename(p),
+        label: srv.connectionMode !== "local" ? `${remoteLabel(srv)}: ${basename(p)}` : basename(p),
       })),
     ),
   ]);

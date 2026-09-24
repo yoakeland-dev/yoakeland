@@ -19,16 +19,28 @@
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
 
-  let { items, children }: { items: ContextMenuItem[]; children: Snippet } = $props();
+  // `items` also accepts a thunk — needed by any caller whose item list
+  // depends on live, non-reactive state (e.g. TerminalView.svelte's Copy
+  // reading xterm's own term.hasSelection()). A plain array is evaluated once,
+  // by the *parent's* last render, which can go stale; recomputing right as
+  // the menu opens (below) instead of whenever the parent happens to
+  // re-render is what actually gets a fresh read at the moment it matters.
+  let {
+    items,
+    children,
+  }: { items: ContextMenuItem[] | (() => ContextMenuItem[]); children: Snippet } = $props();
+
+  let open = $state(false);
+  const resolvedItems = $derived(open ? (typeof items === "function" ? items() : items) : []);
 </script>
 
-<ContextMenu.Root>
+<ContextMenu.Root bind:open>
   <ContextMenu.Trigger class="context-menu-trigger">
     {@render children()}
   </ContextMenu.Trigger>
   <ContextMenu.Portal>
     <ContextMenu.Content class="context-menu">
-      {#each items as item}
+      {#each resolvedItems as item}
         <ContextMenu.Item
           class={item.danger ? "context-menu-item danger" : "context-menu-item"}
           disabled={item.disabled}
@@ -61,6 +73,10 @@
     border-radius: var(--radius-sm);
     padding: var(--space-half);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    animation: floatIn var(--float-enter-duration) ease-out;
+  }
+  :global(.context-menu[data-state="closed"]) {
+    animation: floatOut var(--float-exit-duration) ease-in;
   }
   :global(.context-menu-item) {
     display: flex;

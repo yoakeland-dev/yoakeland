@@ -179,6 +179,37 @@ export interface TokenInfo {
   hasAvatar: boolean;
 }
 
+// ---- Built-in terminal (SPEC.md §3.1/§3.2 terminal_*) ----
+
+export type TerminalStatus = "starting" | "running" | "exited" | "error";
+
+/** One tab (terminalId) — client-side bookkeeping only, built up from
+ * terminal_list/terminal_snapshot/terminal_output/terminal_exited. The pty
+ * bytes themselves never live here (see terminalBus.ts); this is just what
+ * the tab strip renders off. */
+export interface TerminalTab {
+  terminalId: string;
+  sessionId: string;
+  cwd?: string;
+  cols: number;
+  rows: number;
+  status: TerminalStatus;
+  /** Shell binary name (§3.2 terminal_snapshot/terminal_list `label`) — the
+   * tab's fallback name. */
+  label: string;
+  /** The shell's own OSC 0/2 "set title" escape sequence, tracked by
+   * xterm.js's onTitleChange (TerminalView.svelte) — the "latest command
+   * name" a foreground program (or a well-behaved prompt) sets live. Absent
+   * until the shell sets one, in which case `label` is what a tab shows. */
+  title?: string;
+  exitCode?: number;
+  pid?: number;
+  sandboxTier?: SandboxTier;
+  /** Last terminal_output sequence number applied — SPEC.md §3.2's
+   * gap-detection field. */
+  sequence: number;
+}
+
 // ---- Chat-side (frontend-only) message model, built up from the wire events ----
 
 export type ChatMode = "read_only" | "read_write" | "autonomous" | "plan";

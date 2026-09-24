@@ -12,6 +12,8 @@ import type {
   SandboxTier,
   SessionSummary,
   SnapshotInfo,
+  TerminalStatus,
+  TerminalTab,
   TokenInfo,
   ToolCallEntry,
   ToolCallRequestedData,
@@ -19,6 +21,8 @@ import type {
   TurnCompletedData,
 } from "./types";
 import { deriveTheme } from "./theme";
+import { base64ToBytes } from "./base64";
+import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 
 // Transport is Unix socket (local) or TCP+token (remote) per §2a — this only
 // tracks which one we're on, for display purposes.
@@ -266,6 +270,8 @@ export function modelKey(providerName: string, model: string): string {
 export const SIDEBAR_MIN_WIDTH = 180;
 export const SIDEBAR_MAX_WIDTH = 420;
 export const RIGHT_SIDEBAR_MIN_WIDTH = 220;
+export const CHAT_SIDEBAR_MIN_WIDTH = 220;
+export const TERMINAL_MIN_HEIGHT = 120;
 
 function loadBool(key: string): boolean {
   try {
@@ -287,7 +293,8 @@ const SIDEBAR_COLLAPSED_KEY = "yoake.sidebarCollapsed";
 const RIGHT_SIDEBAR_COLLAPSED_KEY = "yoake.rightSidebarCollapsed";
 const SIDEBAR_WIDTH_KEY = "yoake.sidebarWidth";
 const RIGHT_SIDEBAR_RATIO_KEY = "yoake.rightSidebarRatio";
-const TERMINAL_OPEN_KEY = "yoake.terminalOpen";
+const TERMINAL_HEIGHT_RATIO_KEY = "yoake.terminalHeightRatio";
+const CHAT_SIDEBAR_WIDTH_RATIO_KEY = "yoake.chatSidebarWidthRatio";
 const SETTINGS_KEY = "yoake.settings";
 
 // Appearance/profile preferences — entirely per-device, client-only (no
@@ -347,6 +354,22 @@ export interface AppSettings {
    * identity doesn't. Both maps are kept, deliberately not collapsed to one
    * key (see the multi-server plan). */
   trustedCaByServer: Record<string, string>;
+  /** true (default): the terminal's colors track the app's own accent/mode,
+   * same generator (theme.ts's deriveTerminalTheme) that's always driven it.
+   * false: pick one of theme.ts's TERMINAL_THEME_PRESETS by id instead. */
+  terminalUseAppTheme: boolean;
+  /** Preset id from TERMINAL_THEME_PRESETS — only consulted when
+   * terminalUseAppTheme is false. */
+  terminalColorTheme: string;
+  /** xterm.js's smoothScrollDuration: 0 (default, matches xterm's own
+   * default) is instant/no easing; TerminalView.svelte maps true to a fixed
+   * duration. */
+  terminalSmoothScroll: boolean;
+  /** Padding inside the terminal pane, in px — TerminalView.svelte's
+   * .terminal-view. Split horizontal/vertical since that's how the pane was
+   * already padded (asymmetric) before this was configurable. */
+  terminalMarginX: number;
+  terminalMarginY: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -367,6 +390,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoArchiveDays: 14,
   trustedCaByHostPort: {},
   trustedCaByServer: {},
+  terminalUseAppTheme: true,
+  terminalColorTheme: "dracula",
+  terminalSmoothScroll: false,
+  terminalMarginX: 10,
+  terminalMarginY: 5,
 };
 
 function loadSettings(): AppSettings {
@@ -481,6 +509,37 @@ export class ServerState {
    * cleared by closing it from the panel's own header. Independent of
    * `currentSessionId`. */
   sidebarSessionId = $state<string | null>(null);
+  // Each chat's own terminal drawer, independent of every other chat's — see
+  // ChatPanel.svelte. Not persisted to localStorage the way most toggles
+  // here are.
+  terminalOpenBySession = $state<Record<string, boolean>>({});
+  // Built-in terminal (SPEC.md §3.1/§3.2 terminal_*) — see TerminalPanel.svelte/
+  // TerminalView.svelte. `terminalsBySession` is tab order (client-side only,
+  // drag-reorderable — the wire protocol has no ordering concept),
+  // `terminalById` the metadata each tab chip renders off. The pty bytes
+  // themselves never live here — see terminalBus.ts.
+  terminalsBySession = $state<Record<string, string[]>>({});
+  terminalById = $state<Record<string, TerminalTab>>({});
+  // Set once terminal_list has actually answered for a session — lets
+  // TerminalPanel tell "no terminals yet" from "haven't heard back yet" so
+  // opening the drawer right after opening a chat doesn't spawn a redundant
+  // tab on top of ones the session already had.
+  terminalsListedBySession = $state<Record<string, boolean>>({});
+  activeTerminalBySession = $state<Record<string, string | undefined>>({});
+  // Split view (requirement 2): a second pane showing a second tab alongside
+  // the active one. `terminalSplitBySession` is the on/off toggle;
+  // `splitTerminalBySession` which tab fills that second pane. Not the same
+  // tab as `activeTerminalBySession` for that session — see
+  // setActiveTerminalTab/setSplitTerminalTab, which swap rather than
+  // duplicate if the user picks the tab already showing in the other pane.
+  terminalSplitBySession = $state<Record<string, boolean>>({});
+  splitTerminalBySession = $state<Record<string, string | undefined>>({});
+  // Each chat's own right-edge panel — NOT the same thing as `sidebarSessionId`
+  // (a second, independent linked *chat* shown side by side). This is a
+  // single chat's own auxiliary view onto itself: its plan, file previews,
+  // diffs, snapshots. See ChatSidebar.svelte. Also not persisted, same
+  // reasoning as terminalOpenBySession above.
+  chatSidebarOpenBySession = $state<Record<string, boolean>>({});
   messagesBySession = $state<Record<string, ChatMessage[]>>({});
   activeTurnBySession = $state<Record<string, string | undefined>>({});
   takenOverSessions = $state<Record<string, boolean>>({});
@@ -747,7 +806,11 @@ export class ServerState {
     this.projects = this.projects.filter((p) => p !== path);
     this.recentProjects = this.recentProjects.filter((p) => p !== path);
     if (this.serverId) saveServerRecentProjects(this.serverId, this.recentProjects);
-    if (this.currentProjectPath === path) this.currentProjectPath = null;
+    // Falls back to whatever's next in the list rather than going empty —
+    // same idiom as restoreLastSession's own recentProjects[0] fallback. A
+    // project stays selected whenever one is still available; null only
+    // when this really was the last one.
+    if (this.currentProjectPath === path) this.currentProjectPath = this.recentProjects[0] ?? null;
     const orphaned = this.sessionsByProject[path] ?? [];
     delete this.sessionsByProject[path];
     for (const s of orphaned) {
@@ -835,6 +898,101 @@ export class ServerState {
 
   closeSidePanel() {
     this.sidebarSessionId = null;
+  }
+
+  toggleTerminal(sessionId: string) {
+    this.terminalOpenBySession[sessionId] = !this.terminalOpenBySession[sessionId];
+  }
+
+  // ---- Built-in terminal (SPEC.md §3.1/§3.2 terminal_*) ----
+
+  /** Registers a brand-new tab optimistically, before the server confirms it
+   * via terminal_snapshot — TerminalView.svelte calls this the moment it
+   * mints a fresh terminalId, so the chip renders instantly instead of
+   * waiting a round trip. A tab discovered via terminal_list (opened by this
+   * client earlier, or another peer) is registered by that handler instead
+   * (handleEvent's "terminal_list" case) — this is only for the "+ New Tab"
+   * path. */
+  registerTerminalTab(sessionId: string, terminalId: string) {
+    if (!this.terminalById[terminalId]) {
+      this.terminalById = {
+        ...this.terminalById,
+        [terminalId]: { terminalId, sessionId, cols: 80, rows: 24, status: "starting", label: "shell", sequence: 0 },
+      };
+    }
+    if (!this.terminalsBySession[sessionId]?.includes(terminalId)) {
+      this.terminalsBySession[sessionId] = [...(this.terminalsBySession[sessionId] ?? []), terminalId];
+    }
+    if (!this.activeTerminalBySession[sessionId]) this.activeTerminalBySession[sessionId] = terminalId;
+  }
+
+  /** Focuses `terminalId` in the main pane. If it's currently filling the
+   * split pane instead, swap the two rather than showing the same tab
+   * twice. */
+  setActiveTerminalTab(sessionId: string, terminalId: string) {
+    if (this.splitTerminalBySession[sessionId] === terminalId) {
+      this.splitTerminalBySession[sessionId] = this.activeTerminalBySession[sessionId];
+    }
+    this.activeTerminalBySession[sessionId] = terminalId;
+  }
+
+  /** Same swap-not-duplicate rule as setActiveTerminalTab, for the split
+   * pane. */
+  setSplitTerminalTab(sessionId: string, terminalId: string) {
+    if (this.activeTerminalBySession[sessionId] === terminalId) {
+      this.activeTerminalBySession[sessionId] = this.splitTerminalBySession[sessionId];
+    }
+    this.splitTerminalBySession[sessionId] = terminalId;
+  }
+
+  /** Requirement 2: an option to have two split terminals. Turning it on
+   * defaults the second pane to whichever other tab is open, if any —
+   * turning it back off just hides that pane, it doesn't close the tab in
+   * it. */
+  toggleTerminalSplit(sessionId: string) {
+    const on = !this.terminalSplitBySession[sessionId];
+    this.terminalSplitBySession[sessionId] = on;
+    if (on && !this.splitTerminalBySession[sessionId]) {
+      const tabs = this.terminalsBySession[sessionId] ?? [];
+      const other = tabs.find((id) => id !== this.activeTerminalBySession[sessionId]);
+      this.splitTerminalBySession[sessionId] = other ?? this.activeTerminalBySession[sessionId];
+    }
+  }
+
+  /** Drag-to-reorder (requirement 4) — purely a local arrangement, the wire
+   * protocol has no ordering concept for tabs. Moves `fromId` to sit where
+   * `toId` currently is. */
+  reorderTerminalTabs(sessionId: string, fromId: string, toId: string) {
+    const tabs = [...(this.terminalsBySession[sessionId] ?? [])];
+    const from = tabs.indexOf(fromId);
+    const to = tabs.indexOf(toId);
+    if (from === -1 || to === -1 || from === to) return;
+    tabs.splice(to, 0, ...tabs.splice(from, 1));
+    this.terminalsBySession[sessionId] = tabs;
+  }
+
+  /** Drops a tab from local bookkeeping — only ever called from
+   * handleEvent's "terminal_closed" case (no optimistic removal: closing a
+   * terminal isn't reversible, same precedent as delete_session). Picks a
+   * replacement for whichever pane(s) were showing it, if any remain. */
+  private forgetTerminalTab(terminalId: string) {
+    const tab = this.terminalById[terminalId];
+    if (!tab) return;
+    const { [terminalId]: _removed, ...rest } = this.terminalById;
+    this.terminalById = rest;
+    const sessionId = tab.sessionId;
+    const remaining = (this.terminalsBySession[sessionId] ?? []).filter((id) => id !== terminalId);
+    this.terminalsBySession[sessionId] = remaining;
+    if (this.activeTerminalBySession[sessionId] === terminalId) {
+      this.activeTerminalBySession[sessionId] = remaining.find((id) => id !== this.splitTerminalBySession[sessionId]);
+    }
+    if (this.splitTerminalBySession[sessionId] === terminalId) {
+      this.splitTerminalBySession[sessionId] = remaining.find((id) => id !== this.activeTerminalBySession[sessionId]);
+    }
+  }
+
+  toggleChatSidebar(sessionId: string) {
+    this.chatSidebarOpenBySession[sessionId] = !this.chatSidebarOpenBySession[sessionId];
   }
 
   /** Repaints a session's transcript from `session_history` (§3.2) — the
@@ -1022,6 +1180,16 @@ export class ServerState {
     if (this.currentSessionId === sessionId) this.currentSessionId = null;
     if (this.sidebarSessionId === sessionId) this.sidebarSessionId = null;
     if (this.openPlanSessionId === sessionId) this.openPlanSessionId = null;
+    // delete_session kills every terminal the chat owned too (SPEC.md §3.1) —
+    // terminal_closed arrives per tab, but drop the rest of this session's
+    // own bookkeeping right away rather than waiting on all of them.
+    for (const id of this.terminalsBySession[sessionId] ?? []) delete this.terminalById[id];
+    delete this.terminalsBySession[sessionId];
+    delete this.terminalsListedBySession[sessionId];
+    delete this.activeTerminalBySession[sessionId];
+    delete this.terminalSplitBySession[sessionId];
+    delete this.splitTerminalBySession[sessionId];
+    delete this.terminalOpenBySession[sessionId];
   }
 
   /** It never reached the server, so there's nothing to ask it to delete —
@@ -1621,6 +1789,115 @@ export class ServerState {
         }
         break;
       }
+      // Terminal events (SPEC.md §3.2) — none of these carry a top-level or
+      // `data.sessionId` (only terminal_list does), so they're routed by
+      // `terminalId` against `terminalById` instead of the `sessionId`
+      // resolved at the top of this method, which for these would just be
+      // whatever chat happens to be open right now.
+      case "terminal_list": {
+        const data = env.data as {
+          sessionId: string;
+          terminals: { terminalId: string; cwd?: string; status: TerminalStatus; label: string }[];
+        };
+        const sid = data.sessionId;
+        if (!sid) break;
+        const ids: string[] = [];
+        const nextById = { ...this.terminalById };
+        for (const t of data.terminals ?? []) {
+          ids.push(t.terminalId);
+          const existing = nextById[t.terminalId];
+          nextById[t.terminalId] = {
+            terminalId: t.terminalId,
+            sessionId: sid,
+            cwd: t.cwd,
+            status: t.status,
+            label: t.label,
+            title: existing?.title,
+            cols: existing?.cols ?? 80,
+            rows: existing?.rows ?? 24,
+            sequence: existing?.sequence ?? 0,
+            exitCode: existing?.exitCode,
+            pid: existing?.pid,
+            sandboxTier: existing?.sandboxTier,
+          };
+        }
+        this.terminalById = nextById;
+        this.terminalsBySession[sid] = ids;
+        this.terminalsListedBySession[sid] = true;
+        const active = this.activeTerminalBySession[sid];
+        if (!active || !ids.includes(active)) this.activeTerminalBySession[sid] = ids[0];
+        break;
+      }
+      case "terminal_snapshot": {
+        const data = env.data as {
+          terminalId: string;
+          cwd?: string;
+          cols: number;
+          rows: number;
+          status: TerminalStatus;
+          pid?: number;
+          history: string;
+          sequence: number;
+          label: string;
+          sandboxTier?: SandboxTier;
+          exitCode?: number;
+        };
+        const existing = this.terminalById[data.terminalId];
+        // registerTerminalTab (a fresh "+ New Tab") or the "terminal_list"
+        // case above always runs first for any terminalId this client knows
+        // about, so `existing` should always be set here — but a snapshot
+        // for an id we somehow never registered has no session to attach it
+        // to, so it's dropped rather than guessed at.
+        if (existing) {
+          this.terminalById = {
+            ...this.terminalById,
+            [data.terminalId]: {
+              ...existing,
+              cwd: data.cwd,
+              cols: data.cols,
+              rows: data.rows,
+              status: data.status,
+              label: data.label,
+              pid: data.pid,
+              sequence: data.sequence,
+              sandboxTier: data.sandboxTier,
+              exitCode: data.exitCode,
+            },
+          };
+        }
+        if (data.history) publishTerminalSnapshot(data.terminalId, base64ToBytes(data.history));
+        break;
+      }
+      case "terminal_output": {
+        const data = env.data as { terminalId: string; data: string; sequence: number };
+        const tab = this.terminalById[data.terminalId];
+        if (tab) this.terminalById = { ...this.terminalById, [data.terminalId]: { ...tab, sequence: data.sequence } };
+        publishTerminalChunk(data.terminalId, base64ToBytes(data.data));
+        break;
+      }
+      case "terminal_exited": {
+        const data = env.data as { terminalId: string; exitCode: number };
+        const tab = this.terminalById[data.terminalId];
+        if (tab) {
+          this.terminalById = {
+            ...this.terminalById,
+            [data.terminalId]: { ...tab, status: "exited", exitCode: data.exitCode },
+          };
+        }
+        break;
+      }
+      case "terminal_closed": {
+        const data = env.data as { terminalId: string };
+        this.forgetTerminalTab(data.terminalId);
+        break;
+      }
+      case "terminal_error": {
+        const data = env.data as { terminalId: string; message: string };
+        const tab = this.terminalById[data.terminalId];
+        if (tab) this.terminalById = { ...this.terminalById, [data.terminalId]: { ...tab, status: "error" } };
+        this.app.log(`terminal ${data.terminalId}: ${data.message}`);
+        break;
+      }
       default:
         break;
     }
@@ -1704,17 +1981,26 @@ class AppState {
   rightSidebarRatio = $state(
     typeof localStorage !== "undefined" ? Number(localStorage.getItem(RIGHT_SIDEBAR_RATIO_KEY)) || 0.22 : 0.22,
   );
-  // Bumped only by an explicit, manual open/close of the right sidebar — see
-  // RightSidebar.svelte's widthAnimating effect. ipc.ts's openInSidePanel and
-  // openSession's own split-partner auto-open also flip
-  // `rightSidebarCollapsed` as a side effect of switching chats; those
-  // should snap instantly, not ease, so they don't touch this.
-  rightSidebarAnimateTick = $state(0);
-  // Bottom drawer, currently just a placeholder for an integrated terminal —
-  // toggled from StatusBar.
-  terminalOpen = $state(
-    typeof localStorage !== "undefined" ? loadBool(TERMINAL_OPEN_KEY) : false,
+  // Same idea as rightSidebarRatio, but for the two per-chat embedded panels
+  // (TerminalPanel.svelte, ChatSidebar.svelte) — one shared size each across
+  // every chat rather than per-session, matching how rightSidebarRatio is one
+  // shared size rather than per-pairing. Terminal's is a fraction of the
+  // chat's own height (capped at 0.5), the chat sidebar's a fraction of its
+  // width (also capped at 0.5) — see each component's own resize handle.
+  terminalHeightRatio = $state(
+    typeof localStorage !== "undefined" ? Number(localStorage.getItem(TERMINAL_HEIGHT_RATIO_KEY)) || 0.35 : 0.35,
   );
+  chatSidebarWidthRatio = $state(
+    typeof localStorage !== "undefined" ? Number(localStorage.getItem(CHAT_SIDEBAR_WIDTH_RATIO_KEY)) || 0.32 : 0.32,
+  );
+
+  // Live, unpersisted: true while the corresponding ratio above is actively
+  // being dragged, by that panel's own resize handle or by the corner handle
+  // where the right sidebar and terminal meet (+page.svelte) — either one
+  // sets the same flag, so that edge's accent highlight lights up regardless
+  // of which handle is driving it.
+  rightSidebarResizing = $state(false);
+  terminalResizing = $state(false);
 
   settings = $state<AppSettings>(typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS });
 
@@ -1748,17 +2034,10 @@ class AppState {
     saveBool(SIDEBAR_COLLAPSED_KEY, collapsed);
   }
 
-  toggleRightSidebar() {
-    this.rightSidebarCollapsed = !this.rightSidebarCollapsed;
-    this.rightSidebarAnimateTick++;
-    saveBool(RIGHT_SIDEBAR_COLLAPSED_KEY, this.rightSidebarCollapsed);
-  }
-
-  /** Sets (rather than flips) the right sidebar's collapsed state, persisting
-   * it the same way the toggle does but without bumping
-   * `rightSidebarAnimateTick` — RightSidebar.svelte's drag-to-collapse uses
-   * this to track the pointer live, same reason Sidebar.svelte's
-   * setSidebarCollapsed exists. */
+  /** Sets (rather than flips) the right sidebar's collapsed state, persisted
+   * the same way every other layout toggle here is — RightSidebar.svelte's
+   * drag-to-collapse uses this to track the pointer live, same reason
+   * Sidebar.svelte's setSidebarCollapsed exists. */
   setRightSidebarCollapsed(collapsed: boolean) {
     this.rightSidebarCollapsed = collapsed;
     saveBool(RIGHT_SIDEBAR_COLLAPSED_KEY, collapsed);
@@ -1787,9 +2066,26 @@ class AppState {
     }
   }
 
-  toggleTerminal() {
-    this.terminalOpen = !this.terminalOpen;
-    saveBool(TERMINAL_OPEN_KEY, this.terminalOpen);
+  /** Same idea as setRightSidebarRatio, for TerminalPanel.svelte's own
+   * resize handle (a fraction of the chat panel's height, capped at 0.5). */
+  setTerminalHeightRatio(ratio: number) {
+    this.terminalHeightRatio = Math.min(0.5, Math.max(0, ratio));
+    try {
+      localStorage.setItem(TERMINAL_HEIGHT_RATIO_KEY, String(this.terminalHeightRatio));
+    } catch {
+      // best-effort only
+    }
+  }
+
+  /** Same idea as setRightSidebarRatio, for ChatSidebar.svelte's own resize
+   * handle (a fraction of the chat panel's width, capped at 0.5). */
+  setChatSidebarWidthRatio(ratio: number) {
+    this.chatSidebarWidthRatio = Math.min(0.5, Math.max(0, ratio));
+    try {
+      localStorage.setItem(CHAT_SIDEBAR_WIDTH_RATIO_KEY, String(this.chatSidebarWidthRatio));
+    } catch {
+      // best-effort only
+    }
   }
 
   /** "system" resolved against the OS's live preference; "dark"/"light" pass
