@@ -101,15 +101,7 @@
     return preset?.colors ?? deriveTerminalTheme(app.settings.accent, app.resolvedTheme);
   }
 
-  // Passed to ContextMenu as a thunk (not called here — see
-  // ContextMenu.svelte) so `disabled` reads term.hasSelection() fresh at the
-  // moment the menu actually opens, not whatever it was the last time this
-  // component happened to re-render. Copy/paste go through Tauri's
-  // clipboard-manager plugin rather than the raw navigator.clipboard API —
-  // Tauri's webview doesn't grant clipboard-read to that API by default (no
-  // amount of user-gesture context fixes it; it's a capability the plugin
-  // grants, see src-tauri/capabilities/default.json), so Paste silently
-  // resolved to nothing before this.
+  // A thunk, so `disabled` reads the selection when the menu opens.
   function menuItems(): ContextMenuItem[] {
     return [
       {

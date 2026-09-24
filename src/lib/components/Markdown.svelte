@@ -76,7 +76,7 @@
     return () => cancelAnimationFrame(raf);
   });
 
-  // Links must never navigate the app's own webview away from itself.
+  // Links must never navigate the app's own page away.
   function onClick(e: MouseEvent) {
     const copy = (e.target as HTMLElement).closest?.<HTMLElement>(".code-copy");
     if (copy) {

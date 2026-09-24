@@ -106,17 +106,9 @@ function handleConnectionLost(connectionId: ConnectionId, reason: string) {
   scheduleReconnect(connectionId);
 }
 
-/** Redials a dropped connection — automatically for local ones (see
- * scheduleReconnect), or on request for either mode (reconnectServer, from
- * the palette/Settings server lists; a remote's token is still in its
- * in-memory ConnectParams). Rust mints a brand-new ConnectionId
- * per connect_unix call — there's no way to ask for the old one back — so a
- * naive reconnect would mean dropping this server's ServerState (current
- * session/project, nav history, caches) and starting a fresh one, which
- * would be a real regression from today's single-connection behavior, where
- * a brief drop-and-reconnect just quietly resyncs without resetting
- * anything the user can see. Instead, re-key the *same* ServerState instance
- * under the new id once the redial succeeds. */
+/** Every connect gets a new ConnectionId, so this re-keys the existing
+ * ServerState under it instead of replacing it, keeping the current session,
+ * project, history and caches across a drop. */
 async function redial(oldConnectionId: ConnectionId) {
   const server = app.servers[oldConnectionId];
   if (!server) return;
@@ -154,10 +146,6 @@ export function wireEvents() {
   if (wired || !isDesktop) return;
   wired = true;
 
-  // Every payload carries the ConnectionId backend.rs's reader task tagged
-  // it with (see backend.rs's module doc) — this is the one dispatch point
-  // that routes each event to the right ServerState, rather than assuming
-  // "the one connection" the way pre-multi-server code did.
   listen<{ connectionId: string; envelope: Envelope }>("yoake-event", (payload) => {
     const { connectionId, envelope: env } = payload;
     const server = app.servers[connectionId];
@@ -292,10 +280,6 @@ export function caServerKey(host: string, port: number): string {
   return `${host}:${port}`;
 }
 
-/** Reads a CA certificate file (e.g. a copy of the server's own
- * `<-state-dir>/tls/ca.pem`, §2a) via the file picker + the one narrow
- * filesystem read this app has (backend.rs's read_text_file) — no general fs
- * plugin needed for this single use. */
 export async function importCaCertFile(): Promise<string | null> {
   const [path] = await pickFiles({ title: "Locate the server's ca.pem" });
   if (!path) return null;
@@ -379,13 +363,7 @@ export async function connectLocalUnix(opts: SpawnUnixServerOpts): Promise<Conne
 /** Fallback shown before the real default resolves (see `getDefaultSocketPath`). */
 export const FALLBACK_SOCKET_PATH = "~/.yoake/yoakeland.sock";
 
-/**
- * Mirrors yoakeland's own default listen-socket resolution:
- * `$XDG_RUNTIME_DIR/yoake/yoakeland.sock`, then (macOS)
- * `$TMPDIR/yoake/yoakeland.sock`, else `~/.yoake/yoakeland.sock`. Computed
- * Rust-side (`default_socket_path`) since those env vars aren't available to
- * the webview.
- */
+// Asks the backend: the page can't read the environment variables involved.
 export async function getDefaultSocketPath(): Promise<string> {
   try {
     return await invoke<string>("default_socket_path");
@@ -435,15 +413,8 @@ export async function disconnect(connectionId: ConnectionId) {
   }
 }
 
-/** The actual "remove this server" action — disconnect() alone only marks a
- * connection dead, it stays in app.servers and offered-for-reconnect
- * forever, with nothing in the UI to take the next step. This does: close
- * the connection (abort()s its reader/writer, backend.rs's disconnect —
- * explicit, so no "connection lost" event fires and local mode's
- * auto-reconnect never kicks in), drop its ServerState so it stops appearing
- * as a connected server anywhere, forget it from the remembered-servers list
- * so it stops being offered as a "Reconnect", and hand off `active` to
- * whatever's left, if this was it. */
+/** Unlike disconnect(), also forgets the server, so it stops being offered
+ * for reconnect. */
 export async function removeServer(connectionId: ConnectionId) {
   const server = app.servers[connectionId];
   if (server?.connectionStatus === "connected" || server?.connectionStatus === "connecting") {

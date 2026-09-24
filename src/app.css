@@ -98,21 +98,9 @@
   --header-pad-x: 1.1rem;
   --header-line: 1.6rem;
   --header-height: calc(var(--header-pad-y) * 2 + var(--header-line));
-  /* Floating window chrome. Three pieces, all on the same line, so the top of
-     the window reads as one band:
-       - the sidebar toggle: its own button, pinned top-left of the *window*,
-         outside either island so it stays put while the sidebar slides;
-       - the chat island (previous/next chat, then the chat's title) inside the
-         main chat area — positioned from ChatHeader.svelte's own flow rather
-         than from here, since it belongs to that panel;
-       - the right island (terminal, right panel, then the window buttons),
-         pinned top-right of the window.
-     One button size, one gap, one padding across all three, so a card is the
-     plain sum of its contents and its reserve can't disagree with what renders.
-     The three window buttons only join the right island on desktop, so that
-     island's width has a second value — keyed off the presence of
-     `data-window-chrome`, set from isDesktop in +page.svelte, since no media
-     query can see whether we're inside the Tauri shell. */
+  /* Floating window chrome: the sidebar toggle, the chat island and the right
+     island. They share one button size, gap and padding, so each card's width
+     and the space reserved for it are sums of the same tokens. */
   --chrome-pad: var(--space-half);
   --chrome-gap: 0.21rem;
   --chrome-btn-w: var(--header-line);
@@ -156,7 +144,14 @@
      content box (--chrome-inset minus the panel's --chat-margin and its 1px
      hairline), plus breathing room. Only --chrome-island-w changes per platform,
      so this follows it for free — no second copy to keep in step. */
-  --chrome-reserve: calc(var(--chrome-island-w) + var(--chrome-inset) - var(--chat-margin) - 1px + 0.6rem);
+  --chrome-reserve: calc(var(--chrome-island-w) + var(--window-controls-w) + var(--chrome-inset) - var(--chat-margin) - 1px + 0.6rem);
+  /* Native Windows controls. env() only exists while they're on, so this is 0
+     everywhere else. */
+  --window-controls-w: calc(100vw - env(titlebar-area-width, 100vw));
+  /* ponytail: a guess, not measured on a Mac. Tune if the traffic lights look
+     off-centre. */
+  --traffic-lights-pad: 0.35rem;
+  --traffic-lights-w: 0px;
   /* A chat's own local island (ChatPanel.svelte) is always exactly the
      terminal + sidebar-toggle pair — never the window buttons, so it can't
      just reuse --chrome-island-w once that's widened by [data-window-chrome]
@@ -299,12 +294,12 @@
   --float-border-bottom: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
-/* Desktop puts the minimize/maximize/close buttons in the same right island as
-   the terminal and right-panel toggles — see +page.svelte, which sets this from
-   isDesktop. Widens --chrome-island-w, and --chrome-reserve follows it on its
-   own (see the token block above). */
-:root[data-window-chrome] {
+/* data-window-chrome is set by applyWindowChrome (state.svelte.ts). */
+:root[data-window-chrome="custom"] {
   --chrome-island-w: calc(5 * var(--chrome-btn-w) + 4 * var(--chrome-gap) + 2 * var(--chrome-pad) + 2px);
+}
+:root[data-window-chrome="traffic-lights"] {
+  --toggle-w: calc(var(--chrome-h) + var(--traffic-lights-w) + 2 * var(--traffic-lights-pad) + var(--chrome-gap));
 }
 
 /* The fill, edge and blur every piece of floating window chrome wears: the two
@@ -316,7 +311,6 @@
 .chrome-surface {
   background: var(--float-bg);
   backdrop-filter: var(--float-blur);
-  -webkit-backdrop-filter: var(--float-blur);
   border: 1px solid var(--float-border);
   border-block-color: var(--float-border-top) var(--float-border-bottom);
   border-radius: var(--radius-sm);
@@ -609,7 +603,6 @@ pre {
   flex-direction: column;
   background: var(--float-bg);
   backdrop-filter: var(--float-blur);
-  -webkit-backdrop-filter: var(--float-blur);
   border: 1px solid var(--float-border);
   border-block-color: var(--float-border-top) var(--float-border-bottom);
   border-radius: var(--radius-sm);
@@ -930,4 +923,27 @@ button.sb-row-main {
   text-align: center;
   color: var(--text-dim);
   font-size: 0.78rem;
+}
+
+/* The only drag region. Electron applies drag and no-drag areas in document
+   order, ignoring z-index, so this strip must be the first element in the page
+   and nothing else may use `drag`: it would cover clickable elements that
+   come before it. */
+.titlebar-drag {
+  display: none;
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: calc(var(--chat-margin) + var(--chrome-inset) + var(--chrome-h));
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+:root[data-window-chrome] .titlebar-drag {
+  display: block;
+}
+:is(button, input, textarea, select, a, label, summary, [role="button"], [role="tab"], [contenteditable], [tabindex]),
+.chrome-surface,
+.resize-handle,
+[data-dialog-overlay],
+:is([role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"], [role="tooltip"]) {
+  -webkit-app-region: no-drag;
 }

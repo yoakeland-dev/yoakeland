@@ -124,7 +124,7 @@
   }
   .msg-row {
     /* Skip layout/paint entirely for rows scrolled out of view — cheap,
-       native, and purely additive: a WebView too old to support it just
+       native, and purely additive: a browser too old to support it just
        ignores the declaration and renders as before. `contain-intrinsic-size`
        gives the browser a placeholder size before a row's ever been measured
        (the `auto` keyword then remembers its real size after that first

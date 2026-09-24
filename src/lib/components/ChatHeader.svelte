@@ -4,39 +4,17 @@
   import { navigateSessionHistory } from "../ipc";
   import Icon from "./Icon.svelte";
 
-  // Two bits of floating window chrome can sit above a header rather than
-  // inside it, so the header underneath has to pad itself clear of them:
-  //   `reserveToggle` — the sidebar toggle, top-left, only while the sidebar
-  //                     is collapsed and only for the top-left header. (The
-  //                     chat island is *in* this header's flow, so it moves
-  //                     with the padding rather than needing to be dodged.)
-  // `ownsChrome` — whether *this* chat currently owns the floating right
-  // island (terminal, chat sidebar and, on desktop, the window buttons) —
-  // true for whichever chat is the rightmost visible surface. When true, this
-  // header pads itself clear of the island the same way `reserveToggle` pads
-  // clear of the sidebar toggle. When false, the island belongs to some other
-  // (rightmost) chat instead, so ChatPanel.svelte renders this chat its own
-  // local island (same chrome-surface look, own corner) instead of relying on
-  // chrome it doesn't own — see +page.svelte and ChatPanel.svelte for how the
-  // two chat panels divide ownership of the one *window* island between them.
-  // `draggable` marks the headers that touch the window's top edge — the only
-  // ones that should move the window when dragged. `sidePanel` swaps the
-  // panel toggle for a close button (clears the right sidebar's chat instead
-  // of closing the session itself) and drops the chat island, which belongs to
-  // the main chat only. `overlay` floats the header above the body instead of
-  // sharing the flex flow with it, so the body can fill the whole panel and
-  // scroll its content up underneath the header's own fade rather than
-  // stopping short of it.
+  // reserveToggle / ownsChrome: pad clear of the floating sidebar toggle /
+  // right island. sidePanel: the right sidebar's chat (close button, no chat
+  // island). overlay: float above the body so content scrolls under the fade.
   let {
     sessionId,
-    draggable = true,
     reserveToggle = false,
     ownsChrome = true,
     sidePanel = false,
     overlay = false,
   }: {
     sessionId: string;
-    draggable?: boolean;
     reserveToggle?: boolean;
     ownsChrome?: boolean;
     sidePanel?: boolean;
@@ -124,15 +102,11 @@
   );
 </script>
 
-<!-- `|| undefined` rather than the bare boolean: Tauri goes by whether the
-     attribute is *present*, and `false` on a data-attribute renders as the
-     string "false" — which would make every tile drag the window. -->
 <header
   class="header reserve-chrome"
   class:reserve-toggle={reserveToggle}
   class:overlay
   style={`--header-chrome-reserve: var(${ownsChrome ? "--chrome-reserve" : "--local-island-reserve"})`}
-  data-tauri-drag-region={draggable || undefined}
 >
   <div class="left">
     {#if !sidePanel}

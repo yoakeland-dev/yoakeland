@@ -61,7 +61,6 @@
     align-items: flex-start;
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-radius: var(--radius-sm);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);

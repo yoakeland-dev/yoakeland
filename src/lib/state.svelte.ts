@@ -32,7 +32,7 @@ import type {
 /** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
 type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
 import { deriveTheme, deriveTerminalTheme, TERMINAL_THEME_PRESETS } from "./theme";
-import { invoke, isDesktop } from "./platform";
+import { invoke, isDesktop, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 
@@ -41,8 +41,8 @@ import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 export type ConnectionMode = "local" | "remote";
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
-// Opaque, client-minted (src-tauri/src/backend.rs mints it on connect_tcp/
-// connect_unix) — not yoakeland's own serverId (ServerState.serverId below),
+// Opaque and client-minted (electron/backend.js mints it on connect_tcp/
+// connect_unix). It is not yoakeland's own serverId (ServerState.serverId below),
 // which isn't known until server_identity's first reply. This is what keys
 // `AppState.servers`: a client can hold several of these open at once, one
 // per live connection, each to a potentially different server.
@@ -228,7 +228,7 @@ function migrateLegacyStateIfNeeded(serverId: string) {
 // --- Known servers (yoake.knownServers) — everything needed to reconnect
 // a remembered server on startup (ipc.ts's autoConnect) except a remote's
 // token, which lives outside localStorage in the backend's owner-only
-// credentials file (src-tauri/src/credentials.rs), keyed by serverId. ---
+// credentials file (electron/backend.js), keyed by serverId. ---
 
 export interface KnownServer {
   serverId: string;
@@ -383,6 +383,8 @@ export interface AppSettings {
    * aren't floating (chat panel, both sidebars, terminal drawer) are
    * deliberately not part of it. */
   surface: "opaque" | "frosted";
+  /** Window controls and the drag strip. */
+  windowChrome: boolean;
   /** Keep the accent in sync with the wallpaper instead of picking one by
    * hand — re-derived whenever the wallpaper changes. */
   accentFromWallpaper: boolean;
@@ -445,6 +447,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   wallpaper: "",
   wallpaperStyle: "dither",
   surface: "opaque",
+  windowChrome: true,
   accentFromWallpaper: false,
   autoArchiveDays: 14,
   trustedCaByHostPort: {},
@@ -481,8 +484,8 @@ function loadSettings(): AppSettings {
  * single-server AppState now reaches through `this.app` for the handful of
  * things that are genuinely global rather than per-server. */
 export class ServerState {
-  // Not readonly: a dropped local connection reconnects under a brand-new id
-  // (Rust mints a fresh one per connect_unix call, see backend.rs) — rather
+  // Not readonly: a dropped local connection reconnects under a new id (the
+  // backend mints a fresh one per connect call). Rather
   // than losing this object's in-memory state (current session/project, nav
   // history, caches) and starting a fresh ServerState, ipc.ts's redial()
   // re-keys this same instance into app.servers under the new id and updates
@@ -2234,7 +2237,7 @@ class AppState {
 
   // Transient, global: tracks a connect attempt (CommandPalette connect page / autoConnect)
   // before any ServerState exists to hold it — there's no ConnectionId yet at
-  // this point (Rust only mints one once connect_tcp/connect_unix actually
+  // this point (the backend only mints one once connect_tcp/connect_unix actually
   // succeeds), so it can't live per-server the way a *lost* connection's
   // status can (see handleConnectionLost in ipc.ts, which updates an
   // existing ServerState directly). Reset back to "disconnected" the moment
@@ -2538,6 +2541,17 @@ class AppState {
     // this attribute, so nothing else here has to know about it.
     root.dataset.surface = this.settings.surface;
     root.dataset.main = this.settings.mainArea;
+    this.applyWindowChrome();
+    syncNativeChrome();
+  }
+
+  /** Separate from applySettings so +page.svelte can run it before the first render. */
+  applyWindowChrome() {
+    const root = document.documentElement;
+    if (windowChromeKind && this.settings.windowChrome) root.dataset.windowChrome = windowChromeKind;
+    else delete root.dataset.windowChrome;
+    root.style.setProperty("--traffic-lights-w", `${trafficLightsWidth}px`);
+    void setWindowChrome(this.settings.windowChrome);
   }
 }
 

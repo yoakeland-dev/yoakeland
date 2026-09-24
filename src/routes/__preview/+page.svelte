@@ -14,11 +14,7 @@
     return { id, role: "user", text, toolCalls: [], streaming: false, createdAt: Date.now(), author };
   }
 
-  // Terminal preview: no real backend here (this route runs outside Tauri),
-  // so a fake ServerState is seeded directly with two tabs and their bus
-  // chunks are published by hand instead of round-tripping terminal_open/
-  // terminal_attach — just enough to smoke-test TerminalPanel/TerminalView's
-  // rendering (tab strip, split, xterm colors) in isolation.
+  // Dev only: a fake ServerState with two terminal tabs, output published by hand.
   const previewSessionId = "preview-terminal";
   const previewConnectionId = "preview-conn";
   const server = new ServerState(previewConnectionId, app, { mode: "local", socketPath: "", binPath: "" });

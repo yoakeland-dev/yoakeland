@@ -462,7 +462,7 @@
     class:collapsed={app.sidebarCollapsed}
     style="width: {app.sidebarWidth}px"
   >
-    <div class="brand-row" data-tauri-drag-region>
+    <div class="brand-row">
       <img class="brand-logo" src="logo.png" alt="" />
       <span class="brand">yoakeland</span>
     </div>

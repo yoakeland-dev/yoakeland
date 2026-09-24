@@ -1,7 +1,14 @@
-# Tauri + SvelteKit + TypeScript
+# yoake-gui
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+Desktop client for yoakeland: SvelteKit (static SPA) in an Electron shell.
 
-## Recommended IDE Setup
+- `electron/main.js`: window, `app://` protocol serving `build/`, IPC handlers
+- `electron/backend.js`: server connections (TLS / Unix socket), spawning, credentials
+- `electron/preload.cjs`: the `window.yoake` bridge; `src/lib/platform.ts` is its only user
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+```sh
+npm install
+npm run electron:dev    # vite on :1420 + Electron
+npm run electron:build  # packages into dist/
+npm run check
+```

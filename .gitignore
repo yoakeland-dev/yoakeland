@@ -14,3 +14,4 @@ vite.config.ts.timestamp-*
 
 # graphify skill output/cache — generated, not source
 /graphify-out/
+/dist

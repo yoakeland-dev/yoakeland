@@ -1,8 +1,5 @@
 <script lang="ts">
-  // Dev-only: the real app shell with two fake servers seeded in, so the
-  // sidebar, composer pickers and status bar can be looked at in a plain
-  // browser (no Tauri, no yoakeland). Nothing here talks to a backend —
-  // ipc.ts calls just no-op without Tauri.
+  // Dev only: the real app with two fake servers, for checking the UI without yoakeland.
   import { onMount } from "svelte";
   import Main from "../../+page.svelte";
   import { app, ServerState } from "$lib/state.svelte";

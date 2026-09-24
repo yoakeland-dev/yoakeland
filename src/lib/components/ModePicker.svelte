@@ -172,7 +172,6 @@
     max-width: calc(100vw - 2rem);
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);

@@ -239,9 +239,7 @@
     for (const file of files) startUpload(file.name || "pasted file", async () => file);
   }
 
-  /** Files dropped from this machine's disk (a native shell drop hands us
-   * paths, not File objects): referenced in place on a local connection,
-   * read and uploaded for a remote one. */
+  /** Local connections use dropped paths in place; remote ones upload them. */
   function attachPaths(paths: string[]) {
     if (app.connectionMode === "local") {
       for (const path of paths) {
@@ -259,11 +257,9 @@
     }
   }
 
-  // Drag-and-drop. In the desktop shell the webview never sees dropped
-  // files (the shell intercepts them and reports paths + a position), so hit-test
-  // that position against this chat's own panel — with a side chat open,
-  // only the one under the cursor takes the files. Elsewhere, plain HTML5
-  // drop events on the composer do the job.
+  // Desktop: onFileDrop covers the whole window, so only the chat panel under
+  // the cursor takes the files. Browser: the composer's own handlers below,
+  // which stand down on desktop so a drop doesn't attach twice.
   let dragOver = $state(false);
   function underCursor({ x, y }: { x: number; y: number }): boolean {
     const el = boxEl?.closest("section.panel") ?? boxEl;
@@ -286,11 +282,12 @@
   });
 
   function onDragOver(e: DragEvent) {
-    if (!e.dataTransfer?.types.includes("Files") || !connected) return;
+    if (isDesktop || !e.dataTransfer?.types.includes("Files") || !connected) return;
     e.preventDefault();
     dragOver = true;
   }
   function onDrop(e: DragEvent) {
+    if (isDesktop) return;
     dragOver = false;
     const files = e.dataTransfer?.files;
     if (!files?.length || !connected) return;
@@ -507,7 +504,7 @@
       bind:this={boxEl}
       onsubmit={submit}
       ondragover={onDragOver}
-      ondragleave={() => (dragOver = false)}
+      ondragleave={() => isDesktop || (dragOver = false)}
       ondrop={onDrop}
     >
       {#if dragOver}
@@ -971,7 +968,6 @@
   :global(.fc-pill:focus-visible) {
     background: var(--float-hover-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border-color: var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     color: var(--text);
@@ -993,7 +989,6 @@
   :global(.dropdown-trigger.fc-pill[data-state="open"]) {
     background: var(--float-hover-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border-color: var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     color: var(--text);
@@ -1010,7 +1005,6 @@
        Appearance > Surfaces is set to Frosted. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     /* Concentric with the send button in the bottom-right corner: button
@@ -1214,7 +1208,6 @@
     overflow-y: auto;
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-sm);

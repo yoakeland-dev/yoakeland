@@ -1,0 +1,227 @@
+// Connections to yoakeland servers: TLS for remote ones, the Unix socket for a
+// local one (SPEC.md §2a). Messages are newline-delimited JSON (§2).
+import { spawn } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import tls from "node:tls";
+
+const MAX_FRAME_BYTES = 10 * 1024 * 1024;
+const PROBE_TIMEOUT_MS = 400;
+const isWindows = process.platform === "win32";
+
+/** @type {Map<string, import("node:net").Socket>} */
+const connections = new Map();
+
+const expandTilde = (p) => (p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p);
+
+function connected(sock, ready = "connect") {
+  return new Promise((resolve, reject) => {
+    sock.once(ready, resolve);
+    sock.once("error", reject);
+  });
+}
+
+async function probe(sock) {
+  const t = setTimeout(() => sock.destroy(new Error("timeout")), PROBE_TIMEOUT_MS);
+  try {
+    await connected(sock);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t);
+    sock.destroy();
+  }
+}
+
+// Windows pipe names are global, so another user could create ours first and
+// receive our prompts and credentials. Node can't check a pipe's owner, so
+// local connections on Windows are refused.
+async function openLocal(p) {
+  if (isWindows) {
+    // ponytail: needs a native addon that compares the pipe's owner SID
+    // (GetSecurityInfo) with the current user's, and retries ERROR_PIPE_BUSY.
+    throw new Error("local connections on Windows aren't supported in this build yet; connect over TCP");
+  }
+  const sock = net.connect(p);
+  await connected(sock).catch((e) => {
+    throw new Error(`connect to ${p} failed: ${e.message}`);
+  });
+  return sock;
+}
+
+function adopt(sock, emit) {
+  const connectionId = randomUUID();
+  connections.set(connectionId, sock);
+  let buf = "";
+  let skipping = false; // dropping the rest of an oversized frame until its newline
+  sock.setEncoding("utf8");
+  sock.on("data", (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (skipping) {
+        skipping = false;
+        continue;
+      }
+      if (!line.trim()) continue;
+      try {
+        emit("yoake-event", { connectionId, envelope: JSON.parse(line) });
+      } catch (e) {
+        emit("yoake-log", { connectionId, message: `bad frame: ${e.message}: ${line}` });
+      }
+    }
+    if (buf.length > MAX_FRAME_BYTES) {
+      if (!skipping) emit("yoake-log", { connectionId, message: `dropped oversized frame (>${MAX_FRAME_BYTES} bytes)` });
+      buf = "";
+      skipping = true;
+    }
+  });
+  let reason = "connection closed";
+  sock.on("error", (e) => (reason = `read error: ${e.message}`));
+  sock.on("close", () => {
+    // `disconnect` deletes the entry first, so only unexpected closes report.
+    if (connections.delete(connectionId)) emit("yoake-disconnected", { connectionId, reason });
+  });
+  return connectionId;
+}
+
+const send = (sock, obj) => sock.write(JSON.stringify(obj) + "\n");
+
+const identity = ({ name, deviceType, avatar, deviceId }) =>
+  Object.fromEntries(Object.entries({ name, deviceType, avatar, deviceId }).filter(([, v]) => v != null));
+
+// Must match the server's default (yoakeland's internal/sockpath).
+export function defaultSocketPath() {
+  if (isWindows) return `\\\\.\\pipe\\yoakeland-${process.env.USERNAME ?? ""}`;
+  const xdg = process.env.XDG_RUNTIME_DIR;
+  if (xdg) return `${xdg.replace(/\/+$/, "")}/yoake/yoakeland.sock`;
+  const tmp = process.env.TMPDIR;
+  if (process.platform === "darwin" && tmp) return `${tmp.replace(/\/+$/, "")}/yoake/yoakeland.sock`;
+  return expandTilde("~/.yoake/yoakeland.sock");
+}
+
+// Logs go to a file, not a pipe: once the app exits, the server's next write
+// to a pipe would raise SIGPIPE and kill it.
+async function spawnDetached(dataDir, binPath, args) {
+  await mkdir(dataDir, { recursive: true });
+  const log = openSync(path.join(dataDir, "server.log"), "w");
+  try {
+    const child = spawn(binPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true });
+    await new Promise((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", (e) => reject(new Error(`failed to spawn ${binPath}: ${e.message}`)));
+    });
+    child.unref();
+  } finally {
+    closeSync(log);
+  }
+}
+
+// Only the paired CA when there is one, otherwise the OS trust store (§2a).
+function trustedCAs(caPem) {
+  const pem = caPem?.trim();
+  if (pem) {
+    if (!pem.includes("-----BEGIN CERTIFICATE-----")) throw new Error("no certificate found in the provided CA file");
+    return pem;
+  }
+  return tls.getCACertificates?.("system") ?? undefined;
+}
+
+export function commands(emit, dataDir) {
+  return {
+    probe_tcp: ({ host, port }) => probe(net.connect({ host, port })),
+    probe_unix: ({ path: p }) => probe(net.connect(expandTilde(p))),
+    default_socket_path: () => defaultSocketPath(),
+    spawn_detached_server: ({ binPath, host, port, token }) =>
+      spawnDetached(dataDir, binPath, ["-listen", `${host}:${port}`, "-token", token]),
+    spawn_detached_unix_server: ({ binPath, socketPath }) =>
+      spawnDetached(dataDir, binPath, ["-listen", `unix:${expandTilde(socketPath)}`]),
+
+    connect_tcp: async ({ host, port, token, caPem, ...rest }) => {
+      const sock = tls.connect({
+        host,
+        port,
+        ca: trustedCAs(caPem),
+        // SNI can't carry an IP address. Hostname verification still checks `host`.
+        servername: net.isIP(host) ? undefined : host,
+      });
+      await connected(sock, "secureConnect").catch((e) => {
+        throw new Error(
+          `TLS connection to ${host}:${port} failed: ${e.message}. Is the right CA certificate paired for this server?`,
+        );
+      });
+      const id = adopt(sock, emit);
+      send(sock, { type: "auth", data: { token, ...identity(rest) } });
+      return id;
+    },
+
+    connect_unix: async ({ path: p, ...rest }) => {
+      const sock = await openLocal(expandTilde(p));
+      const id = adopt(sock, emit);
+      const data = identity(rest);
+      if (Object.keys(data).length) send(sock, { type: "auth", data });
+      return id;
+    },
+
+    send_envelope: ({ connectionId, envelope }) => {
+      const sock = connections.get(connectionId);
+      if (!sock) throw new Error("not connected");
+      send(sock, envelope);
+    },
+
+    disconnect: ({ connectionId }) => {
+      const sock = connections.get(connectionId);
+      connections.delete(connectionId);
+      sock?.destroy();
+    },
+
+    read_text_file: ({ path: p }) =>
+      readFile(p, "utf8").catch((e) => {
+        throw new Error(`failed to read ${p}: ${e.message}`);
+      }),
+    read_file_bytes: ({ path: p }) =>
+      readFile(p).catch((e) => {
+        throw new Error(`failed to read ${p}: ${e.message}`);
+      }),
+  };
+}
+
+export function disconnectAll() {
+  for (const [id, sock] of connections) {
+    connections.delete(id);
+    sock.destroy();
+  }
+}
+
+// ponytail: tokens are plaintext JSON at 0600, not in the OS keychain, which
+// Linux doesn't reliably have. Electron's safeStorage is the upgrade.
+async function readCredentials(dir) {
+  try {
+    return JSON.parse(await readFile(path.join(dir, "credentials.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+export async function loadCredential(dir, key) {
+  return (await readCredentials(dir))[key] ?? null;
+}
+
+/** An absent `value` deletes the entry. */
+export async function storeCredential(dir, key, value) {
+  const all = await readCredentials(dir);
+  if (value == null) delete all[key];
+  else all[key] = value;
+  await mkdir(dir, { recursive: true });
+  // Temp file and rename, so a crash can't leave a truncated file.
+  const file = path.join(dir, "credentials.json");
+  await writeFile(file + ".tmp", JSON.stringify(all), { mode: 0o600 });
+  await rename(file + ".tmp", file);
+}

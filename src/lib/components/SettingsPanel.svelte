@@ -8,6 +8,7 @@
   import { untrack, type ComponentProps } from "svelte";
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
   import { basename } from "../format";
+  import { windowChromeKind } from "../platform";
   import {
     browseAndAddProject,
     connectServerRow,
@@ -724,6 +725,17 @@
                   (v) => ((app.settings.surface = v as "opaque" | "frosted"), apply()),
                 )}
               </div>
+
+              {#if windowChromeKind}
+                <div class="setting-row">
+                  {@render rowText(
+                    "Window controls",
+                    "Minimize, maximize and close buttons, and dragging the window by its top edge. Turn off if your window manager does this." +
+                      (windowChromeKind === "overlay" ? " Applies after a restart." : ""),
+                  )}
+                  {@render toggle(app.settings.windowChrome, (v) => ((app.settings.windowChrome = v), apply()))}
+                </div>
+              {/if}
             </section>
 
             <section class="settings-section">
@@ -1197,7 +1209,6 @@
        tokens in app.css. */
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
-    -webkit-backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-sm);

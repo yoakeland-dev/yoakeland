@@ -138,7 +138,7 @@
     overflow-y: auto;
   }
   /* Room for the scrollbar while there is one, so it can't sit on the
-     dismiss buttons where the webview overlays it on content. */
+     dismiss buttons where the browser draws it over content. */
   ul:global([data-overflow]) {
     padding-right: calc(0.21rem + var(--scrollbar-size));
   }

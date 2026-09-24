@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { app, RIGHT_SIDEBAR_MIN_WIDTH, TERMINAL_MIN_HEIGHT } from "$lib/state.svelte";
-  import { isDesktop, windowControls } from "$lib/platform";
+  import { windowControls } from "$lib/platform";
   import { wireEvents, autoConnect } from "$lib/ipc";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
@@ -140,18 +140,9 @@
     app.terminalResizing = false;
   }
 
-  // Lets app.css pick the right --chrome-island-w / --chrome-reserve: the window
-  // buttons join the right island only in the Tauri shell, and no media query can
-  // tell us that. Presence-based rather than ="true", since that's how the rest
-  // of the app's Tauri-only markup is keyed too (see the data-tauri-drag-region
-  // note in ChatHeader). Same idiom as the `data-surface` attribute applySettings
-  // sets for the frosted switch.
-  //
-  // At module scope, not in onMount: onMount runs after the first render, and on
-  // desktop the header would then lay out one frame at the narrower (no window
-  // buttons) reserve and visibly jump. This file is client-only (ssr is off in
-  // +layout.ts), so there's no server pass to worry about.
-  document.documentElement.toggleAttribute("data-window-chrome", isDesktop);
+  // At module scope, not in onMount, so the first frame already has the right
+  // header reserve.
+  app.applyWindowChrome();
 
   onMount(() => {
     wireEvents();
@@ -193,21 +184,27 @@
 </script>
 
 <div class="shell">
-  <button
-    class="chrome-surface sidebar-toggle"
-    title={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-    aria-label={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-    onclick={() => app.toggleSidebar()}
-  >
-    <Icon
-      name={app.sidebarCollapsed
-        ? "sidebar-left-expand"
-        : "sidebar-left-collapse"}
-      size={14}
-    />
-  </button>
-  {#if app.active?.currentSessionId || win}
-    <div class="chrome-surface right-island" data-tauri-drag-region>
+  <!-- Must stay the first element: see .titlebar-drag in app.css. -->
+  <div class="titlebar-drag"></div>
+  <div class="chrome-surface sidebar-toggle">
+    <!-- The macOS traffic lights are positioned over this (syncNativeChrome). -->
+    <div class="traffic-lights"></div>
+    <button
+      class="chrome-btn"
+      title={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      aria-label={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      onclick={() => app.toggleSidebar()}
+    >
+      <Icon
+        name={app.sidebarCollapsed
+          ? "sidebar-left-expand"
+          : "sidebar-left-collapse"}
+        size={14}
+      />
+    </button>
+  </div>
+  {#if app.active?.currentSessionId || (win && app.settings.windowChrome)}
+    <div class="chrome-surface right-island">
       {#if chromeSessionId}
         <button
           class="chrome-btn"
@@ -233,7 +230,7 @@
           />
         </button>
       {/if}
-      {#if win}
+      {#if win && app.settings.windowChrome}
         <button
           class="chrome-btn"
           title="Minimize"
@@ -351,33 +348,22 @@
     align-items: center;
   }
 
-  /* Its own button rather than part of an island: it belongs to the sidebar, so
-     it has to stay where it is while the sidebar slides out from under it.
-     Square, at the same height as the islands beside it. */
+  /* Not part of an island, so it stays put while the sidebar slides. */
   .sidebar-toggle {
     left: var(--chrome-inset);
     width: var(--toggle-w);
-    justify-content: center;
-    color: var(--text-dim);
-    cursor: pointer;
-    transition:
-      color calc(0.15s * var(--anim-speed, 1)) ease,
-      background-color calc(0.15s * var(--anim-speed, 1)) ease,
-      transform calc(0.1s * var(--anim-speed, 1)) ease;
+    padding: 0 var(--chrome-pad);
+    gap: var(--chrome-gap);
   }
 
-  .sidebar-toggle:hover {
-    background: color-mix(in srgb, var(--text) 10%, var(--float-bg));
-    color: var(--text);
+  .traffic-lights {
+    display: none;
+    align-self: stretch;
+    width: calc(var(--traffic-lights-w) + 2 * var(--traffic-lights-pad));
   }
 
-  .sidebar-toggle:active {
-    transform: scale(0.94);
-  }
-
-  .sidebar-toggle:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
+  :global(:root[data-window-chrome="traffic-lights"]) .traffic-lights {
+    display: block;
   }
 
   /* Every control that isn't about this chat, in one container — the app toggles
@@ -386,7 +372,7 @@
      the width its reserve token is summed from, so a header padding itself clear
      of it can't be left short. */
   .right-island {
-    right: var(--chrome-inset);
+    right: calc(var(--chrome-inset) + var(--window-controls-w));
     width: var(--chrome-island-w);
     gap: var(--chrome-gap);
     padding: 0 var(--chrome-pad);

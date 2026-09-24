@@ -1,7 +1,7 @@
 {
   "name": "yoake-gui",
   "version": "0.1.0",
-  "description": "",
+  "description": "yoakeland desktop client",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -10,16 +10,16 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "electron:dev": "vite dev & YOAKE_DEV_URL=http://127.0.0.1:1420 electron .; kill $!",
+    "electron:build": "vite build && electron-builder"
   },
   "license": "MIT",
-  "dependencies": {
+  "devDependencies": {
     "@lobehub/icons-static-svg": "^1.95.0",
+    "@sveltejs/adapter-static": "^3.0.10",
+    "@sveltejs/kit": "^2.65.1",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tabler/icons": "^3.46.0",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-clipboard-manager": "^2.3.3",
-    "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-opener": "^2",
     "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
@@ -29,18 +29,41 @@
     "@xterm/xterm": "^6.0.0",
     "bits-ui": "^2.19.2",
     "dompurify": "^3.4.15",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "highlight.js": "^11.12.0",
     "iconoir": "^7.12.1",
-    "marked": "^18.0.13"
-  },
-  "devDependencies": {
-    "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.65.1",
-    "@sveltejs/vite-plugin-svelte": "^7.1.2",
-    "@tauri-apps/cli": "^2",
+    "marked": "^18.0.13",
     "svelte": "^5.56.3",
     "svelte-check": "^4.6.0",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"
+  },
+  "main": "electron/main.js",
+  "build": {
+    "appId": "com.aveline.yoake-gui",
+    "productName": "yoakeland",
+    "files": [
+      "build/**",
+      "electron/**"
+    ],
+    "icon": "electron/icon.png",
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Development"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "directories": {
+      "output": "dist"
+    }
   }
 }
