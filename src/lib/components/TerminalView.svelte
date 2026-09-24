@@ -15,7 +15,7 @@
   import { ClipboardAddon } from "@xterm/addon-clipboard";
   import { WebglAddon } from "@xterm/addon-webgl";
   import "@xterm/xterm/css/xterm.css";
-  import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { readClipboard, writeClipboard } from "../platform";
   import { app } from "../state.svelte";
   import { terminalAttach, terminalInput, terminalOpen, terminalResize } from "../ipc";
   import { subscribeTerminal } from "../terminalBus";
@@ -118,7 +118,7 @@
         disabled: !term?.hasSelection(),
         onSelect: () => {
           const sel = term?.getSelection();
-          if (sel) void writeText(sel);
+          if (sel) void writeClipboard(sel);
         },
       },
       {
@@ -126,7 +126,7 @@
         icon: "clipboard-list",
         onSelect: async () => {
           const cid = app.activeConnectionId;
-          const text = await readText();
+          const text = await readClipboard();
           if (cid && text) terminalInput(cid, sessionId, terminalId, new TextEncoder().encode(text));
         },
       },

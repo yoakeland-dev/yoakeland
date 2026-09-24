@@ -1,7 +1,4 @@
 <script lang="ts">
-  import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-  import { invoke } from "@tauri-apps/api/core";
-  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { scale } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
   import { untrack } from "svelte";
@@ -17,7 +14,7 @@
     selectProject,
     uploadFile,
   } from "../ipc";
-  import { isDesktop } from "../platform";
+  import { isDesktop, invoke, pickFiles, onFileDrop } from "../platform";
   import { basename } from "../format";
   import Icon from "./Icon.svelte";
   import DiffView from "./DiffView.svelte";
@@ -203,8 +200,7 @@
   async function attachFile() {
     if (!cid || !connected) return;
     if (isDesktop && app.connectionMode === "local") {
-      const picked = await openFileDialog({ multiple: true, directory: false });
-      const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+      const paths = await pickFiles({ multiple: true });
       for (const path of paths) {
         if (!attachments.some((a) => a.path === path)) {
           attachments.push({ key: path, name: basename(path), path });
@@ -243,7 +239,7 @@
     for (const file of files) startUpload(file.name || "pasted file", async () => file);
   }
 
-  /** Files dropped from this machine's disk (a native Tauri drop hands us
+  /** Files dropped from this machine's disk (a native shell drop hands us
    * paths, not File objects): referenced in place on a local connection,
    * read and uploaded for a remote one. */
   function attachPaths(paths: string[]) {
@@ -264,39 +260,29 @@
   }
 
   // Drag-and-drop. In the desktop shell the webview never sees dropped
-  // files (Tauri intercepts them and reports paths + a position), so hit-test
+  // files (the shell intercepts them and reports paths + a position), so hit-test
   // that position against this chat's own panel — with a side chat open,
   // only the one under the cursor takes the files. Elsewhere, plain HTML5
   // drop events on the composer do the job.
   let dragOver = $state(false);
-  function underCursor(pos: { x: number; y: number }): boolean {
+  function underCursor({ x, y }: { x: number; y: number }): boolean {
     const el = boxEl?.closest("section.panel") ?? boxEl;
     const r = el?.getBoundingClientRect();
-    const x = pos.x / devicePixelRatio;
-    const y = pos.y / devicePixelRatio;
     return !!r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   }
   $effect(() => {
     if (!isDesktop) return;
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void getCurrentWebview()
-      .onDragDropEvent(({ payload: p }) => {
-        if (p.type === "leave") {
-          dragOver = false;
-        } else if (p.type === "enter" || p.type === "over") {
-          dragOver = connected && !editingId && underCursor(p.position);
-        } else if (p.type === "drop") {
-          const hit = dragOver || (connected && !editingId && underCursor(p.position));
-          dragOver = false;
-          if (hit && p.paths.length) attachPaths(p.paths);
-        }
-      })
-      .then((u) => (disposed ? u() : (unlisten = u)));
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
+    return onFileDrop((p) => {
+      if (p.type === "leave") {
+        dragOver = false;
+      } else if (p.type === "enter" || p.type === "over") {
+        dragOver = connected && !editingId && underCursor(p);
+      } else if (p.type === "drop") {
+        const hit = dragOver || (connected && !editingId && underCursor(p));
+        dragOver = false;
+        if (hit && p.paths.length) attachPaths(p.paths);
+      }
+    });
   });
 
   function onDragOver(e: DragEvent) {

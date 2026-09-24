@@ -1,6 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
 import type { ChatMode, Envelope, ServerStatus } from "./types";
 import {
   app,
@@ -12,7 +9,7 @@ import {
   type KnownServer,
 } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
-import { isDesktop } from "./platform";
+import { isDesktop, invoke, listen, pickFiles } from "./platform";
 import { bytesToBase64 } from "./base64";
 
 let wired = false;
@@ -161,8 +158,8 @@ export function wireEvents() {
   // it with (see backend.rs's module doc) — this is the one dispatch point
   // that routes each event to the right ServerState, rather than assuming
   // "the one connection" the way pre-multi-server code did.
-  listen<{ connectionId: string; envelope: Envelope }>("yoake-event", (e) => {
-    const { connectionId, envelope: env } = e.payload;
+  listen<{ connectionId: string; envelope: Envelope }>("yoake-event", (payload) => {
+    const { connectionId, envelope: env } = payload;
     const server = app.servers[connectionId];
     if (!server) return; // stale event from a connection we no longer track
     touchActivity(connectionId);
@@ -188,10 +185,10 @@ export function wireEvents() {
     }
   });
 
-  listen<{ connectionId: string; message: string }>("yoake-log", (e) => app.log(e.payload.message));
+  listen<{ connectionId: string; message: string }>("yoake-log", (p) => app.log(p.message));
 
-  listen<{ connectionId: string; reason: string }>("yoake-disconnected", (e) => {
-    handleConnectionLost(e.payload.connectionId, e.payload.reason);
+  listen<{ connectionId: string; reason: string }>("yoake-disconnected", (p) => {
+    handleConnectionLost(p.connectionId, p.reason);
   });
 }
 
@@ -300,8 +297,8 @@ export function caServerKey(host: string, port: number): string {
  * filesystem read this app has (backend.rs's read_text_file) — no general fs
  * plugin needed for this single use. */
 export async function importCaCertFile(): Promise<string | null> {
-  const path = await open({ multiple: false, title: "Locate the server's ca.pem" });
-  if (typeof path !== "string") return null;
+  const [path] = await pickFiles({ title: "Locate the server's ca.pem" });
+  if (!path) return null;
   return invoke<string>("read_text_file", { path });
 }
 

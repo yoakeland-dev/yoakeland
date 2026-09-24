@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
   import { app } from "../state.svelte";
   import { setMode } from "../ipc";
-  import { isDesktop } from "../platform";
+  import { invoke, isDesktop } from "../platform";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
 

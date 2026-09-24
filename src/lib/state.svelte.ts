@@ -28,12 +28,11 @@ import type {
   TurnCompletedData,
   TerminalSummary,
 } from "./types";
-import { invoke } from "@tauri-apps/api/core";
 
 /** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
 type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
 import { deriveTheme, deriveTerminalTheme, TERMINAL_THEME_PRESETS } from "./theme";
-import { isDesktop } from "./platform";
+import { invoke, isDesktop } from "./platform";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 

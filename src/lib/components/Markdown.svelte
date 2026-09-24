@@ -10,7 +10,7 @@
 <script lang="ts">
   import type { Token, Links } from "marked";
   import DOMPurify from "dompurify";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { openUrl } from "../platform";
   import { mentionLabels, mentionLabelsFor, MENTION_RE, withMentions } from "../mentions";
 
   // `mentions`: render `@path/to/file` tokens as file chips (user messages —

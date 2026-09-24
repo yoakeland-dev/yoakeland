@@ -7,7 +7,7 @@
   // multi-server-connections work — calling this a second time just adds
   // another entry to app.servers rather than replacing one — so this component itself needs no "is this the first
   // server" branching at all.
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { pickFiles } from "../platform";
   import { tick, untrack } from "svelte";
   import { Tabs } from "bits-ui";
   import {
@@ -169,8 +169,8 @@
   }
 
   async function pickBinary() {
-    const file = await open({ multiple: false, title: "Locate yoakeland binary" });
-    if (typeof file === "string") binPath = file;
+    const [file] = await pickFiles({ title: "Locate yoakeland binary" });
+    if (file) binPath = file;
   }
 
   async function submitLocal(e: Event) {

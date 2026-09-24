@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { app, RIGHT_SIDEBAR_MIN_WIDTH, TERMINAL_MIN_HEIGHT } from "$lib/state.svelte";
-  import { isDesktop } from "$lib/platform";
+  import { isDesktop, windowControls } from "$lib/platform";
   import { wireEvents, autoConnect } from "$lib/ipc";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
@@ -26,7 +25,7 @@
   // The third piece, the chat island (previous/next chat + the chat's title),
   // belongs to the chat panel rather than the window, so it lives in
   // ChatHeader.svelte.
-  const win = isDesktop ? getCurrentWindow() : null;
+  const win = windowControls;
 
   // Whichever chat is the rightmost visible surface owns the floating right
   // island — the linked/side chat when it's actually shown, the main chat

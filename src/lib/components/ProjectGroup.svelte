@@ -1,7 +1,7 @@
 <script lang="ts">
   import { slide } from "svelte/transition";
   import { tick } from "svelte";
-  import { revealItemInDir } from "@tauri-apps/plugin-opener";
+  import { revealItemInDir } from "../platform";
   import { app, type ConnectionId } from "../state.svelte";
   import { setSessionArchived, removeProject } from "../ipc";
   import type { SessionSummary } from "../types";
