@@ -78,7 +78,7 @@
         {#each steps as step (step.kind === "thought" ? `thought-${step.at}` : `cluster-${step.calls[0]?.toolCallId}`)}
           {#if step.kind === "thought"}
             <p class="thought-text">
-              {step.text}{#if live && step === lastStep}<span class="cursor"></span>{/if}
+              {step.text}
             </p>
           {:else}
             <ToolCallGroup calls={step.calls} />
@@ -227,19 +227,5 @@
   }
   .done-icon.err {
     color: var(--danger);
-  }
-  .cursor {
-    display: inline-block;
-    width: 0.5rem;
-    height: 1em;
-    margin-left: 0.07rem;
-    background: var(--text-dim);
-    vertical-align: text-bottom;
-    animation: blink calc(1s * var(--anim-speed, 1)) step-start infinite;
-  }
-  @keyframes blink {
-    50% {
-      opacity: 0;
-    }
   }
 </style>

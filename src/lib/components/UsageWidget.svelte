@@ -125,7 +125,7 @@
       {/if}
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content class="sb-panel" side="top" align="end" sideOffset={8}>
+      <Popover.Content class="sb-panel usage-panel" side="top" align="end" sideOffset={8}>
         <div class="sb-cards">
           {#each cards as c (c.id)}
             <button
@@ -146,22 +146,15 @@
                   </span>
                 </span>
                 {#if multiServer}<ServerAvatar name={c.srv.label} seed={c.srv.serverId} size={14} />{/if}
-                {#if c.id === focused.id && cards.length > 1}<span class="pin"><Icon name="pinned" size={12} /></span>{/if}
               </span>
-              <span class="sb-rows">
+              <span class="wins">
                 {#each c.windows as w (w.label)}
-                  <span class="sb-meter">
-                    <span class="sb-meter-top">
-                      <span class="sb-meter-name">{w.label}</span>
-                      {#if w.resetsAt}<span class="sb-meter-note" title={resetTitle(w.resetsAt)}>{resetText(w.resetsAt, app.now)}</span>{/if}
-                    </span>
-                    <span class="sb-meter-row">
-                      <span class="sb-bar"><span class="sb-fill {level(w.pct)}" style="width: {Math.min(w.pct, 100)}%"></span></span>
-                      <span class="sb-value {level(w.pct)}">{w.pct}%</span>
-                    </span>
-                  </span>
+                  <span class="wname">{w.label}</span>
+                  <span class="sb-bar"><span class="sb-fill {level(w.pct)}" style="width: {Math.min(w.pct, 100)}%"></span></span>
+                  <span class="sb-value {level(w.pct)}">{w.pct}%</span>
+                  <span class="reset" title={w.resetsAt ? resetTitle(w.resetsAt) : undefined}>{w.resetsAt ? resetText(w.resetsAt, app.now) : ""}</span>
                 {:else}
-                  <span class="sb-meter-note">No plan limits on this login</span>
+                  <span class="sb-meter-note none">No plan limits on this login</span>
                 {/each}
               </span>
             </button>
@@ -179,14 +172,46 @@
 {/if}
 
 <style>
+  /* One column of compact cards: one line per window, so a long provider
+     list stays a short scroll. */
+  :global(.usage-panel) {
+    width: min(23rem, 92vw);
+  }
+  :global(.usage-panel .sb-cards) {
+    grid-template-columns: 1fr;
+    gap: 0.14rem;
+  }
+  :global(.usage-panel .sb-card) {
+    gap: 0.5rem;
+  }
+  .wins {
+    display: grid;
+    grid-template-columns: minmax(0, 6.5rem) 1fr auto 4rem;
+    align-items: center;
+    gap: 0.36rem 0.57rem;
+    font-size: 0.7rem;
+  }
+  .wname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wins .sb-value {
+    min-width: 2.2rem;
+  }
+  .reset {
+    font-size: 0.64rem;
+    color: var(--text-dim);
+    text-align: right;
+    white-space: nowrap;
+  }
+  .none {
+    grid-column: 1 / -1;
+  }
   .plan {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-  }
-  .pin {
-    display: flex;
-    color: var(--text-dim);
   }
   .plan + span::before {
     content: "·";

@@ -20,24 +20,7 @@
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import FindBar from "./FindBar.svelte";
 
-  let {
-    sessionId,
-    terminalId,
-    fresh,
-    onopened,
-    visible,
-  }: {
-    sessionId: string;
-    terminalId: string;
-    /** True for a tab this client just minted (the "+ New Tab" path, sends
-     * terminal_open); false for one discovered via terminal_list, possibly
-     * opened by another peer (sends terminal_attach instead). Only read at
-     * mount time. */
-    fresh: boolean;
-    /** Called once terminal_open has gone out for a `fresh` tab. */
-    onopened?: () => void;
-    visible: boolean;
-  } = $props();
+  let { sessionId, terminalId, visible }: { sessionId: string; terminalId: string; visible: boolean } = $props();
 
   let containerEl = $state<HTMLDivElement | null>(null);
   let term: Terminal | null = null;
@@ -50,6 +33,11 @@
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSentCols = 0;
   let lastSentRows = 0;
+  // Last output sequence written (§3.2); -1 until the first snapshot.
+  let lastSeq = -1;
+
+  const server = $derived(app.active);
+  const tab = $derived(server?.terminalById[terminalId]);
 
   // FindBar.svelte's UI; the search addon has none of its own. Decorations (highlighting
   // every match) are what makes onDidChangeResults actually fire, see SEARCH_DECORATIONS.
@@ -68,7 +56,14 @@
     activeMatchColorOverviewRuler: "#ff7043",
   };
 
-  function openFind() {
+  // For TerminalPanel's toolbar, via bind:this.
+  export function focus() {
+    term?.focus();
+  }
+  export function clear() {
+    term?.clear();
+  }
+  export function openFind() {
     findOpen = true;
     requestAnimationFrame(() => findInputEl?.focus());
   }
@@ -112,18 +107,33 @@
         label: "Paste",
         icon: "clipboard-list",
         onSelect: async () => {
-          const cid = app.activeConnectionId;
-          const text = await readClipboard();
-          if (cid && text) terminalInput(cid, sessionId, terminalId, new TextEncoder().encode(text));
+          paste(await readClipboard());
         },
       },
       { label: "Select All", icon: "square", onSelect: () => term?.selectAll() },
       {
         label: "Clear Scrollback",
-        icon: "trash",
+        icon: "clear-all",
         onSelect: () => term?.clear(),
       },
+      { label: "Find", icon: "search", onSelect: openFind },
     ];
+  }
+
+  function paste(text: string) {
+    const cid = app.activeConnectionId;
+    if (cid && text) terminalInput(cid, sessionId, terminalId, new TextEncoder().encode(text));
+  }
+
+  function attach(restartIfExited = false) {
+    const cid = app.activeConnectionId;
+    if (!term || !cid) return;
+    terminalAttach(cid, sessionId, terminalId, term.cols || 80, term.rows || 24, restartIfExited);
+  }
+
+  function writeExitBanner() {
+    const code = server?.terminalById[terminalId]?.exitCode ?? 0;
+    term?.write(`\r\n\x1b[2m[process exited with code ${code}, press Enter to restart]\x1b[0m\r\n`);
   }
 
   function scheduleResize() {
@@ -195,6 +205,20 @@
       // stopPropagation on every branch here: returning `false` only tells xterm not to
       // handle the key, the raw DOM event still bubbles and would also trigger ChatPanel's
       // own Ctrl+F.
+      // Ctrl+Shift+C/V, like every Linux terminal: plain Ctrl+C/V belong to the shell.
+      if (e.ctrlKey && e.shiftKey && e.code === "KeyC") {
+        e.stopPropagation();
+        e.preventDefault();
+        const sel = term?.getSelection();
+        if (sel) void writeClipboard(sel);
+        return false;
+      }
+      if (e.ctrlKey && e.shiftKey && e.code === "KeyV") {
+        e.stopPropagation();
+        e.preventDefault();
+        void readClipboard().then(paste);
+        return false;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
         e.stopPropagation();
         openFind();
@@ -216,35 +240,36 @@
     });
 
     term.onData((data) => {
-      const cid = app.activeConnectionId;
-      if (cid) terminalInput(cid, sessionId, terminalId, new TextEncoder().encode(data));
-    });
-
-    // The shell's own OSC 0/2 "set title" (a well-behaved prompt, or vim/htop). Falls back
-    // to the tab's shell-binary `label` until one arrives.
-    term.onTitleChange((title) => {
-      const server = app.active;
-      const tab = server?.terminalById[terminalId];
-      if (server && tab) {
-        server.terminalById = { ...server.terminalById, [terminalId]: { ...tab, title: title || undefined } };
+      // An exited shell takes no input; Enter respawns it (the banner writeExitBanner prints).
+      if (server?.terminalById[terminalId]?.status === "exited") {
+        if (data === "\r") attach(true);
+        return;
       }
+      paste(data);
     });
 
     // Registered before the snapshot/chunk subscription below so OSC 633 markers in replayed
-    // history are picked up too, not just live output.
-    shellIntegration = attachShellIntegration(term, (cwd) => {
-      const server = app.active;
-      const tab = server?.terminalById[terminalId];
-      if (server && tab && tab.cwd !== cwd) {
-        server.terminalById = { ...server.terminalById, [terminalId]: { ...tab, cwd } };
-      }
-    });
+    // history are picked up too, not just live output. Title/cwd/busy are state.svelte.ts's job.
+    shellIntegration = attachShellIntegration(term);
 
     // Subscribed before the open/attach request goes out, so the snapshot
     // that request triggers can never be missed (terminalBus.ts).
     unsubscribe = subscribeTerminal(terminalId, (msg) => {
       if (!term) return;
-      if (msg.kind === "snapshot") term.reset();
+      if (msg.kind === "snapshot") {
+        term.reset();
+        term.write(msg.bytes);
+        lastSeq = msg.sequence;
+        if (server?.terminalById[terminalId]?.status === "exited") writeExitBanner();
+        return;
+      }
+      if (lastSeq >= 0) {
+        // The server may resend a chunk the snapshot already had; a gap means this
+        // connection was dropped from the fan-out, and only a fresh snapshot recovers it.
+        if (msg.sequence <= lastSeq) return;
+        if (msg.sequence > lastSeq + 1) return attach();
+      }
+      lastSeq = msg.sequence;
       term.write(msg.bytes);
     });
 
@@ -257,10 +282,13 @@
       const rows = term.rows || 24;
       lastSentCols = cols;
       lastSentRows = rows;
-      if (fresh) {
-        app.active?.registerTerminalTab(sessionId, terminalId);
-        terminalOpen(connectionId, sessionId, terminalId, { cols, rows });
-        onopened?.();
+      // Minted by this client (ServerState.newTerminal): open it, and focus it since a person
+      // just asked for it. Anything else already exists server-side, possibly from another peer.
+      if (server?.freshTerminals.has(terminalId)) {
+        const cwd = server.freshTerminals.get(terminalId);
+        server.freshTerminals.delete(terminalId);
+        terminalOpen(connectionId, sessionId, terminalId, { cols, rows, cwd });
+        term.focus();
       } else {
         terminalAttach(connectionId, sessionId, terminalId, cols, rows);
       }
@@ -294,8 +322,27 @@
     if (term) term.options.smoothScrollDuration = app.settings.terminalSmoothScroll ? 125 : 0;
   });
 
+  // Fit locally right away so a terminal shown after being hidden doesn't flash at its stale
+  // size; telling the pty is still debounced.
   $effect(() => {
-    if (visible) scheduleResize();
+    if (!visible) return;
+    requestAnimationFrame(() => fitAddon?.fit());
+    scheduleResize();
+  });
+
+  // A reconnect is a new server-side stream with nothing attached; this xterm would sit dead.
+  let wasConnected = true;
+  $effect(() => {
+    const connected = server?.connectionStatus === "connected";
+    if (connected && !wasConnected) attach();
+    wasConnected = connected;
+  });
+
+  let prevStatus: string | undefined;
+  $effect(() => {
+    const status = tab?.status;
+    if (status === "exited" && prevStatus && prevStatus !== "exited") writeExitBanner();
+    prevStatus = status;
   });
 </script>
 

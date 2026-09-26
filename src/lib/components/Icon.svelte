@@ -2,6 +2,16 @@
   // Tabler Icons, inlined at build time via Vite's `?raw` loader so they
   // inherit color like text (strokes are `currentColor`).
   import plus from "@tabler/icons/outline/plus.svg?raw";
+  import arrowBackUp from "@tabler/icons/outline/arrow-back-up.svg?raw";
+  import switchHorizontal from "@tabler/icons/outline/switch-horizontal.svg?raw";
+  import layoutGrid from "@tabler/icons/outline/layout-grid.svg?raw";
+  import dots from "@tabler/icons/outline/dots.svg?raw";
+  import code from "@tabler/icons/outline/code.svg?raw";
+  import messageQuestion from "@tabler/icons/outline/message-question.svg?raw";
+  import listSearch from "@tabler/icons/outline/list-search.svg?raw";
+  import worldWww from "@tabler/icons/outline/world-www.svg?raw";
+  import gitCompare from "@tabler/icons/outline/git-compare.svg?raw";
+  import circleCheck2 from "@tabler/icons/outline/checks.svg?raw";
   import send from "@tabler/icons/outline/send.svg?raw";
   import pause from "@tabler/icons/outline/player-pause.svg?raw";
   import atSign from "@tabler/icons/outline/at.svg?raw";
@@ -26,6 +36,7 @@
   import network from "@tabler/icons/outline/network.svg?raw";
   import server from "@tabler/icons/outline/server.svg?raw";
   import laptop from "@tabler/icons/outline/device-laptop.svg?raw";
+  import devices from "@tabler/icons/outline/devices.svg?raw";
   import user from "@tabler/icons/outline/user.svg?raw";
   import mediaImage from "@tabler/icons/outline/photo.svg?raw";
   import palette from "@tabler/icons/outline/palette.svg?raw";
@@ -81,6 +92,36 @@
   import filter from "@tabler/icons/outline/filter.svg?raw";
   import bellFilled from "@tabler/icons/filled/bell.svg?raw";
   import chartBar from "@tabler/icons/outline/chart-bar.svg?raw";
+  import infoCircle from "@tabler/icons/outline/info-circle.svg?raw";
+  import logout from "@tabler/icons/outline/logout.svg?raw";
+  import selector from "@tabler/icons/outline/selector.svg?raw";
+  import clearAll from "@tabler/icons/outline/clear-all.svg?raw";
+  import arrowsMinimize from "@tabler/icons/outline/arrows-minimize.svg?raw";
+  import circleX from "@tabler/icons/outline/circle-x.svg?raw";
+  import playerStop from "@tabler/icons/outline/player-stop.svg?raw";
+  import folderCode from "@tabler/icons/outline/folder-code.svg?raw";
+  import folderCheck from "@tabler/icons/outline/folder-check.svg?raw";
+  import folderBolt from "@tabler/icons/outline/folder-bolt.svg?raw";
+  import folderShare from "@tabler/icons/outline/folder-share.svg?raw";
+  import folderStar from "@tabler/icons/outline/folder-star.svg?raw";
+  import folderDown from "@tabler/icons/outline/folder-down.svg?raw";
+  import brandNpm from "@tabler/icons/outline/brand-npm.svg?raw";
+  import brandGithub from "@tabler/icons/outline/brand-github.svg?raw";
+  import brandVscode from "@tabler/icons/outline/brand-vscode.svg?raw";
+  import brandDocker from "@tabler/icons/outline/brand-docker.svg?raw";
+  import browser from "@tabler/icons/outline/browser.svg?raw";
+  import arrowsDiff from "@tabler/icons/outline/arrows-diff.svg?raw";
+  import robot from "@tabler/icons/outline/robot.svg?raw";
+  import files from "@tabler/icons/outline/files.svg?raw";
+  import arrowLeft from "@tabler/icons/outline/arrow-left.svg?raw";
+  import arrowRight from "@tabler/icons/outline/arrow-right.svg?raw";
+  import aspectRatio from "@tabler/icons/outline/aspect-ratio.svg?raw";
+  import deviceMobile from "@tabler/icons/outline/device-mobile.svg?raw";
+  import deviceTablet from "@tabler/icons/outline/device-tablet.svg?raw";
+  import externalLink from "@tabler/icons/outline/external-link.svg?raw";
+  import deviceFloppy from "@tabler/icons/outline/device-floppy.svg?raw";
+  import gitCommit from "@tabler/icons/outline/git-commit.svg?raw";
+  import fileDiff from "@tabler/icons/outline/file-diff.svg?raw";
 
   const icons = {
     plus,
@@ -108,6 +149,7 @@
     network,
     server,
     laptop,
+    devices,
     user,
     "media-image": mediaImage,
     palette,
@@ -163,6 +205,46 @@
     filter,
     "bell-filled": bellFilled,
     "chart-bar": chartBar,
+    "info-circle": infoCircle,
+    logout,
+    selector,
+    "clear-all": clearAll,
+    "arrows-minimize": arrowsMinimize,
+    "circle-x": circleX,
+    "player-stop": playerStop,
+    "folder-code": folderCode,
+    "folder-check": folderCheck,
+    "folder-bolt": folderBolt,
+    "folder-share": folderShare,
+    "folder-star": folderStar,
+    "folder-down": folderDown,
+    "brand-npm": brandNpm,
+    "brand-github": brandGithub,
+    "brand-vscode": brandVscode,
+    "brand-docker": brandDocker,
+    "browser": browser,
+    "arrows-diff": arrowsDiff,
+    "robot": robot,
+    "files": files,
+    "arrow-left": arrowLeft,
+    "arrow-right": arrowRight,
+    "aspect-ratio": aspectRatio,
+    "device-mobile": deviceMobile,
+    "device-tablet": deviceTablet,
+    "external-link": externalLink,
+    "device-floppy": deviceFloppy,
+    "git-commit": gitCommit,
+    "file-diff": fileDiff,
+    "arrow-back-up": arrowBackUp,
+    "switch-horizontal": switchHorizontal,
+    "layout-grid": layoutGrid,
+    dots,
+    code,
+    "message-question": messageQuestion,
+    "list-search": listSearch,
+    "world-www": worldWww,
+    "git-compare": gitCompare,
+    checks: circleCheck2,
   };
 
   let { name, size = 16 }: { name: keyof typeof icons; size?: number } = $props();

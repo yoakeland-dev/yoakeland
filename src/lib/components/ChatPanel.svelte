@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { app } from "../state.svelte";
+  import { untrack } from "svelte";
+  import { app, CHAT_SIDEBAR_MIN_WIDTH, chatSidebarMinCss } from "../state.svelte";
   import ChatHeader from "./ChatHeader.svelte";
   import MessageList from "./MessageList.svelte";
   import PromptInput from "./PromptInput.svelte";
@@ -28,6 +29,34 @@
   const messages = $derived(server?.messagesBySession[sessionId] ?? []);
   const isEmpty = $derived(messages.length === 0);
   const isSyncing = $derived(server?.syncingSessions[sessionId] ?? false);
+
+  // The tools column (ChatSidebar.svelte). The header covers only the chat's own column, so the
+  // tools' tab row can share the header band. `sbW` is the right-hand column's width as a share of
+  // .row. It goes straight onto the few boxes it sizes, never as a custom property on .panel:
+  // custom properties inherit, so changing one there restyles every node in the chat on each
+  // pointermove of a resize.
+  const sbOpen = $derived(server?.chatSidebarOpenBySession[sessionId] ?? false);
+  const swapped = $derived(sbOpen && !!server?.chatSidebarSwappedBySession[sessionId]);
+  // Same minimum as ChatSidebar.svelte's slot: the tools' tab row when they're on the right.
+  const sbMin = $derived(swapped ? `${CHAT_SIDEBAR_MIN_WIDTH}px` : chatSidebarMinCss(ownsChrome ? "--chrome-reserve" : "--local-island-reserve"));
+  const sbW = $derived(`clamp(${sbMin}, ${app.chatSidebarWidthRatio * 100}%, 50%)`);
+
+  // Swapping snaps rather than sliding: transitions are off for the frame the layout flips in.
+  let instant = $state(false);
+  let lastSwapped = untrack(() => swapped);
+  $effect.pre(() => {
+    if (swapped === lastSwapped) return;
+    lastSwapped = swapped;
+    instant = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => (instant = false)));
+  });
+
+  let list = $state<MessageList>();
+  let scrolledUp = $state(false);
+
+  // The header's left end (its padding plus the back/forward/title island), so the tools' tab
+  // row can start after it once swapped under it.
+  let headerLeftW = $state(0);
 
   // Different backend from TerminalView's xterm SearchAddon: matches each
   // message's plain-text field and navigates message-to-message, so "N
@@ -82,22 +111,31 @@
 <div class="chat-area">
   <section
     class="panel"
+    data-session-id={sessionId}
     class:sidebar-collapsed={!sidePanel && app.sidebarCollapsed}
+    class:sb-open={sbOpen}
+    class:sb-swapped={swapped}
+    class:sb-resizing={app.chatSidebarResizing}
+    class:instant
     bind:this={panelEl}
   >
     {#if app.settings.wallpaper}
       <canvas
         class="wallpaper"
         class:visible={isEmpty}
-        use:wallpaperGL={{ src: app.settings.wallpaper, style: app.settings.wallpaperStyle }}
+        use:wallpaperGL={{ src: app.settings.wallpaper, style: app.settings.wallpaperStyle, visible: isEmpty }}
       ></canvas>
     {/if}
     <ChatHeader
       {sessionId}
       reserveToggle={!sidePanel && app.sidebarCollapsed}
+      reserveChrome={!sbOpen || swapped}
+      chatWidth={sbOpen ? sbW : undefined}
+      {swapped}
       {ownsChrome}
       {sidePanel}
       overlay
+      bind:leftWidth={headerLeftW}
     />
     {#if !ownsChrome}
       <!-- Same chrome-surface look as the real window-corner island (app.css),
@@ -124,11 +162,17 @@
         </button>
       </div>
     {/if}
-    <div class="row">
+    <div class="row" class:swapped>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="body" class:syncing={isSyncing} inert={isSyncing} onkeydown={onChatKeydown}>
-        <MessageList {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
-        <PromptInput {sessionId} floating={isEmpty} />
+      <div
+        class="body"
+        class:syncing={isSyncing}
+        inert={isSyncing}
+        onkeydown={onChatKeydown}
+        style:flex-basis={swapped ? sbW : null}
+      >
+        <MessageList bind:this={list} bind:scrolledUp {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
+        <PromptInput {sessionId} floating={isEmpty} {scrolledUp} onJump={() => list?.jumpToBottom()} />
         {#if app.active?.openPlanSessionId === sessionId}
           <PlanPanel {sessionId} />
         {/if}
@@ -145,7 +189,7 @@
           />
         {/if}
       </div>
-      <ChatSidebar {sessionId} />
+      <ChatSidebar {sessionId} {ownsChrome} {sidePanel} reserveLeft={headerLeftW} />
     </div>
     <!-- Below the row, not inside it: opening it shrinks .row as a whole
          rather than carving into just .body or ChatSidebar. -->
@@ -190,6 +234,8 @@
     flex: 1;
     display: flex;
     min-height: 0;
+    /* ChatSidebar.svelte sizes its sliding body in cqw against this. */
+    container-type: inline-size;
   }
   .body {
     flex: 1;
@@ -202,7 +248,25 @@
        the viewport, since a sidebar can narrow it. */
     container-type: inline-size;
   }
-  .body :global(.list > *) {
+  /* Swapped: the chat is the narrow right column (its width inline), the tools take the rest. */
+  .row.swapped .body {
+    flex-grow: 0;
+    flex-shrink: 0;
+  }
+  /* The header spans only the chat column (ChatHeader.svelte sizes that). */
+  .panel > :global(.header) {
+    transition:
+      padding calc(0.2s * var(--anim-speed, 1)) ease,
+      right calc(0.2s * var(--anim-speed, 1)) ease;
+  }
+  .panel.sb-resizing > :global(.header),
+  .panel.instant > :global(.header),
+  .panel.instant :global(.chat-sidebar-slot),
+  .panel.instant :global(.chat-sidebar-body),
+  .panel.instant :global(.chat-sidebar-body > .tabs) {
+    transition: none;
+  }
+  .body :global(.rows > *) {
     width: 100%;
     max-width: 56rem;
     align-self: center;

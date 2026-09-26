@@ -63,88 +63,74 @@
     {/if}
     {#if fh.cpu != null}<span class="metric"><span class="dim">CPU</span> <span class="sb-level {level(fh.cpu)}">{fh.cpu}%</span></span>{/if}
     {#if fh.mem != null}<span class="metric"><span class="dim">RAM</span> <span class="sb-level {level(fh.mem)}">{fh.mem}%</span></span>{/if}
-    {#each down as s (s.connectionId)}
-      <span class="down-label">{s.label} <span class="state {s.connectionStatus}">{STATE[s.connectionStatus as keyof typeof STATE]}</span></span>
-    {/each}
+    {#if down.length === 1}
+      <span class="down-label"><span class="down-name">{down[0].label}</span> <span class="state {down[0].connectionStatus}">{STATE[down[0].connectionStatus as keyof typeof STATE]}</span></span>
+    {:else if down.length}
+      <span class="state"><Icon name="alert-circle" size={12} /> {down.length} offline</span>
+    {/if}
   </Popover.Trigger>
   <Popover.Portal>
-    <Popover.Content class="sb-panel" side="top" align="start" sideOffset={8}>
+    <Popover.Content class="sb-panel servers-panel" side="top" align="start" sideOffset={8}>
       {#if servers.length}
-        <div class="sb-cards">
+        <ul class="sb-list">
           {#each servers as s (s.connectionId)}
             {@const h = health(s)}
             {@const st = s.connectionStatus === "connected" ? s.serverStatus : null}
-            <div
-              class="sb-card"
-              class:selected={s === focused && servers.length > 1}
-              class:offline={!st}
-              title={s.connectionStatus !== "connected" ? "Showing cached chats until it reconnects" : undefined}
-            >
-              <span class="sb-card-head">
+            <li class="sb-row srv-row" class:current={s === focused && servers.length > 1} class:offline={!st}>
+              <span class="sb-row-main">
                 <ServerAvatar name={s.label} seed={s.serverId} size={24} />
-                <span class="sb-who">
-                  <span class="sb-card-title">{s.label}</span>
-                  <span class="sb-card-sub">
+                <span class="sb-row-text">
+                  <span class="sb-row-name">{s.label}</span>
+                  <span class="sb-row-meta">
                     {#if st}
-                      <span class="dot"></span> up {uptime(st.uptimeSec)}{#if st.version}&nbsp;· v{st.version}{/if}
+                      <span class="dot"></span>up {uptime(st.uptimeSec)}{#if st.version}&nbsp;· v{st.version}{/if}
+                    {:else if s.connectionStatus === "connected"}
+                      Waiting for its first status…
                     {:else}
-                      <span class="state {s.connectionStatus}">{STATE[s.connectionStatus as keyof typeof STATE] ?? s.connectionStatus}</span>
+                      <span class="state {s.connectionStatus}">{STATE[s.connectionStatus as keyof typeof STATE] ?? s.connectionStatus}</span>&nbsp;· showing cached chats
                     {/if}
                   </span>
+                  {#if st}
+                    <span class="sb-row-meta facts">
+                      <span class:busy={st.activeTurns > 0}>{st.activeTurns} running</span>
+                      <span>{st.openProjects} {st.openProjects === 1 ? "project" : "projects"}</span>
+                      <span>{st.peers} {st.peers === 1 ? "client" : "clients"}</span>
+                      <span title="yoakeland's own memory">{Math.round(st.heapBytes / 1024 ** 2)} MB</span>
+                    </span>
+                  {/if}
                 </span>
-              </span>
-              {#if st}
-                <span class="sb-rows">
-                  {#if h.cpu != null}
-                    <span class="sb-meter">
-                      <span class="sb-meter-top">
-                        <span class="sb-meter-name">CPU</span>
-                        <span class="sb-meter-note">load {st.load1?.toFixed(2)} · {st.cpus} cores</span>
-                      </span>
-                      <span class="sb-meter-row">
+                {#if st}
+                  <span class="meters">
+                    {#if h.cpu != null}
+                      <span class="m" title="Load {st.load1?.toFixed(2)} across {st.cpus} cores">
+                        <span class="k">CPU</span>
                         <span class="sb-bar"><span class="sb-fill {level(h.cpu)}" style="width: {Math.min(h.cpu, 100)}%"></span></span>
-                        <span class="sb-value {level(h.cpu)}">{h.cpu}%</span>
+                        <span class="v sb-level {level(h.cpu)}">{h.cpu}%</span>
                       </span>
-                    </span>
-                  {/if}
-                  {#if h.mem != null}
-                    <span class="sb-meter">
-                      <span class="sb-meter-top">
-                        <span class="sb-meter-name">Memory</span>
-                        <span class="sb-meter-note">{gb(h.memUsed!)} / {gb(h.memTotal!)} GB</span>
-                      </span>
-                      <span class="sb-meter-row">
+                    {/if}
+                    {#if h.mem != null}
+                      <span class="m" title="{gb(h.memUsed!)} of {gb(h.memTotal!)} GB in use">
+                        <span class="k">RAM</span>
                         <span class="sb-bar"><span class="sb-fill {level(h.mem)}" style="width: {h.mem}%"></span></span>
-                        <span class="sb-value {level(h.mem)}">{h.mem}%</span>
+                        <span class="v sb-level {level(h.mem)}">{h.mem}%</span>
                       </span>
-                    </span>
-                  {/if}
-                </span>
-                <dl class="sb-facts">
-                  <dt>Running turns</dt><dd>{st.activeTurns}</dd>
-                  <dt>Open projects</dt><dd>{st.openProjects}</dd>
-                  <dt>Connected clients</dt><dd>{st.peers}</dd>
-                  <dt>yoakeland memory</dt><dd>{Math.round(st.heapBytes / 1024 ** 2)} MB</dd>
-                </dl>
-              {:else if s.connectionStatus === "connected"}
-                <span class="sb-meter-note">Waiting for its first status…</span>
-              {/if}
-            </div>
+                      <span class="gb">{gb(h.memUsed!)} / {gb(h.memTotal!)} GB</span>
+                    {/if}
+                  </span>
+                {/if}
+              </span>
+            </li>
           {/each}
-        </div>
+        </ul>
       {:else}
         <p class="sb-empty">No servers yet</p>
       {/if}
       <div class="sb-foot">
         <span class="sb-foot-title">Servers</span>
-        <span class="sb-foot-actions">
-          <button type="button" class="sb-foot-btn" onclick={() => ((open = false), app.openPalette("servers"))}>
-            <Icon name="network" size={12} /> Switch
-          </button>
-          <button type="button" class="sb-foot-btn" onclick={() => ((open = false), (app.settingsTab = "servers"), (app.showSettings = true))}>
-            <Icon name="settings" size={12} /> Manage
-          </button>
-        </span>
+        <span class="sb-foot-meta">{servers.length - down.length} of {servers.length} online</span>
+        <button type="button" class="sb-foot-btn" onclick={() => ((open = false), app.openPalette("servers"))}>
+          <Icon name="settings" size={12} /> Manage
+        </button>
       </div>
     </Popover.Content>
   </Popover.Portal>
@@ -183,7 +169,20 @@
     opacity: 0.6;
   }
   .state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.29rem;
     color: var(--warning);
+  }
+  .down-label {
+    display: inline-flex;
+    gap: 0.29rem;
+    min-width: 0;
+  }
+  .down-name {
+    max-width: 9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .state.error {
     color: var(--danger);
@@ -194,13 +193,58 @@
     border-radius: 50%;
     background: var(--success);
   }
-  /* Nothing to meter: a slim full-width row under the live cards. */
-  .sb-card.offline {
-    grid-column: 1 / -1;
-    padding-block: 0.43rem;
+  :global(.servers-panel) {
+    width: min(30rem, 92vw);
   }
-  .sb-card.offline :global(.server-avatar) {
+  .srv-row .sb-row-main {
+    align-items: flex-start;
+    padding-block: 0.5rem;
+  }
+  .srv-row .sb-row-text {
+    gap: 0.14rem;
+  }
+  .srv-row.offline :global(.server-avatar) {
     filter: grayscale(1);
     opacity: 0.55;
+  }
+  .facts {
+    gap: 0;
+  }
+  .facts span + span::before {
+    content: "·";
+    margin: 0 0.36rem;
+  }
+  .busy {
+    color: var(--accent);
+  }
+  .meters {
+    flex-shrink: 0;
+    width: 8.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.29rem;
+    padding-top: 0.14rem;
+  }
+  .m {
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    font-size: var(--text-label-size);
+  }
+  .k {
+    width: 1.7rem;
+    color: var(--text-dim);
+  }
+  .v {
+    min-width: 2rem;
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .gb {
+    align-self: flex-end;
+    font-size: 0.64rem;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
   }
 </style>

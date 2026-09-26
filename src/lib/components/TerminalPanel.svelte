@@ -1,16 +1,20 @@
 <script lang="ts">
-  // Per-chat multi-tab terminal drawer (SPEC.md §3.1/§3.2 terminal_*), independent per
-  // session. `overflow: hidden` + height:0 when closed means the content genuinely isn't
-  // reachable, not just moved off-screen.
+  // Per-chat terminal drawer (SPEC.md §3.1/§3.2 terminal_*), laid out like VS Code's panel: a top
+  // bar that is both the toolbar and the active terminal's status line, and a list of terminals
+  // on the right once there's more than one. `overflow: hidden` + height:0 when closed means the
+  // content genuinely isn't reachable, not just moved off-screen.
   //
   // Resizable up to half the panel's height, same clamp(min, ratio%, 50%) trick as
   // RightSidebar.svelte but vertical and without slide-off/collapse-by-drag: this panel
   // already has an explicit open/close toggle (ChatHeader.svelte).
+  import { tick } from "svelte";
   import { app, TERMINAL_MIN_HEIGHT } from "../state.svelte";
   import Icon from "./Icon.svelte";
   import TerminalView from "./TerminalView.svelte";
+  import TerminalStatusIcon, { terminalState } from "./TerminalStatusIcon.svelte";
+  import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { terminalAttach, terminalClose } from "../ipc";
-  import type { TerminalStatus } from "../types";
+  import { basename, terminalTitle } from "../format";
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -18,77 +22,113 @@
   const open = $derived(server?.terminalOpenBySession[sessionId] ?? false);
   const tabIds = $derived(server?.terminalsBySession[sessionId] ?? []);
   const activeId = $derived(server?.activeTerminalBySession[sessionId]);
+  const active = $derived(activeId ? server?.terminalById[activeId] : undefined);
+  const activeState = $derived(active && terminalState(active));
   const splitOn = $derived(server?.terminalSplitBySession[sessionId] ?? false);
   const splitId = $derived(server?.splitTerminalBySession[sessionId]);
   // A brand-new chat's sessionId is minted locally and never told to the server until its
   // first message goes out, so there's no session for a terminal to run in yet.
   const isDraft = $derived(!(server?.messagesBySession[sessionId] ?? []).length);
+  const home = $derived(server?.currentProjectPath);
 
-  // Ids minted by this client via "+ New Tab" send terminal_open on first mount; every
-  // other id (from terminal_list, or opened by a peer) sends terminal_attach instead. An id
-  // is dropped once its TerminalView has sent terminal_open, since a remount must attach,
-  // not re-open (the server rejects a second terminal_open for a live id). Plain Set, not
-  // $state: only read at mount.
-  const freshIds = new Set<string>();
+  let views = $state<Record<string, TerminalView>>({});
   let draggingId = $state<string | null>(null);
+  let renamingId = $state<string | null>(null);
+  let renameValue = $state("");
   let slotEl = $state<HTMLDivElement | null>(null);
 
-  // Spins up a first tab when the drawer opens with nothing running, rather than showing an
+  // Spins up a first terminal when the drawer opens with nothing running, rather than showing an
   // empty pane with no way back in. Gated on `terminalsListedBySession` so it can't fire
-  // before terminal_list confirms nothing's already running, or it'd race a redundant tab.
+  // before terminal_list confirms nothing's already running, or it'd race a redundant one.
   $effect(() => {
     if (open && !isDraft && server?.terminalsListedBySession[sessionId] && tabIds.length === 0 && !activeId) newTerminal();
   });
 
-  const sizeVars = $derived(`--term-pct: ${app.terminalHeightRatio * 100}%; --term-min: ${TERMINAL_MIN_HEIGHT}px`);
+  // Opening the drawer hands the keyboard to the terminal, like VS Code's Ctrl+`.
+  let wasOpen = false;
+  $effect(() => {
+    if (open && !wasOpen && activeId) void tick().then(() => requestAnimationFrame(() => views[activeId]?.focus()));
+    wasOpen = open;
+  });
 
+  // Inline, not custom properties on the slot, which would restyle the terminals inside on
+  // every pointermove of a resize.
+  const height = $derived(`clamp(${TERMINAL_MIN_HEIGHT}px, ${app.terminalHeightRatio * 100}%, 50%)`);
+
+  // Measured once per drag, not per pointermove (a read right after a resize forces layout).
+  let dragBox: DOMRect | null = null;
   function startResize(e: PointerEvent) {
-    if (!open) return;
+    if (!open || !slotEl) return;
+    dragBox = (slotEl.parentElement as HTMLElement).getBoundingClientRect();
+    app.terminalMaximized = false;
     app.terminalResizing = true;
     document.body.style.cursor = "row-resize";
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function onResize(e: PointerEvent) {
-    if (!app.terminalResizing || !slotEl) return;
-    const container = (slotEl.parentElement as HTMLElement).getBoundingClientRect();
+    if (!app.terminalResizing || !dragBox) return;
+    const container = dragBox;
     const fromBottom = container.bottom - e.clientY;
     const clamped = Math.min(container.height * 0.5, Math.max(TERMINAL_MIN_HEIGHT, fromBottom));
     app.terminalHeightRatio = Math.min(0.5, Math.max(0, clamped / container.height));
   }
   function stopResize() {
     if (!app.terminalResizing) return;
+    dragBox = null;
     app.terminalResizing = false;
     document.body.style.cursor = "";
     app.setTerminalHeightRatio(app.terminalHeightRatio);
   }
 
   function newTerminal() {
-    if (!server || isDraft) return;
-    const id = `term-${crypto.randomUUID().slice(0, 8)}`;
-    freshIds.add(id);
-    server.registerTerminalTab(sessionId, id);
-    server.setActiveTerminalTab(sessionId, id);
+    if (server && !isDraft) server.newTerminal(sessionId);
   }
 
-  /** Alt/Cmd-click a tab while split is on to load it into the split pane
-   * instead of the main one. A plain click always targets the main pane. */
-  function selectTab(id: string, e: MouseEvent) {
+  /** Alt/Cmd-click while split is on loads the terminal into the split pane instead. */
+  function select(id: string, e?: MouseEvent | KeyboardEvent) {
     if (!server) return;
-    if (splitOn && (e.altKey || e.metaKey)) server.setSplitTerminalTab(sessionId, id);
+    if (splitOn && e && (e.altKey || e.metaKey)) server.setSplitTerminalTab(sessionId, id);
     else server.setActiveTerminalTab(sessionId, id);
+    requestAnimationFrame(() => views[id]?.focus());
   }
 
-  function closeTab(id: string, e: MouseEvent) {
-    e.stopPropagation();
+  function kill(id: string) {
     const cid = app.activeConnectionId;
     if (cid) terminalClose(cid, sessionId, id);
   }
 
-  function restartTab(id: string, e: MouseEvent) {
-    e.stopPropagation();
+  function restart(id: string) {
     const cid = app.activeConnectionId;
     const tab = server?.terminalById[id];
     if (cid && tab) terminalAttach(cid, sessionId, id, tab.cols, tab.rows, true);
+    requestAnimationFrame(() => views[id]?.focus());
+  }
+
+  async function startRename(id: string) {
+    const tab = server?.terminalById[id];
+    if (!tab) return;
+    renamingId = id;
+    renameValue = terminalTitle(tab);
+    await tick();
+    const input = document.querySelector<HTMLInputElement>(".term-list .rename");
+    input?.focus();
+    input?.select();
+  }
+  function commitRename() {
+    if (renamingId) server?.renameTerminal(renamingId, renameValue);
+    renamingId = null;
+  }
+
+  function menuFor(id: string): ContextMenuItem[] {
+    const tab = server?.terminalById[id];
+    return [
+      { label: "Rename", icon: "pencil", onSelect: () => void startRename(id) },
+      ...(splitOn && id !== splitId && id !== activeId
+        ? [{ label: "Show in split pane", icon: "layout-columns", onSelect: () => server?.setSplitTerminalTab(sessionId, id) } satisfies ContextMenuItem]
+        : []),
+      ...(tab?.status === "exited" ? [{ label: "Restart", icon: "refresh", onSelect: () => restart(id) } satisfies ContextMenuItem] : []),
+      { label: "Kill terminal", icon: "trash", danger: true, onSelect: () => kill(id) },
+    ];
   }
 
   function dragStart(id: string, e: DragEvent) {
@@ -98,24 +138,28 @@
       e.dataTransfer.setData("text/plain", id);
     }
   }
-  function dragOver(e: DragEvent) {
-    e.preventDefault();
-  }
   function dropOn(id: string, e: DragEvent) {
     e.preventDefault();
     if (draggingId && draggingId !== id) server?.reorderTerminalTabs(sessionId, draggingId, id);
     draggingId = null;
   }
 
-  function statusLabel(status: TerminalStatus, exitCode?: number) {
-    if (status === "exited") return `exited (${exitCode ?? 0})`;
-    if (status === "error") return "terminal error";
-    if (status === "starting") return "starting…";
-    return "running";
+  // Paths under the project start at its name, the way the sidebar names it.
+  function shortPath(path?: string) {
+    if (!path) return "";
+    if (home && (path === home || path.startsWith(home + "/"))) return basename(home) + path.slice(home.length);
+    return path;
   }
 </script>
 
-<div class="terminal-slot" class:open class:resizing={app.terminalResizing} style={sizeVars} bind:this={slotEl}>
+<div
+  class="terminal-slot"
+  class:open
+  class:max={open && app.terminalMaximized}
+  class:resizing={app.terminalResizing}
+  style:height={open && !app.terminalMaximized ? height : null}
+  bind:this={slotEl}
+>
   {#if open && isDraft}
     <div class="empty-state">
       <Icon name="terminal-2" size={20} />
@@ -124,78 +168,131 @@
     </div>
   {:else if open}
     <div class="bar">
-      {#if tabIds.length > 1}
-        <div class="tabs">
-          {#each tabIds as id (id)}
-            {@const tab = server?.terminalById[id]}
-            {#if tab}
-              <div
-                class="tab"
-                class:active={id === activeId}
-                class:split-active={splitOn && id === splitId}
-                class:dragging={draggingId === id}
-                role="tab"
-                tabindex="0"
-                aria-selected={id === activeId}
-                title="{tab.title || tab.label} — {statusLabel(tab.status, tab.exitCode)}"
-                draggable="true"
-                onclick={(e) => selectTab(id, e)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    selectTab(id, e as unknown as MouseEvent);
-                  }
-                }}
-                ondragstart={(e) => dragStart(id, e)}
-                ondragover={dragOver}
-                ondrop={(e) => dropOn(id, e)}
-                ondragend={() => (draggingId = null)}
-              >
-                <span class="status-dot {tab.status}"></span>
-                <span class="label">{tab.title || tab.label}</span>
-                {#if tab.status === "exited"}
-                  <button class="tab-btn" title="Reopen terminal" onclick={(e) => restartTab(id, e)}>
-                    <Icon name="refresh" size={12} />
-                  </button>
-                {/if}
-                <button class="tab-btn" title="Close terminal" onclick={(e) => closeTab(id, e)}>
-                  <Icon name="xmark" size={12} />
-                </button>
-              </div>
-            {/if}
-          {/each}
-        </div>
-      {/if}
+      <div class="status" title={active?.cwd}>
+        {#if active && activeState}
+          <TerminalStatusIcon tab={active} />
+          <span class="name">{terminalTitle(active)}</span>
+          {#if active.cwd}<span class="meta cwd">{shortPath(active.cwd)}</span>{/if}
+          <span class="meta state {activeState.tone}">{activeState.text}</span>
+          {#if active.sandboxTier}<span class="badge" title="Sandbox tier">{active.sandboxTier}</span>{/if}
+        {/if}
+      </div>
       <div class="bar-actions">
-        <button class="bar-btn" title="New terminal" onclick={newTerminal}>
-          <Icon name="plus" size={13} />
+        <button class="bar-btn" title="New terminal (Ctrl+Shift+`)" aria-label="New terminal" onclick={newTerminal}>
+          <Icon name="plus" size={14} />
         </button>
         <button
           class="bar-btn"
-          class:active={splitOn}
-          title={splitOn ? "Unsplit terminal" : "Split terminal"}
+          class:on={splitOn}
+          title={splitOn ? "Unsplit" : "Split"}
+          aria-label="Split"
+          disabled={tabIds.length < 2 && !splitOn}
           onclick={() => server?.toggleTerminalSplit(sessionId)}
         >
-          <Icon name="layout-columns" size={13} />
+          <Icon name="layout-columns" size={14} />
+        </button>
+        <span class="sep"></span>
+        <button class="bar-btn" title="Find (Ctrl+F)" aria-label="Find" disabled={!activeId} onclick={() => activeId && views[activeId]?.openFind()}>
+          <Icon name="search" size={14} />
+        </button>
+        <button class="bar-btn" title="Clear" aria-label="Clear" disabled={!activeId} onclick={() => activeId && views[activeId]?.clear()}>
+          <Icon name="clear-all" size={14} />
+        </button>
+        {#if active?.status === "exited"}
+          <button class="bar-btn" title="Restart" aria-label="Restart" onclick={() => restart(active.terminalId)}>
+            <Icon name="refresh" size={14} />
+          </button>
+        {/if}
+        <button class="bar-btn danger" title="Kill terminal" aria-label="Kill terminal" disabled={!activeId} onclick={() => activeId && kill(activeId)}>
+          <Icon name="trash" size={14} />
+        </button>
+        <span class="sep"></span>
+        <button
+          class="bar-btn"
+          title={app.terminalMaximized ? "Restore panel size" : "Maximize panel"}
+          aria-label="Maximize"
+          onclick={() => (app.terminalMaximized = !app.terminalMaximized)}
+        >
+          <Icon name={app.terminalMaximized ? "arrows-minimize" : "maximize"} size={14} />
+        </button>
+        <button class="bar-btn" title="Hide (Ctrl+`)" aria-label="Hide terminal" onclick={() => server?.toggleTerminal(sessionId)}>
+          <Icon name="chevron-down" size={14} />
         </button>
       </div>
     </div>
-    <div class="panes" class:split={splitOn}>
-      {#each tabIds as id (id)}
-        {@const isSplit = splitOn && id === splitId}
-        <!-- A flat, single-parent list positioned via grid-column (not two
-             separately-nested lists): reassigning which pane an id fills
-             (main/split, via setActiveTerminalTab/setSplitTerminalTab) is
-             then just a style change, never a reparent, so the id's
-             TerminalView (and its live xterm instance) never remounts. Every
-             tab in the session mounts (and attaches/opens) as soon as the
-             drawer is open, not just the one(s) currently in a pane, so
-             switching tabs is instant and a backgrounded tab keeps
-             receiving output while this drawer stays open. -->
-        <div class="pane-slot" class:right={isSplit} style:display={id === activeId || isSplit ? "block" : "none"}>
-          <TerminalView {sessionId} terminalId={id} fresh={freshIds.has(id)} onopened={() => freshIds.delete(id)} visible={id === activeId || isSplit} />
-        </div>
-      {/each}
+    <div class="body">
+      <div class="panes" class:split={splitOn}>
+        {#each tabIds as id (id)}
+          {@const isSplit = splitOn && id === splitId}
+          <!-- A flat, single-parent list positioned via grid-column (not two separately-nested
+               lists): reassigning which pane an id fills is then just a style change, never a
+               reparent, so its TerminalView (and live xterm) never remounts. Every terminal in
+               the chat mounts as soon as the drawer is open, so switching is instant and a
+               background one keeps receiving output. -->
+          <div class="pane-slot" class:right={isSplit} style:display={id === activeId || isSplit ? "block" : "none"}>
+            <TerminalView bind:this={views[id]} {sessionId} terminalId={id} visible={id === activeId || isSplit} />
+          </div>
+        {/each}
+      </div>
+      {#if tabIds.length > 1}
+        <ul class="term-list" role="tablist" aria-label="Terminals" aria-orientation="vertical">
+          {#each tabIds as id (id)}
+            {@const tab = server?.terminalById[id]}
+            {#if tab}
+              <li
+                class="term"
+                class:active={id === activeId}
+                class:in-split={splitOn && id === splitId}
+                class:exited={tab.status === "exited"}
+                class:dragging={draggingId === id}
+                draggable={renamingId !== id}
+                ondragstart={(e) => dragStart(id, e)}
+                ondragover={(e) => e.preventDefault()}
+                ondrop={(e) => dropOn(id, e)}
+                ondragend={() => (draggingId = null)}
+              >
+                {#if renamingId === id}
+                  <div class="term-main">
+                    <TerminalStatusIcon {tab} />
+                    <input
+                      class="rename"
+                      bind:value={renameValue}
+                      onblur={commitRename}
+                      onkeydown={(e) => {
+                        if (e.key === "Enter") commitRename();
+                        else if (e.key === "Escape") renamingId = null;
+                      }}
+                    />
+                  </div>
+                {:else}
+                  <ContextMenu items={() => menuFor(id)}>
+                    <button
+                      type="button"
+                      class="term-main"
+                      role="tab"
+                      aria-selected={id === activeId}
+                      title="{terminalTitle(tab)} · {terminalState(tab).text}{tab.cwd ? `\n${tab.cwd}` : ''}{splitOn ? '\nAlt+click: show in split pane' : ''}"
+                      onclick={(e) => select(id, e)}
+                      ondblclick={() => void startRename(id)}
+                      onkeydown={(e) => {
+                        if (e.key === "F2") void startRename(id);
+                        else if (e.key === "Delete") kill(id);
+                      }}
+                    >
+                      <TerminalStatusIcon {tab} />
+                      <span class="label">{terminalTitle(tab)}</span>
+                      {#if splitOn && id === splitId}<span class="split-mark" title="In the split pane"><Icon name="layout-columns" size={11} /></span>{/if}
+                    </button>
+                  </ContextMenu>
+                  <button type="button" class="term-close" title="Kill terminal" aria-label="Kill terminal" onclick={() => kill(id)}>
+                    <Icon name="xmark" size={12} />
+                  </button>
+                {/if}
+              </li>
+            {/if}
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
   {#if open}
@@ -228,132 +325,82 @@
       border-color calc(0.2s * var(--anim-speed, 1)) ease;
   }
   .terminal-slot.open {
-    height: clamp(var(--term-min), var(--term-pct), 50%);
     border-top-color: var(--panel-border);
+  }
+  /* Everything below the chat header, which overlays the panel. */
+  .terminal-slot.max {
+    height: calc(100% - var(--header-height));
   }
   .terminal-slot.resizing {
     transition: none;
   }
 
-  /* Compact, always-there control row once open: the tab strip itself
-     (`.tabs`) is the part that disappears down to nothing with only one
-     terminal running (`{#if tabIds.length > 1}` above), not this row. */
   .bar {
     flex-shrink: 0;
     display: flex;
-    align-items: stretch;
-    gap: var(--space-half);
-    min-height: 1.8rem;
-    padding: 0.21rem 0.36rem;
+    align-items: center;
+    gap: var(--space-1);
+    height: 1.9rem;
+    padding: 0 0.29rem 0 0.64rem;
     border-bottom: 1px solid var(--panel-border);
-  }
-  .tabs {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    min-width: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .tabs::-webkit-scrollbar {
-    display: none;
-  }
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: 0.36rem;
-    flex-shrink: 0;
-    max-width: 12rem;
-    padding: 0.21rem 0.36rem;
-    border-radius: calc(var(--radius-sm) - 2px);
-    color: var(--text-dim);
     font-size: var(--text-label-size);
-    font-weight: var(--text-label-weight);
-    cursor: pointer;
-    transition:
-      background-color calc(0.12s * var(--anim-speed, 1)) ease,
-      color calc(0.12s * var(--anim-speed, 1)) ease,
-      opacity calc(0.12s * var(--anim-speed, 1)) ease;
   }
-  .tab:hover {
-    background: var(--sidebar-hover);
-    color: var(--text);
-  }
-  .tab.active {
-    background: var(--sidebar-active);
-    color: var(--text);
-  }
-  /* The tab currently filling the split pane gets its own accent underline
-     so which-tab-is-where reads at a glance once two are on screen at once. */
-  .tab.split-active {
-    box-shadow: inset 0 -2px 0 var(--accent);
-  }
-  .tab.dragging {
-    opacity: 0.45;
-  }
-  .tab .label {
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .status {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     white-space: nowrap;
   }
-  .status-dot {
+  .status .name {
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+    min-width: 2rem;
+  }
+  .status .meta {
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .status .cwd {
+    font-family: var(--code-font-family, monospace);
+    flex-shrink: 2;
+  }
+  .status .state {
+    flex-shrink: 3;
+  }
+  .status .state.info {
+    color: var(--info);
+  }
+  .status .state.danger {
+    color: var(--danger);
+  }
+  .badge {
     flex-shrink: 0;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--success);
-  }
-  .status-dot.starting {
-    background: var(--warning);
-    animation: pulse calc(1s * var(--anim-speed, 1)) ease-in-out infinite;
-  }
-  .status-dot.exited {
-    background: var(--text-dim);
-  }
-  .status-dot.error {
-    background: var(--danger);
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.35;
-    }
-  }
-  .tab-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 1.14rem;
-    height: 1.14rem;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: inherit;
-    cursor: pointer;
-    opacity: 0;
-    transition:
-      opacity calc(0.1s * var(--anim-speed, 1)) ease,
-      background-color calc(0.1s * var(--anim-speed, 1)) ease;
-  }
-  .tab:hover .tab-btn,
-  .tab.active .tab-btn {
-    opacity: 0.7;
-  }
-  .tab-btn:hover {
-    opacity: 1 !important;
-    background: var(--sidebar-hover);
+    padding: 0 0.36rem;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    color: var(--text-dim);
+    font-size: 0.68rem;
+    line-height: 1.3;
   }
 
   .bar-actions {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 1px;
+  }
+  .sep {
+    width: 1px;
+    height: 0.9rem;
+    margin: 0 0.21rem;
+    background: var(--panel-border);
   }
   .bar-btn {
     display: flex;
@@ -370,12 +417,146 @@
       background-color calc(0.12s * var(--anim-speed, 1)) ease,
       color calc(0.12s * var(--anim-speed, 1)) ease;
   }
-  .bar-btn:hover {
+  .bar-btn:hover:not(:disabled) {
     background: var(--sidebar-hover);
     color: var(--text);
   }
-  .bar-btn.active {
+  .bar-btn.danger:hover:not(:disabled) {
+    color: var(--danger);
+  }
+  .bar-btn.on {
     color: var(--accent);
+  }
+  .bar-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  .panes {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: 0;
+    min-width: 0;
+  }
+  .panes.split {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pane-slot {
+    grid-column: 1;
+    /* Else a split pane earlier in tab order pushes the main one onto a second row. */
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+  }
+  .pane-slot.right {
+    grid-column: 2;
+    border-left: 1px solid var(--panel-border);
+  }
+
+  /* VS Code's terminal tabs list: only there with two or more. */
+  .term-list {
+    flex-shrink: 0;
+    width: clamp(8.5rem, 18%, 13rem);
+    margin: 0;
+    padding: 0.21rem;
+    list-style: none;
+    overflow-y: auto;
+    border-left: 1px solid var(--panel-border);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .term {
+    position: relative;
+    display: flex;
+    align-items: center;
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-dim);
+    transition: background-color calc(0.12s * var(--anim-speed, 1)) ease;
+  }
+  .term:hover {
+    background: var(--sidebar-hover);
+    color: var(--text);
+  }
+  .term.active {
+    background: var(--sidebar-active);
+    color: var(--text);
+  }
+  .term.in-split {
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .term.exited .label {
+    opacity: 0.6;
+  }
+  .term.dragging {
+    opacity: 0.45;
+  }
+  .term-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    padding: 0.29rem 0.43rem;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font: inherit;
+    font-size: var(--text-label-size);
+    text-align: left;
+    cursor: pointer;
+  }
+  .term-main .label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .split-mark {
+    display: flex;
+    color: var(--accent);
+  }
+  .rename {
+    flex: 1;
+    min-width: 0;
+    background: var(--input-bg, transparent);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    color: var(--text);
+    font: inherit;
+    padding: 0 0.21rem;
+    outline: none;
+  }
+  .term-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 1.14rem;
+    height: 1.14rem;
+    margin-right: 0.21rem;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .term:hover .term-close,
+  .term-close:focus-visible {
+    opacity: 0.7;
+  }
+  .term-close:hover {
+    opacity: 1;
+    color: var(--danger);
   }
 
   .empty-state {
@@ -397,26 +578,6 @@
   .empty-state span {
     max-width: 22rem;
     font-size: var(--text-label-size);
-  }
-
-  .panes {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-  .panes.split {
-    grid-template-columns: 1fr 1fr;
-  }
-  .pane-slot {
-    grid-column: 1;
-    min-width: 0;
-    min-height: 0;
-    height: 100%;
-  }
-  .pane-slot.right {
-    grid-column: 2;
-    border-left: 1px solid var(--panel-border);
   }
 
   .resize-handle {

@@ -1,9 +1,8 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
 
-  // `live`: standalone thought still streaming with no tool calls. Collapsed by default;
-  // if the user already opened it, it gets the same blinking-cursor treatment as answer text.
-  let { text, live = false }: { text: string; live?: boolean } = $props();
+  // Collapsed by default; the reply's model chip shows it's still going.
+  let { text }: { text: string } = $props();
 
   let open = $state(false);
 </script>
@@ -17,7 +16,7 @@
 </button>
 <div class="accordion" class:open>
   <div class="accordion-inner">
-    <pre class="thinking selectable">{text}{#if live}<span class="cursor"></span>{/if}</pre>
+    <pre class="thinking selectable">{text}</pre>
   </div>
 </div>
 
@@ -91,19 +90,5 @@
     color: var(--text-dim);
     font-size: 0.8rem;
     white-space: pre-wrap;
-  }
-  .cursor {
-    display: inline-block;
-    width: 0.5rem;
-    height: 1em;
-    margin-left: 0.07rem;
-    background: var(--text-dim);
-    vertical-align: text-bottom;
-    animation: blink calc(1s * var(--anim-speed, 1)) step-start infinite;
-  }
-  @keyframes blink {
-    50% {
-      opacity: 0;
-    }
   }
 </style>

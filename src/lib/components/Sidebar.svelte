@@ -10,6 +10,7 @@
   import ChatRow from "./ChatRow.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import Dropdown from "./Dropdown.svelte";
+  import AboutDialog from "./AboutDialog.svelte";
   import SearchInput from "./SearchInput.svelte";
   import { DropdownMenu } from "bits-ui";
   import { untrack } from "svelte";
@@ -50,6 +51,31 @@
   const serverEntries = $derived(Object.entries(app.servers) as [ConnectionId, ServerState][]);
   const multiServer = $derived(serverEntries.length > 1);
   const connectedServers = $derived(serverEntries.filter(([, srv]) => srv.connectionStatus === "connected"));
+  const presence = $derived(
+    connectedServers.length === 0 ? "Offline"
+      : connectedServers.length === 1 ? `Online on ${connectedServers[0][1].label}`
+      : `Online on ${connectedServers.length} servers`,
+  );
+
+  let userMenuOpen = $state(false);
+  let showAbout = $state(false);
+  const THEMES = [
+    { id: "light", label: "Light", icon: "sun-light" },
+    { id: "dark", label: "Dark", icon: "half-moon" },
+    { id: "system", label: "System", icon: "contrast-2" },
+  ] as const;
+  function setTheme(theme: (typeof THEMES)[number]["id"]) {
+    app.settings.theme = theme;
+    app.applySettings();
+  }
+  function openSettings(tab: typeof app.settingsTab) {
+    app.settingsTab = tab;
+    app.showSettings = true;
+  }
+  // No accounts, so logging out means dropping every server connection.
+  function logOut() {
+    for (const [scid] of connectedServers) void disconnect(scid);
+  }
 
   // Projects in dragged order; anything not placed by hand sorts by most recent chat activity.
   function lastActivity(srv: ServerState, project: string): number {
@@ -642,23 +668,63 @@
     </nav>
 
     <div class="user-area">
-      <button
-        class="profile"
-        onclick={() => ((app.settingsTab = "profile"), (app.showSettings = true))}
-        title={connectedServers.length ? "Profile — visible to peers on your connected servers" : "Profile — offline"}
-      >
-        <span class="avatar-wrap">
-          <span class="avatar">
-            {#if isPhotoAvatar(app.settings.profileAvatar)}
-              <img src={app.settings.profileAvatar} alt="" />
-            {:else}
-              {app.settings.profileAvatar || "🐣"}
-            {/if}
+      <DropdownMenu.Root bind:open={userMenuOpen}>
+        <DropdownMenu.Trigger
+          class="profile{userMenuOpen ? ' open' : ''}"
+          ondblclick={() => ((userMenuOpen = false), openSettings("profile"))}
+          title={connectedServers.length ? `Visible to peers on ${connectedServers.map(([, srv]) => srv.label).join(", ")}` : "Offline"}
+        >
+          <span class="avatar-wrap">
+            <span class="avatar">
+              {#if isPhotoAvatar(app.settings.profileAvatar)}
+                <img src={app.settings.profileAvatar} alt="" />
+              {:else}
+                {app.settings.profileAvatar || "🐣"}
+              {/if}
+            </span>
+            <span class="presence" class:online={connectedServers.length > 0}></span>
           </span>
-          <span class="presence" class:online={connectedServers.length > 0}></span>
-        </span>
-        <span class="profile-name">{app.settings.profileName || "anonymous"}</span>
-      </button>
+          <span class="profile-text">
+            <span class="profile-name">{app.settings.profileName || "anonymous"}</span>
+            <span class="profile-status">{presence}</span>
+          </span>
+          <Icon name="selector" size={14} />
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content class="context-menu user-menu" side="top" align="start" sideOffset={6}>
+            <DropdownMenu.Item class="context-menu-item" onSelect={() => (app.showSettings = true)}>
+              <Icon name="settings" size={13} /><span>Settings</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Sub>
+              <DropdownMenu.SubTrigger class="context-menu-item">
+                <Icon name="palette" size={13} /><span class="grow">Appearance</span><Icon name="chevron-right" size={12} />
+              </DropdownMenu.SubTrigger>
+              <!-- Portalled: nested inside the parent menu, its backdrop-filter has nothing to blur. -->
+              <DropdownMenu.Portal>
+                <DropdownMenu.SubContent class="context-menu" sideOffset={6}>
+                  {#each THEMES as t (t.id)}
+                    <DropdownMenu.Item class="context-menu-item" closeOnSelect={false} onSelect={() => setTheme(t.id)}>
+                      <Icon name={t.icon as any} size={13} /><span class="grow">{t.label}</span>
+                      {#if app.settings.theme === t.id}<Icon name="check" size={12} />{/if}
+                    </DropdownMenu.Item>
+                  {/each}
+                  <DropdownMenu.Separator class="menu-sep" />
+                  <DropdownMenu.Item class="context-menu-item" onSelect={() => openSettings("appearance")}>
+                    <Icon name="settings" size={13} /><span>More settings…</span>
+                  </DropdownMenu.Item>
+                </DropdownMenu.SubContent>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Sub>
+            <DropdownMenu.Item class="context-menu-item" onSelect={() => (showAbout = true)}>
+              <Icon name="info-circle" size={13} /><span>About</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator class="menu-sep" />
+            <DropdownMenu.Item class="context-menu-item danger" disabled={!connectedServers.length} onSelect={logOut}>
+              <Icon name="logout" size={13} /><span>Log out</span>
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
       <button
         class="icon-btn"
         class:on={app.showUsage}
@@ -670,6 +736,7 @@
         <Icon name="chart-bar" size={15} />
       </button>
     </div>
+    <AboutDialog bind:open={showAbout} />
 
     {#if !app.sidebarCollapsed || resizing}
       <!-- Also mounted mid-drag while collapsed, since unmounting it here
@@ -845,9 +912,6 @@
     flex-direction: column;
     gap: 0.07rem;
     scrollbar-width: none;
-  }
-  .chat-list::-webkit-scrollbar {
-    display: none;
   }
   /* Same small-caps label as the palette's and Settings' group headings. */
   .section-label {
@@ -1070,28 +1134,46 @@
   }
   .user-area {
     display: flex;
-    align-items: center;
-    gap: 0.21rem;
-    padding: 0.43rem;
+    align-items: stretch;
+    gap: 0.29rem;
+    /* Flush with the quick-row above; the aside's own padding supplies the bottom and sides. */
+    padding-top: 0.43rem;
     border-top: 1px solid var(--panel-border);
   }
-  .profile {
+  .user-area :global(.profile) {
     flex: 1;
     display: flex;
     align-items: center;
     gap: 0.57rem;
     min-width: 0;
+    height: 2.57rem;
     background: transparent;
     border: none;
-    padding: 0.29rem 0.43rem;
+    padding: 0 0.43rem 0 0.36rem;
     border-radius: var(--radius-sm);
     cursor: pointer;
     text-align: left;
-    color: inherit;
+    color: var(--sidebar-fg-dim);
     font: inherit;
+    /* The open menu is modal (body gets pointer-events: none); the card stays clickable so a
+       second click closes it and a double-click reaches ondblclick. */
+    pointer-events: auto;
   }
-  .profile:hover {
+  .user-area :global(.profile:hover),
+  .user-area :global(.profile.open) {
     background: var(--sidebar-hover);
+    color: var(--text);
+  }
+  :global(.user-menu) {
+    width: var(--bits-dropdown-menu-anchor-width);
+  }
+  :global(.menu-sep) {
+    height: 1px;
+    margin: 0.21rem 0.29rem;
+    background: var(--panel-border);
+  }
+  :global(.context-menu-item .grow) {
+    flex: 1;
   }
   .avatar {
     flex-shrink: 0;
@@ -1100,7 +1182,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     background: rgba(255, 255, 255, 0.06);
     font-size: 1.15rem;
@@ -1118,8 +1200,8 @@
   /* Online while any server is connected (visible in its peer list), hollow when not. */
   .presence {
     position: absolute;
-    right: -1px;
-    bottom: -1px;
+    right: -3px;
+    bottom: -3px;
     width: 9px;
     height: 9px;
     border-radius: 50%;
@@ -1132,23 +1214,36 @@
     background: var(--success);
     box-shadow: none;
   }
-  .profile-name {
+  .profile-text {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.14rem;
+    line-height: 1.2;
+  }
+  .profile-name,
+  .profile-status {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--text-label-size);
-    font-weight: 600;
+  }
+  .profile-name {
+    font-size: 0.8rem;
+    font-weight: 500;
     color: var(--text);
+  }
+  .profile-status {
+    font-size: 0.72rem;
+    color: var(--sidebar-fg-dim);
   }
   .icon-btn {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 2rem;
-    height: 2rem;
+    width: 2.57rem;
+    height: 2.57rem;
     padding: 0;
     background: transparent;
     border: 1px solid transparent;

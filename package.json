@@ -15,6 +15,13 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.4",
     "@lobehub/icons-static-svg": "^1.95.0",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.65.1",
@@ -28,12 +35,14 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "bits-ui": "^2.19.2",
+    "codemirror": "^6.0.2",
     "dompurify": "^3.4.15",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "highlight.js": "^11.12.0",
     "iconoir": "^7.12.1",
     "marked": "^18.0.13",
+    "material-icon-theme": "^5.38.1",
     "svelte": "^5.56.3",
     "svelte-check": "^4.6.0",
     "typescript": "~6.0.3",
@@ -50,9 +59,7 @@
     "icon": "electron/icon.png",
     "linux": {
       "target": [
-        "AppImage",
-        "deb",
-        "rpm"
+        "AppImage"
       ],
       "category": "Development"
     },
@@ -65,5 +72,8 @@
     "directories": {
       "output": "dist"
     }
+  },
+  "dependencies": {
+    "@replit/codemirror-lang-svelte": "^6.0.0"
   }
 }

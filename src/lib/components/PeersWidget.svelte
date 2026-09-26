@@ -5,7 +5,6 @@
   import { disconnectPeer, openChatSession, thisDeviceId } from "../ipc";
   import { basename, relTime, sessionTitle } from "../format";
   import type { PeerInfo } from "../types";
-  import { markOverflow } from "../overflow";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
 
@@ -47,6 +46,8 @@
     return [...byKey.values()].sort((a, b) => b.p.connectedAt.localeCompare(a.p.connectedAt));
   });
 
+  const pictured = $derived(devices.filter((d) => d.p.avatar));
+
   const DEVICE = { desktop: "laptop", web: "world", server: "server" } as const;
 
   function chatName(c: Conn): string {
@@ -77,14 +78,19 @@
 {#if devices.length}
   <Popover.Root bind:open>
     <Popover.Trigger class="sb-trigger" title={devices.map((d) => d.p.name).join("\n")} aria-label="Your other devices">
-      <span class="stack">
-        {#each devices.slice(0, 3) as d (d.key)}{@render avatar(d.p, 14)}{/each}
-      </span>
+      <!-- Photos stack; type icons would just clip each other, so no photos means one icon. -->
+      {#if pictured.length}
+        <span class="stack">
+          {#each pictured.slice(0, 3) as d (d.key)}{@render avatar(d.p, 14)}{/each}
+        </span>
+      {:else}
+        <Icon name="devices" size={12} />
+      {/if}
       {devices.length}
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content class="sb-panel peers-panel" side="top" align="start" sideOffset={8}>
-        <ul class="sb-list" use:markOverflow>
+        <ul class="sb-list">
           {#each devices as d (d.key)}
             <li class="sb-row">
               <button

@@ -5,7 +5,6 @@
   import { app, type ConnectionId } from "../state.svelte";
   import { dismissNotification, openNotificationTarget } from "../ipc";
   import type { ServerNotification } from "../types";
-  import { markOverflow } from "../overflow";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
 
@@ -30,7 +29,7 @@
     if (app.notificationsOpen) for (const s of servers) s.unseenNotifications = 0;
   });
 
-  const ICONS = { success: "circle-check", warning: "warning", error: "alert-circle" } as const;
+  const ICONS = { info: "bell", success: "circle-check", warning: "warning", error: "alert-circle" } as const;
 
   function when(iso: string): string {
     const d = new Date(iso);
@@ -49,6 +48,10 @@
   }
 </script>
 
+{#snippet from(cid: ConnectionId)}
+  {#if multiServer && app.servers[cid]}<ServerAvatar name={app.servers[cid].label} seed={app.servers[cid].serverId} size={12} />{/if}
+{/snippet}
+
 <Popover.Root bind:open={app.notificationsOpen}>
   <Popover.Trigger class="sb-trigger" title="Notifications" aria-label="Notifications">
     <Icon name={items.length || asks.length ? "bell-filled" : "bell"} size={13} />
@@ -56,17 +59,14 @@
   </Popover.Trigger>
   <Popover.Portal>
     <Popover.Content class="sb-panel notif-panel" side="top" align="end" sideOffset={8}>
-      <ul use:markOverflow>
+      <ul>
         {#each asks as a (a.cid + a.toolCallId)}
           <li class="level-warning">
             <button type="button" class="body clickable" onclick={() => open({ ...a, id: a.toolCallId, level: "warning", kind: "ask", title: "", createdAt: a.createdAt ?? "" })}>
-              {#if multiServer && app.servers[a.cid]}
-                <ServerAvatar name={app.servers[a.cid].label} seed={app.servers[a.cid].serverId} size={14} />
-              {/if}
-              <Icon name="alert-circle" size={14} />
+              <span class="lead"><Icon name="alert-circle" size={14} /></span>
               <span class="text">
                 <span class="title">{askTitle(a)} needs you</span>
-                <span class="detail">{a.kind === "question" ? a.question : a.description}</span>
+                <span class="detail">{@render from(a.cid)}<span class="clip">{a.kind === "question" ? a.question : a.description}</span></span>
               </span>
               {#if a.createdAt}<span class="time">{when(a.createdAt)}</span>{/if}
             </button>
@@ -75,14 +75,10 @@
         {#each items as n (n.cid + n.id)}
           <li class="level-{n.level}">
             <button type="button" class="body" class:clickable={!!n.sessionId} onclick={() => open(n)}>
-              {#if multiServer && app.servers[n.cid]}
-                <ServerAvatar name={app.servers[n.cid].label} seed={app.servers[n.cid].serverId} size={14} />
-              {/if}
-              <!-- Info (peer joined/left…) is the default; an icon only marks the rest. -->
-              {#if n.level !== "info"}<Icon name={ICONS[n.level] ?? "bell"} size={14} />{/if}
+              <span class="lead"><Icon name={ICONS[n.level] ?? "bell"} size={14} /></span>
               <span class="text">
                 <span class="title">{n.title}</span>
-                {#if n.body}<span class="detail">{n.body}</span>{/if}
+                {#if n.body || multiServer}<span class="detail">{@render from(n.cid)}<span class="clip">{n.body ?? app.servers[n.cid]?.label}</span></span>{/if}
               </span>
               <span class="time">{when(n.createdAt)}</span>
             </button>
@@ -124,21 +120,20 @@
     background: var(--warning);
   }
   :global(.notif-panel) {
-    width: min(20rem, 92vw);
+    width: min(23rem, 92vw);
     max-height: 50vh;
   }
   ul {
     list-style: none;
     margin: 0;
-    padding: 0.21rem;
+    padding: 0.29rem;
     overflow-y: auto;
-  }
-  /* Room for the scrollbar while there is one, so it can't sit on the
-     dismiss buttons where the browser draws it over content. */
-  ul:global([data-overflow]) {
-    padding-right: calc(0.21rem + var(--scrollbar-size));
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
   li {
+    position: relative;
     display: flex;
     align-items: flex-start;
     border-radius: var(--radius-sm);
@@ -150,25 +145,31 @@
     flex: 1;
     min-width: 0;
     display: flex;
-    gap: 0.57rem;
+    gap: 0.71rem;
     align-items: flex-start;
     background: none;
     border: none;
     color: var(--text);
+    font: inherit;
     text-align: left;
-    padding: 0.36rem 0.43rem;
+    padding: 0.57rem 0.64rem;
     cursor: default;
   }
   .body.clickable {
     cursor: pointer;
   }
-  .level-success .body :global(.icon) {
+  .lead {
+    display: flex;
+    padding-top: 0.14rem;
+    color: var(--text-dim);
+  }
+  .level-success .lead {
     color: var(--success);
   }
-  .level-warning .body :global(.icon) {
+  .level-warning .lead {
     color: var(--warning);
   }
-  .level-error .body :global(.icon) {
+  .level-error .lead {
     color: var(--danger);
   }
   .text {
@@ -176,32 +177,55 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.07rem;
+    gap: 0.21rem;
   }
   .title {
     font-size: 0.8rem;
-  }
-  .detail {
-    font-size: var(--text-label-size);
-    color: var(--text-dim);
+    line-height: 1.3;
     overflow: hidden;
     text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    line-clamp: 1;
-    -webkit-box-orient: vertical;
+    white-space: nowrap;
+  }
+  .detail {
+    display: flex;
+    align-items: center;
+    gap: 0.29rem;
+    min-width: 0;
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+  }
+  .clip {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .time {
     font-size: var(--text-label-size);
     color: var(--text-dim);
     flex-shrink: 0;
+    padding-top: 0.07rem;
   }
+  /* Sits over the timestamp on hover, like the other popups' row actions. */
   .x {
-    background: none;
+    position: absolute;
+    top: 0.43rem;
+    right: 0.43rem;
+    display: flex;
+    padding: 0.29rem;
+    background: linear-gradient(var(--sidebar-hover), var(--sidebar-hover)), var(--panel-bg);
     border: none;
+    border-radius: var(--radius-sm);
     color: var(--text-dim);
-    padding: 0.36rem 0.36rem;
     cursor: pointer;
+    opacity: 0;
+  }
+  li:hover .x,
+  .x:focus-visible {
+    opacity: 1;
+  }
+  .x:hover {
+    color: var(--danger);
   }
   .empty {
     padding: 0.71rem;

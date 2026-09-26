@@ -109,3 +109,20 @@ export function briefFor(calls: CallLike[], opts: { capitalize?: boolean } = {})
   if (opts.capitalize === false) return text;
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+const NAME_KIND: Record<string, NativeToolKind> = {
+  file_read: "read",
+  file_write: "edit",
+  file_edit: "edit",
+  web_search: "search",
+  web_fetch: "fetch",
+};
+
+/** Which DotMatrix pattern a running call shows. */
+export function dotModeFor(call: CallLike): "thinking" | "reading" | "editing" | "tools" {
+  const kind = call.native ? call.kind : NAME_KIND[call.name];
+  if (kind === "think") return "thinking";
+  if (kind === "read" || kind === "search" || kind === "fetch") return "reading";
+  if (kind === "edit" || kind === "delete" || kind === "move") return "editing";
+  return "tools";
+}

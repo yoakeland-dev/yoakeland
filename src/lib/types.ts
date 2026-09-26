@@ -153,6 +153,8 @@ export interface SnapshotInfo {
   snapshotId: string;
   description: string;
   createdAt: string;
+  /** Project-relative paths it holds a pre-turn copy of (v2.17; absent on older servers). */
+  files?: string[];
 }
 
 export interface DirectoryEntry {
@@ -299,8 +301,16 @@ export interface TerminalTab {
   status: TerminalStatus;
   /** Shell binary name: the tab's fallback until `title` is set. */
   label: string;
-  /** The shell's own OSC 0/2 "set title" sequence, tracked live via xterm.js's onTitleChange. */
+  /** The shell's own OSC 0/2 "set title" sequence (scanShellEvents). */
   title?: string;
+  /** User rename; wins over `title` and `label`. Client-side only. */
+  name?: string;
+  /** A command is running (shell integration C seen, D not yet). */
+  busy?: boolean;
+  /** The running (or last) command line; zsh only, bash doesn't report it. */
+  command?: string;
+  /** Exit code of the last finished command, cleared when the next one starts. */
+  lastExit?: number;
   exitCode?: number;
   pid?: number;
   sandboxTier?: SandboxTier;
@@ -373,3 +383,45 @@ export interface ChatMessage {
    * `inputTokens` is the full resent conversation, so it's cumulative; `outputTokens` is just this reply. */
   usage?: { inputTokens: number; outputTokens: number; costUsd: number };
 }
+
+/** A prompt sent while its chat was mid-turn: waits server-side until that turn ends (§3.1). */
+export interface QueuedPrompt {
+  turnId: string;
+  text: string;
+  attachments?: string[];
+  /** An undo was sent; the server hasn't confirmed it yet. */
+  withdrawing?: boolean;
+  /** Follow-ups sent after it: it's being withdrawn to go out again as one prompt with these. */
+  append?: { text: string; attachments?: string[] };
+}
+
+// ---- Project files (§3.1 "Project files", v2.17) ----
+
+export interface TreeEntry {
+  name: string;
+  isDir: boolean;
+  isSymlink?: boolean;
+  size?: number;
+}
+
+export interface FileContent {
+  path: string;
+  content: string;
+  /** Hand back to write_file as `baseVersion`; a mismatch there means someone else saved first. */
+  version?: string;
+  size: number;
+  binary?: boolean;
+  tooLarge?: boolean;
+  error?: string;
+}
+
+/** One `git status` entry with both halves: "." unchanged, "?" untracked. */
+export interface GitChange {
+  path: string;
+  origPath?: string;
+  index: string;
+  worktree: string;
+  conflict?: boolean;
+}
+
+export type SidebarPanel = "browser" | "snapshots" | "diffs" | "subagents" | "explorer" | "git";

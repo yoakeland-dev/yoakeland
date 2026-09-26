@@ -17,9 +17,9 @@
 
   let slotEl = $state<HTMLDivElement | null>(null);
 
-  const sizeVars = $derived(
-    `--right-pct: ${app.rightSidebarRatio * 100}%; --right-min: ${RIGHT_SIDEBAR_MIN_WIDTH}px`,
-  );
+  // Set directly on both boxes, not as custom properties: those inherit, so changing one here
+  // would restyle the whole chat inside on every pointermove of a resize.
+  const size = $derived(`clamp(${RIGHT_SIDEBAR_MIN_WIDTH}px, ${app.rightSidebarRatio * 100}%, 50%)`);
 
   // Width only animates when the left sidebar's collapse reflows available space; dragging
   // and window resize stay instant. This panel's own open/close is always a side effect of
@@ -39,8 +39,12 @@
   let crossingAnim = $state(false);
   let crossingAnimTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // Measured once per drag, not per pointermove (each read right after a width change forces a
+  // synchronous layout).
+  let dragBox: DOMRect | null = null;
   function startResize(e: PointerEvent) {
-    if (app.rightSidebarCollapsed) return;
+    if (app.rightSidebarCollapsed || !slotEl) return;
+    dragBox = (slotEl.parentElement as HTMLElement).getBoundingClientRect();
     app.rightSidebarResizing = true;
     crossingAnim = false;
     clearTimeout(crossingAnimTimer);
@@ -48,12 +52,10 @@
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function onResize(e: PointerEvent) {
-    if (!app.rightSidebarResizing || !slotEl) return;
-    // Measure `.content-row`, not the window: this panel is proportional to what's left
-    // of the fixed-width left sidebar, not the whole viewport.
-    const container = (
-      slotEl.parentElement as HTMLElement
-    ).getBoundingClientRect();
+    if (!app.rightSidebarResizing || !dragBox) return;
+    // `.content-row`, not the window: this panel is proportional to what's left of the
+    // fixed-width left sidebar, not the whole viewport.
+    const container = dragBox;
     const fromRight = container.right - e.clientX;
     // Dragging past the minimum collapses outright (same threshold logic as Sidebar.svelte's
     // onResize). rightSidebarRatio is untouched while collapsed, so re-opening restores the
@@ -71,6 +73,7 @@
   }
   function stopResize() {
     if (!app.rightSidebarResizing) return;
+    dragBox = null;
     app.rightSidebarResizing = false;
     document.body.style.cursor = "";
     app.setRightSidebarRatio(app.rightSidebarRatio);
@@ -83,7 +86,7 @@
     class:resizing={app.rightSidebarResizing}
     class:collapsed={app.rightSidebarCollapsed}
     class:crossing-anim={crossingAnim}
-    style={sizeVars}
+    style:flex-basis={app.rightSidebarCollapsed ? "0px" : size}
     bind:this={slotEl}
   >
     <div
@@ -91,7 +94,7 @@
       class:width-animating={widthAnimating}
       class:resizing={app.rightSidebarResizing}
       class:collapsed={app.rightSidebarCollapsed}
-      style={sizeVars}
+      style:width={size}
     >
       <ChatPanel sessionId={app.active.sidebarSessionId} ownsChrome sidePanel bind:panelEl />
       {#if !app.rightSidebarCollapsed || app.rightSidebarResizing}
@@ -115,11 +118,7 @@
     /* Same reasoning as `.sidebar-slot` in Sidebar.svelte: flex-basis keeps reflow in lockstep.
        No `position` here since `.right-sidebar` is positioned against `.content-row`, so it
        slides off on collapse instead of shrinking away. */
-    flex-basis: clamp(var(--right-min), var(--right-pct), 50%);
     transition: flex-basis calc(0.2s * var(--anim-speed, 1)) ease;
-  }
-  .right-slot.collapsed {
-    flex-basis: 0;
   }
   .right-slot.resizing {
     transition: none;
@@ -140,7 +139,6 @@
     top: 0;
     right: 0;
     height: 100%;
-    width: clamp(var(--right-min), var(--right-pct), 50%);
     display: flex;
     flex-direction: column;
   }

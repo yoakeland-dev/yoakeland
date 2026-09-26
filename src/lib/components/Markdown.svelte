@@ -4,53 +4,104 @@
   // Own instance rather than marked's global, so the highlighting extension
   // isn't registered app-wide.
   const plain = new Marked(highlightCode);
+  let mentioning: Marked | undefined;
 </script>
 
 <script lang="ts">
   import type { Token, Links } from "marked";
   import DOMPurify from "dompurify";
   import { openUrl } from "../platform";
-  import { mentionLabels, mentionLabelsFor, MENTION_RE, withMentions } from "../mentions";
+  import { app } from "../state.svelte";
+  import { mentionLabels, mentionLabelsFor, MENTION_RE, withMentions, resolveFileRef } from "../mentions";
+  import { morph, settleFade } from "../morph";
+  import { fileIconUrl } from "../fileIcons";
 
-  let { text, mentions = false }: { text: string; mentions?: boolean } = $props();
+  // `live`: this text is still streaming in, so new words fade in and an unclosed code fence
+  // stays collapsed until it closes.
+  let { text, mentions = false, live = false }: { text: string; mentions?: boolean; live?: boolean } = $props();
   const PARSE_OPTS = { breaks: true, gfm: true };
-  const md = $derived(mentions ? withMentions(new Marked(highlightCode)) : plain);
+  const md = $derived(mentions ? (mentioning ??= withMentions(new Marked(highlightCode), fileIconUrl)) : plain);
   // Passing options to lexer/parser *replaces* the instance's defaults
   // (where md.use() put the mention extension), so merge instead.
   const opts = $derived({ ...md.defaults, ...PARSE_OPTS });
 
-
-  // Re-parsing the whole message on every streamed token gets wasteful the
-  // longer a reply runs, so `marked.lexer`'s block split lets each earlier,
-  // closed block get cached by its raw text and parsed only once.
+  // `marked.lexer`'s block split gives each top-level block its own wrapper (display: contents),
+  // re-rendered only when that block's raw text changes, which while streaming is just the last
+  // one. That one is morphed rather than replaced, so only its new tail touches the DOM.
   //
   // Known ceiling: a block caches using whatever `links` (reference-style
   // definitions) existed at that moment; one streaming in later won't
   // retroactively fix an already-cached block. Rare enough not to handle.
-  let blocks = $state<string[]>([]);
-  const cache: { raw: string; html: string }[] = [];
+  let root: HTMLDivElement;
+  const cache: string[] = [];
   let raf = 0;
 
-  function render(t: string) {
+  // The chat this text is in (read off the DOM once mounted), for its project's file list.
+  let sid = $state<string | undefined>();
+  const project = $derived.by(() => {
+    const id = sid ?? app.active?.currentSessionId;
+    return id ? app.active?.projectBySession[id] : undefined;
+  });
+  const files = $derived(project ? app.active?.filesByProject[project] : undefined);
+  let markedWith: string[] | undefined;
+
+  function render(t: string, fade: boolean) {
     if (mentions) mentionLabels.current = labelsFor(t);
+    // The file list can land after a block was cached; link those blocks' file names then.
+    const remark = files !== markedWith;
+    markedWith = files;
     const allTokens = md.lexer(t, opts);
     const links = allTokens.links;
     const tokens = allTokens.filter((tok) => tok.type !== "space");
-    const next: string[] = [];
+    const wrappers = root.children;
     for (let i = 0; i < tokens.length; i++) {
       const tok = tokens[i];
-      const cached = cache[i];
-      if (i < tokens.length - 1 && cached?.raw === tok.raw) {
-        next.push(cached.html);
+      let el = wrappers[i];
+      if (el && cache[i] === tok.raw) {
+        if (remark) markFileRefs(el);
         continue;
       }
       const sub = Object.assign([tok], { links }) as Token[] & { links: Links };
-      const rendered = DOMPurify.sanitize(md.parser(sub, opts) as string);
-      next.push(rendered);
-      cache[i] = { raw: tok.raw, html: rendered };
+      const frag = DOMPurify.sanitize(md.parser(sub, opts) as string, { RETURN_DOM_FRAGMENT: true });
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "md-block";
+        root.append(el);
+      }
+      morph(el, frag, fade);
+      markFileRefs(el);
+      cache[i] = tok.raw;
     }
+    while (wrappers.length > tokens.length) wrappers[wrappers.length - 1].remove();
     cache.length = tokens.length;
-    blocks = next;
+
+    // An odd number of fence lines in the last block means its code is still coming in.
+    // ponytail: counts fences naively, so a fence quoted inside another code block miscounts.
+    const lastRaw = tokens[tokens.length - 1]?.raw ?? "";
+    const open = fade && (lastRaw.match(/^\s*(`{3,}|~{3,})/gm)?.length ?? 0) % 2 === 1;
+    const streaming = open ? [...(wrappers[wrappers.length - 1]?.querySelectorAll(".code-block") ?? [])].pop() : undefined;
+    for (const b of root.querySelectorAll(".code-block[data-streaming]")) if (b !== streaming) b.removeAttribute("data-streaming");
+    streaming?.setAttribute("data-streaming", "");
+  }
+
+  // Inline code naming a project file (`src/lib/a.ts:12`) opens it, like a mention does, and
+  // looks like one: its icon in front, standing in for a leading `@` if the model wrote one.
+  function markFileRefs(el: Element) {
+    if (!files?.length) return;
+    for (const code of el.querySelectorAll<HTMLElement>("code")) {
+      if (code.closest("pre") || code.classList.contains("file-ref")) continue;
+      const text = code.textContent ?? "";
+      const ref = resolveFileRef(text, files, project);
+      if (!ref) continue;
+      if (text.startsWith("@")) code.replaceChildren(text.slice(1));
+      code.style.setProperty("--icon", `url("${fileIconUrl(ref.path.split("/").pop()!)}")`);
+      code.classList.add("file-ref");
+      code.dataset.path = ref.path;
+      if (ref.from) Object.assign(code.dataset, { from: String(ref.from), to: String(ref.to) });
+      code.setAttribute("role", "link");
+      code.tabIndex = 0;
+      code.title = `Open ${ref.path}`;
+    }
   }
 
   function labelsFor(t: string): Map<string, string> {
@@ -58,15 +109,28 @@
   }
 
   $effect(() => {
+    sid = root.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId;
+  });
+
+  $effect(() => {
     const t = text;
+    const fade = live;
+    void files;
     cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => render(t));
+    raf = requestAnimationFrame(() => render(t, fade));
     return () => cancelAnimationFrame(raf);
   });
 
   // Links must never navigate the app's own page away.
   function onClick(e: MouseEvent) {
-    const copy = (e.target as HTMLElement).closest?.<HTMLElement>(".code-copy");
+    const target = e.target as HTMLElement;
+    const toggle = target.closest?.<HTMLElement>(".code-toggle");
+    if (toggle) {
+      const collapsed = !!toggle.closest(".code-block")?.toggleAttribute("data-collapsed");
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      return;
+    }
+    const copy = target.closest?.<HTMLElement>(".code-copy");
     if (copy) {
       const code = copy.closest(".code-block")?.querySelector("code")?.textContent ?? "";
       void navigator.clipboard?.writeText(code);
@@ -74,37 +138,58 @@
       setTimeout(() => copy.classList.remove("copied"), 1500);
       return;
     }
-    const a = (e.target as HTMLElement).closest?.("a");
+    if (openMention(e.target)) return;
+    const a = target.closest?.("a");
     const href = a?.getAttribute("href");
     if (!href) return;
     e.preventDefault();
     openUrl(href).catch(() => {});
   }
+
+  // A file mention opens that file (and its lines) in the chat's side panel explorer.
+  function openMention(target: EventTarget | null): boolean {
+    const m = (target as HTMLElement).closest?.<HTMLElement>(".mention[data-path], .file-ref[data-path]");
+    const server = app.active;
+    if (!m || !server) return false;
+    const sid = m.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId ?? server.currentSessionId;
+    if (!sid) return false;
+    const { path, from, to } = m.dataset;
+    server.revealFile(sid, path!, from ? Number(from) : undefined, to ? Number(to) : undefined);
+    return true;
+  }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="markdown selectable" onclick={onClick}>
-  {#each blocks as blockHtml, i (i)}
-    {@html blockHtml}
-  {/each}
-</div>
+<div
+  class="markdown selectable"
+  bind:this={root}
+  onclick={onClick}
+  onanimationend={settleFade}
+  onkeydown={(e) => e.key === "Enter" && openMention(e.target) && e.preventDefault()}
+></div>
 
 <style>
   .markdown {
     font-size: inherit;
     line-height: 1.55;
   }
-  .markdown :global(> *:first-child) {
+  .markdown :global(.md-block) {
+    display: contents;
+  }
+  .markdown :global(> :first-child > :first-child) {
     margin-top: 0;
   }
-  .markdown :global(> *:last-child) {
+  .markdown :global(> :last-child > :last-child) {
     margin-bottom: 0;
   }
-  .markdown :global(.mention) {
-    color: var(--accent);
-    font-weight: 500;
-    cursor: default;
+  /* New streamed words and blocks (morph.ts). Opacity only, so it stays on the compositor. */
+  .markdown :global([data-f]) {
+    animation: md-fade-in calc(0.5s * var(--anim-speed, 1)) ease-out both;
+  }
+  @keyframes -global-md-fade-in {
+    from {
+      opacity: 0;
+    }
   }
   .markdown :global(p) {
     margin: 0.5em 0;
@@ -170,6 +255,23 @@
     padding: 0.1em 0.35em;
     border-radius: var(--radius-sm);
   }
+  /* File mentions, and inline code naming a file: a chip like inline code, tinted, with the
+     file's icon (--icon) in its left padding, so the two can't wrap apart. The composer draws
+     the same chip (PromptInput.svelte's .m-chip). After the code rule so it wins. */
+  .markdown :global(.mention),
+  .markdown :global(code.file-ref) {
+    /* Toward --text, so a muted theme accent still reads. */
+    color: color-mix(in srgb, var(--accent) 60%, var(--text));
+    padding: 0.1em 0.35em 0.1em 1.55em;
+    background: var(--icon) no-repeat 0.35em 50% / 1.05em, var(--accent-dim);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background-color calc(0.12s * var(--anim-speed, 1)) ease;
+  }
+  .markdown :global(.mention:hover),
+  .markdown :global(code.file-ref:hover) {
+    background-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  }
   .markdown :global(pre) {
     margin: 0.5em 0;
     padding: var(--space-1);
@@ -193,14 +295,78 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.14rem 0.29rem 0.14rem var(--space-1);
-    border-bottom: 1px solid color-mix(in srgb, var(--code-fg) 10%, transparent);
+    padding: 0.14rem 0.29rem;
     color: color-mix(in srgb, var(--code-fg) 55%, transparent);
     font-size: var(--text-label-size);
     user-select: none;
   }
+  .markdown :global(.code-toggle) {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.36rem;
+    height: 1.57rem;
+    padding: 0 0.29rem;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .markdown :global(.code-toggle:hover) {
+    color: var(--code-fg);
+  }
+  .markdown :global(.code-toggle svg) {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    transform: rotate(90deg);
+    transition: transform calc(0.2s * var(--anim-speed, 1)) ease;
+  }
   .markdown :global(.code-lang) {
     font-family: var(--code-font-family);
+  }
+  /* The line count only says something when the code itself is hidden. */
+  .markdown :global(.code-lines) {
+    opacity: 0;
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
+  }
+  .markdown :global(.code-lines::before) {
+    content: "· ";
+  }
+  /* Same zero-JS accordion as ThinkingBlock: 0fr/1fr rows track the code's real height. Forced
+     shut while it's still streaming in, and opens by itself once the fence closes. */
+  .markdown :global(.code-body) {
+    display: grid;
+    grid-template-rows: 1fr;
+    border-top: 1px solid color-mix(in srgb, var(--code-fg) 10%, transparent);
+    transition:
+      grid-template-rows calc(0.24s * var(--anim-speed, 1)) ease,
+      border-color calc(0.24s * var(--anim-speed, 1)) ease;
+  }
+  .markdown :global(.code-clip) {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .markdown :global(.code-block[data-collapsed] .code-body),
+  .markdown :global(.code-block[data-streaming] .code-body) {
+    grid-template-rows: 0fr;
+    border-top-color: transparent;
+  }
+  .markdown :global(.code-block[data-collapsed] .code-toggle svg),
+  .markdown :global(.code-block[data-streaming] .code-toggle svg) {
+    transform: none;
+  }
+  .markdown :global(.code-block[data-collapsed] .code-lines),
+  .markdown :global(.code-block[data-streaming] .code-lines) {
+    opacity: 1;
+  }
+  /* Nothing to open yet, so the toggle stops looking like one. */
+  .markdown :global(.code-block[data-streaming] .code-toggle) {
+    pointer-events: none;
   }
   .markdown :global(.code-copy) {
     display: inline-flex;

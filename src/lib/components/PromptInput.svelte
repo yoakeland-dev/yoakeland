@@ -1,29 +1,39 @@
 <script lang="ts">
-  import { scale } from "svelte/transition";
+  import { fly, scale, slide } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
   import { untrack } from "svelte";
+  import { DropdownMenu } from "bits-ui";
   import { app } from "../state.svelte";
   import {
     sendPrompt,
     editMessage,
     cancelEditingMessage,
     cancelTurn,
-    respondPermission,
-    denyPermissionWithFeedback,
-    askUserAnswer,
     selectProject,
     uploadFile,
+    listFiles,
   } from "../ipc";
   import { isDesktop, invoke, pickFiles, onFileDrop } from "../platform";
   import { basename } from "../format";
+  import { fuzzyFilter, fuzzyIndices } from "../fuzzy";
+  import { fileIconUrl } from "../fileIcons";
+  import { mentionText, MENTION_RE } from "../mentions";
+  import { liveActivity } from "../activity.svelte";
   import Icon from "./Icon.svelte";
-  import DiffView from "./DiffView.svelte";
+  import AskCard from "./AskCard.svelte";
+  import DotMatrix from "./DotMatrix.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ModePicker from "./ModePicker.svelte";
   import Dropdown from "./Dropdown.svelte";
 
-  let { sessionId, floating }: { sessionId: string; floating: boolean } =
-    $props();
+  // `scrolledUp`: the transcript is well above its tail (MessageList), so the composer goes
+  // compact and the status chip offers `onJump` back down.
+  let {
+    sessionId,
+    floating,
+    scrolledUp = false,
+    onJump,
+  }: { sessionId: string; floating: boolean; scrolledUp?: boolean; onJump?: () => void } = $props();
 
   // Session/provider/project state lives on the active connection's ServerState; `cid` is
   // needed since ipc.ts calls are threaded per connection.
@@ -52,6 +62,16 @@
       pendingMorphProps = new Set(["top", "height"]);
     }
     prevFloating = floating;
+  });
+  // Compact: scrolled up in a conversation with nothing waiting on an answer. Same height morph.
+  const compact = $derived(scrolledUp && !floating && !(server?.asksFor(sessionId).length ?? 0));
+  let prevCompact: boolean | undefined;
+  $effect(() => {
+    if (prevCompact !== undefined && compact !== prevCompact) {
+      morphing = true;
+      pendingMorphProps = new Set(["height"]);
+    }
+    prevCompact = compact;
   });
   function onMorphPropEnd(prop: string) {
     pendingMorphProps.delete(prop);
@@ -115,20 +135,22 @@
   $effect(() => {
     text;
     floating;
+    compact;
     autosize();
   });
 
-  // MessageList needs to know how tall the docked composer is so scrolled
-  // messages don't end up hidden underneath it, see its padding-bottom.
+  // MessageList needs to know how tall the docked composer is so scrolled messages don't end
+  // up hidden underneath it, see its padding-bottom. The whole stack is measured, so an ask
+  // card above the box reserves its room too. Set on this chat's own column, not :root: a
+  // custom property restyles everything under where it's set, and a split view's second chat
+  // has its own composer.
   $effect(() => {
-    if (!boxEl) return;
-    const ro = new ResizeObserver(() => {
-      document.documentElement.style.setProperty(
-        "--composer-height",
-        `${boxEl!.offsetHeight}px`,
-      );
-    });
-    ro.observe(boxEl);
+    if (!stackEl) return;
+    const el = stackEl;
+    const column = el.closest(".wrap")?.parentElement;
+    if (!column) return;
+    const ro = new ResizeObserver(() => column.style.setProperty("--composer-height", `${el.offsetHeight}px`));
+    ro.observe(el);
     return () => ro.disconnect();
   });
 
@@ -169,23 +191,61 @@
     requestAnimationFrame(() => textarea?.focus());
   });
 
+  // Text another panel asked to add, e.g. an `@path#L10-20` mention from the editor, at the cursor.
+  $effect(() => {
+    const insert = server?.composerInsertBySession[sessionId];
+    if (!insert || !server) return;
+    delete server.composerInsertBySession[sessionId];
+    const pos = Math.min(cursorPos, text.length);
+    const before = text.slice(0, pos);
+    const head = before + (before && !/\s$/.test(before) ? " " : "") + insert + " ";
+    text = head + text.slice(pos);
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(head.length, head.length);
+      cursorPos = head.length;
+    });
+  });
+
   // Attachments (§3.1 user_prompt `attachments`) are paths on the server's machine. Over the
   // local socket that's this machine, so a picked file is referenced in place. A remote
   // server gets the bytes uploaded (§3.1 upload_begin); pasted files have no path either way.
-  type Attachment = { key: string; name: string; path?: string; progress?: number; error?: string };
+  type Attachment = { key: string; name: string; path?: string; progress?: number; error?: string; thumb?: string };
   let attachments = $state<Attachment[]>([]);
   let fileInput: HTMLInputElement | undefined = $state();
   const uploading = $derived(attachments.some((a) => !a.path && !a.error));
 
+  // Image attachments show a thumbnail: straight from the File when there is one, else read off
+  // disk (a local path, desktop only).
+  const IMAGE_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+  function thumbFromFile(key: string, file: File) {
+    const a = attachments.find((x) => x.key === key);
+    if (a && !a.thumb && file.type.startsWith("image/")) a.thumb = URL.createObjectURL(file);
+  }
+  function thumbFromPath(key: string, path: string) {
+    if (!isDesktop || !IMAGE_RE.test(path)) return;
+    invoke<ArrayBuffer>("read_file_bytes", { path })
+      .then((buf) => {
+        const a = attachments.find((x) => x.key === key);
+        if (a && !a.thumb) a.thumb = URL.createObjectURL(new Blob([buf]));
+      })
+      .catch(() => {});
+  }
+  function addLocal(path: string) {
+    if (attachments.some((a) => a.path === path)) return;
+    attachments.push({ key: path, name: basename(path), path });
+    thumbFromPath(path, path);
+  }
+  function removeAttachment(key: string) {
+    const a = attachments.find((x) => x.key === key);
+    if (a?.thumb) URL.revokeObjectURL(a.thumb);
+    attachments = attachments.filter((x) => x.key !== key);
+  }
+
   async function attachFile() {
     if (!cid || !connected) return;
     if (isDesktop && app.connectionMode === "local") {
-      const paths = await pickFiles({ multiple: true });
-      for (const path of paths) {
-        if (!attachments.some((a) => a.path === path)) {
-          attachments.push({ key: path, name: basename(path), path });
-        }
-      }
+      for (const path of await pickFiles({ multiple: true })) addLocal(path);
     } else {
       fileInput?.click();
     }
@@ -199,12 +259,13 @@
     attachments.push({ key, name, progress: 0 });
     const entry = () => attachments.find((a) => a.key === key);
     load()
-      .then((file) =>
-        uploadFile(c, file, (f) => {
+      .then((file) => {
+        thumbFromFile(key, file);
+        return uploadFile(c, file, (f) => {
           const a = entry();
           if (a) a.progress = f;
-        }),
-      )
+        });
+      })
       .then((path) => {
         const a = entry();
         if (a) a.path = path;
@@ -222,9 +283,7 @@
   /** Local connections use dropped paths in place; remote ones upload them. */
   function attachPaths(paths: string[]) {
     if (app.connectionMode === "local") {
-      for (const path of paths) {
-        if (!attachments.some((a) => a.path === path)) attachments.push({ key: path, name: basename(path), path });
-      }
+      for (const path of paths) addLocal(path);
       return;
     }
     for (const path of paths) {
@@ -306,13 +365,46 @@
 
   const mentionMatches = $derived.by(() => {
     if (!mentionQuery || !projectPath) return [];
-    const files = server?.filesByProject[projectPath] ?? [];
-    const q = mentionQuery.query.toLowerCase();
-    return (q ? files.filter((f) => f.toLowerCase().includes(q)) : files).slice(
-      0,
-      8,
-    );
+    return fuzzyFilter(server?.filesByProject[projectPath] ?? [], mentionQuery.query, 8);
   });
+
+  // The text split so mentions of known files draw as chips in a backdrop (.mirror) behind the
+  // textarea, whose own text goes transparent while there are any. The chip can't pad or change
+  // weight, or the backdrop's text would stop lining up with the caret.
+  const knownFiles = $derived(new Set(projectPath ? (server?.filesByProject[projectPath] ?? []) : []));
+  const composerRuns = $derived.by(() => {
+    const runs: { text: string; path?: string }[] = [];
+    if (!knownFiles.size) return runs;
+    let last = 0;
+    for (const m of text.matchAll(new RegExp(MENTION_RE.source, "g"))) {
+      // A trailing sentence period isn't part of the name, unless a line suffix follows it.
+      const path = m[2] ? m[1] : [m[1], m[1].replace(/\.+$/, "")].find((p) => knownFiles.has(p));
+      if (!path || !knownFiles.has(path)) continue;
+      const chip = m[2] ? m[0] : "@" + path;
+      if (m.index > last) runs.push({ text: text.slice(last, m.index) });
+      runs.push({ text: chip, path });
+      last = m.index + chip.length;
+    }
+    if (runs.length) runs.push({ text: text.slice(last) });
+    return runs;
+  });
+  let mirror = $state<HTMLDivElement>();
+  $effect(() => {
+    composerRuns;
+    if (mirror && textarea) mirror.scrollTop = textarea.scrollTop;
+  });
+
+  /** A mention row's name or folder as runs, the fuzzy-matched characters marked. */
+  function marked(path: string, from: number, to: number): { t: string; hit: boolean }[] {
+    const hits = new Set(fuzzyIndices(path, mentionQuery?.query ?? ""));
+    const out: { t: string; hit: boolean }[] = [];
+    for (let i = from; i < to; i++) {
+      const hit = hits.has(i);
+      if (out.length && out[out.length - 1].hit === hit) out[out.length - 1].t += path[i];
+      else out.push({ t: path[i], hit });
+    }
+    return out;
+  }
 
   $effect(() => {
     mentionMatches;
@@ -341,6 +433,11 @@
 
   const connected = $derived(app.connectionStatus === "connected");
 
+  // The @ picker and file links in replies read this project's file list; opening a chat doesn't load it.
+  $effect(() => {
+    if (projectPath && cid && connected && !server?.filesByProject[projectPath]) listFiles(cid, projectPath);
+  });
+
   const projectItems = $derived(
     (server?.recentProjects ?? []).map((p) => ({ value: p, label: basename(p) })),
   );
@@ -357,43 +454,19 @@
     if (value) app.activeConnectionId = value;
   }
 
-  // A permission_request morphs the composer into an approval card (diff, reject/allow
-  // once/always allow, and the text box repurposed as an optional reject note). Asks are
-  // queued (a turn can raise several); the oldest shows, answering it steps up the next.
+  // Permission requests and questions queue up; the oldest shows as a card above the composer
+  // (AskCard), and the composer below becomes the "tell it what to do instead" note.
   const asks = $derived(server?.asksFor(sessionId) ?? []);
-  const pending = $derived(asks[0]?.kind === "permission" ? asks[0] : null);
-
-  function respond(allowed: boolean, remember: boolean) {
-    if (!pending || !cid || !server) return;
-    respondPermission(
-      cid,
-      pending.sessionId,
-      pending.turnId,
-      pending.toolCallId,
-      allowed,
-      remember,
-    );
-    server.removeAsk(pending.toolCallId);
-  }
-
-  // read_write forces every bash call to Ask and drops the remember cache key (SPEC.md §4c),
-  // so "Always Allow" would be misleading here.
-  const bashAlwaysAllowDisabled = $derived(
-    currentMode === "read_write" && pending?.toolName === "bash",
-  );
-
-  // ask_user_question (§3.1/§3.2), available in every mode, queued with
-  // permission asks above.
-  const pendingQuestion = $derived(asks[0]?.kind === "question" ? asks[0] : null);
-
-  function answerQuestion(answer: string) {
-    if (!pendingQuestion || !cid || !server) return;
-    askUserAnswer(cid, pendingQuestion.toolCallId, answer);
-    server.removeAsk(pendingQuestion.toolCallId);
-    text = "";
-  }
+  let askCard = $state<AskCard>();
+  // Keys only reach the card through the composer, so a new ask brings focus here if it's idle.
+  $effect(() => {
+    if (asks[0] && document.activeElement === document.body) untrack(() => textarea?.focus());
+  });
 
   const editingId = $derived(server?.editingMessageId[sessionId]);
+  const editingText = $derived(
+    editingId ? (server?.messagesBySession[sessionId]?.find((m) => m.id === editingId)?.text ?? "") : "",
+  );
 
   function cancelEdit() {
     if (!cid) return;
@@ -401,35 +474,75 @@
     text = "";
   }
 
+  function stop() {
+    if (cid && turnId) cancelTurn(cid, sessionId, turnId);
+  }
+
+  // What the reply streaming right now is doing, for the status chip.
+  const streamingMsg = $derived(server?.messagesBySession[sessionId]?.findLast((m) => m.streaming));
+  const activity = liveActivity(() => streamingMsg);
+  const showStatus = $derived(!floating && !asks.length && scrolledUp);
+
+  // One button whose job follows the state: send, queue behind the running turn, stop it when
+  // there's nothing to queue, or confirm an edit.
+  const hasDraft = $derived(!!text.trim() || attachments.some((a) => a.path));
+  const role = $derived<"send" | "queue" | "stop" | "confirm">(
+    asks.length ? "send" : editingId ? "confirm" : turnId && !hasDraft ? "stop" : turnId ? "queue" : "send",
+  );
+  const canSubmit = $derived(
+    asks.length
+      ? connected && !!text.trim()
+      : editingId
+        ? connected && !!text.trim() && !turnId && !!projectPath && hasProvider
+        : connected && hasDraft && !uploading && !!projectPath && hasProvider,
+  );
+  const primaryTitle = $derived(
+    role === "stop"
+      ? "Stop (Esc)"
+      : asks.length
+        ? "Tell it what to do instead"
+        : !connected
+          ? "Connect to yoakeland to send this"
+          : uploading
+            ? "Waiting for uploads to finish"
+            : !projectPath
+              ? "Pick a project first"
+              : !hasProvider
+                ? "Pick a provider first"
+                : role === "confirm"
+                  ? turnId
+                    ? "Wait for this turn to finish to send the edit"
+                    : "Send the edit"
+                  : role === "queue"
+                    ? "Queue, sends when this turn ends"
+                    : "Send",
+  );
+
   function submit(e?: Event) {
     e?.preventDefault();
     const value = text.trim();
-    if (!cid) return;
-    if (pendingQuestion) {
-      answerQuestion(value);
-      return;
-    }
-    if (pending) {
-      denyPermissionWithFeedback(
-        cid,
-        pending.sessionId,
-        pending.turnId,
-        pending.toolCallId,
-        value,
-      );
-      text = "";
-      return;
-    }
-    if (editingId) {
-      if (!value || turnId || !connected || !projectPath || !hasProvider) return;
+    if (!cid || !canSubmit) return;
+    if (asks.length) {
+      askCard?.dismissAll(value);
+    } else if (editingId) {
       editMessage(cid, sessionId, editingId, value);
     } else {
-      const paths = attachments.flatMap((a) => (a.path ? [a.path] : []));
-      if ((!value && !paths.length) || uploading || turnId || !connected || !projectPath || !hasProvider) return;
-      sendPrompt(cid, sessionId, value, paths);
+      // Mid-turn is fine: it queues until the running turn ends (sendPrompt).
+      sendPrompt(cid, sessionId, value, attachments.flatMap((a) => (a.path ? [a.path] : [])));
+      for (const a of attachments) if (a.thumb) URL.revokeObjectURL(a.thumb);
       attachments = [];
     }
     text = "";
+  }
+
+  let focused = $state(false);
+
+  // The + menu: context to add. A double click on it attaches files straight away.
+  let addOpen = $state(false);
+  const changedFiles = $derived(projectPath ? (server?.gitStatusByProject[projectPath]?.files ?? []) : []);
+  const planClosed = $derived(!!server?.planBySession[sessionId] && server.openPlanSessionId !== sessionId);
+  function mentionChanged() {
+    server?.insertIntoComposer(sessionId, changedFiles.map((f) => mentionText(f.path)).join(" "));
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -441,8 +554,7 @@
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        mentionIndex =
-          (mentionIndex - 1 + mentionMatches.length) % mentionMatches.length;
+        mentionIndex = (mentionIndex - 1 + mentionMatches.length) % mentionMatches.length;
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
@@ -456,13 +568,24 @@
         return;
       }
     }
+    if (asks.length && askCard?.onComposerKey(e, !text.trim())) {
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "Escape" && (editingId || turnId)) {
+      e.preventDefault();
+      if (editingId) cancelEdit();
+      else stop();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       submit(e);
     }
   }
 </script>
 
-<div class="wrap" class:floating>
+<div class="wrap" class:floating class:compact>
+  <div class="dim" class:shown={dragOver}></div>
   <div class="stack" class:morphing bind:this={stackEl}>
     <h2 class="hero" class:hidden={!floating}>
       {#if projectName}What shall we build in <span class="hero-project"
@@ -470,156 +593,190 @@
         >?{:else}What shall we build?{/if}
     </h2>
 
-    <form
-      class="box"
-      class:pending={pending || pendingQuestion}
-      class:drag-over={dragOver}
-      bind:this={boxEl}
-      onsubmit={submit}
-      ondragover={onDragOver}
-      ondragleave={() => isDesktop || (dragOver = false)}
-      ondrop={onDrop}
-    >
-      {#if dragOver}
-        <div class="drop-hint"><Icon name="paperclip" size={14} /> Drop to attach</div>
-      {/if}
-      {#if pendingQuestion}
-        <div class="permission">
-          <div class="permission-head">
-            <span class="permission-title">{pendingQuestion.question}</span>
-            {#if asks.length > 1}<span class="ask-count">1 of {asks.length}</span>{/if}
-          </div>
-          {#if pendingQuestion.options}
-            <div class="question-options">
-              {#each pendingQuestion.options as option (option)}
-                <button type="button" class="ghost" onclick={() => answerQuestion(option)}
-                  >{option}</button
-                >
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else if pending}
-        <div class="permission">
-          <div class="permission-head">
-            <span class="permission-title"
-              >{pending.diff?.filePath ?? pending.toolName}</span
-            >
-            <span class="permission-desc">{pending.description}</span>
-            {#if asks.length > 1}<span class="ask-count">1 of {asks.length}</span>{/if}
-          </div>
-          {#if pending.diff}
-            <DiffView diff={pending.diff} />
-          {/if}
-          <div class="permission-actions">
-            <button
-              type="button"
-              class="deny"
-              onclick={() => respond(false, false)}>Reject</button
-            >
-            <button
-              type="button"
-              class="ghost"
-              onclick={() => respond(true, false)}>Allow Once</button
-            >
-            <button
-              type="button"
-              class="allow"
-              disabled={bashAlwaysAllowDisabled}
-              title={bashAlwaysAllowDisabled
-                ? "bash always asks in Read/Write mode — this can't be remembered"
-                : undefined}
-              onclick={() => respond(true, true)}
-              >{bashAlwaysAllowDisabled ? "Always Allow (unavailable for bash)" : "Always Allow"}</button
-            >
-          </div>
-        </div>
-      {/if}
+    {#if asks.length}
+      <AskCard bind:this={askCard} {sessionId} {asks} />
+    {/if}
 
-      {#if editingId && !pending && !pendingQuestion}
-        <div class="editing-banner">
-          <Icon name="pencil" size={12} />
-          <span>Editing message — sending discards the reply that followed it</span>
-          <button type="button" class="link" onclick={cancelEdit}>Cancel</button>
-        </div>
-      {/if}
+    <div class="dock">
+      <!-- Only while scrolled up: what the running turn is doing, and a way back down. Tucks
+           behind the box's top edge otherwise. -->
+      <div class="status" class:shown={showStatus} inert={!showStatus} aria-hidden={!showStatus}>
+        {#if turnId}
+          <span class="activity">
+            <DotMatrix mode={activity.mode} size={12} />
+            <span class="activity-label">
+              {#key activity.label}
+                <span in:fly={{ y: 6, duration: 140 }}>{activity.label || "Working"}</span>
+              {/key}
+            </span>
+            <span class="activity-time">{activity.elapsed}</span>
+          </span>
+        {/if}
+        <button type="button" class="jump" class:solo={!turnId} onclick={() => onJump?.()} title="Jump to latest">
+          {#if !turnId}Jump to latest{/if}
+          <Icon name="arrow-narrow-down" size={14} />
+        </button>
+      </div>
 
-      {#if attachments.length && !pending && !pendingQuestion && !editingId}
-        <ul class="attachments">
-          {#each attachments as a (a.key)}
-            <li class:error={!!a.error} title={a.error ?? a.path ?? `Uploading ${a.name}…`}>
-              <Icon name={a.error ? "alert-circle" : a.path ? "file" : "loader-2"} size={12} />
-              <span class="name">{a.name}</span>
-              {#if !a.path && !a.error}<span class="pct">{Math.round((a.progress ?? 0) * 100)}%</span>{/if}
-              <button
-                type="button"
-                title="Remove"
-                onclick={() => (attachments = attachments.filter((x) => x.key !== a.key))}
+      <form
+        class="box"
+        class:editing={!!editingId && !asks.length}
+        class:drag-over={dragOver}
+        bind:this={boxEl}
+        onsubmit={submit}
+        ondragover={onDragOver}
+        ondragleave={() => isDesktop || (dragOver = false)}
+        ondrop={onDrop}
+      >
+        {#if dragOver}
+          <div class="drop-hint"><Icon name="paperclip" size={14} /> Drop to attach</div>
+        {/if}
+
+        {#if editingId && !asks.length}
+          <div class="editing-strip" transition:slide={{ duration: 160 }}>
+            <Icon name="pencil" size={12} />
+            <span class="editing-label">Editing</span>
+            <span class="editing-quote">{editingText}</span>
+            <button type="button" class="editing-cancel" title="Cancel editing (Esc)" onclick={cancelEdit}>
+              <kbd>Esc</kbd><Icon name="xmark" size={12} />
+            </button>
+          </div>
+        {/if}
+
+        {#if attachments.length && !editingId}
+          <ul class="attachments" transition:slide={{ duration: 160 }}>
+            {#each attachments as a (a.key)}
+              <li
+                class:error={!!a.error}
+                title={a.error ?? a.path ?? `Uploading ${a.name}…`}
+                in:scale={{ start: 0.9, duration: 140, easing: cubicOut }}
               >
-                <Icon name="xmark" size={11} />
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-      <div class="input-area" class:hidden={pendingQuestion?.options}>
-        <textarea
-          bind:this={textarea}
-          bind:value={text}
-          onkeydown={onKeydown}
-          onpaste={onPaste}
-          onkeyup={trackCursor}
-          onclick={trackCursor}
-          oninput={() => {
-            autosize();
-            trackCursor();
-          }}
-          placeholder={pendingQuestion
-            ? "Type your answer…"
-            : pending
-              ? "Optional — reject and tell it what to do instead…"
-              : !projectPath
-                ? "Pick a project in the sidebar to start chatting…"
-                : floating
-                  ? "Ask anything about this project…"
-                  : "Reply…"}
-          rows="1"
-        ></textarea>
-
-        {#if mentionMatches.length > 0}
-          <ul
-            class="mentions"
-            in:scale={{ start: 0.98, duration: 160, easing: cubicOut }}
-            out:scale={{ start: 0.98, duration: 120, easing: cubicIn }}
-          >
-            {#each mentionMatches as file, i (file)}
-              <li>
-                <button
-                  type="button"
-                  class:active={i === mentionIndex}
-                  onclick={() => pickMention(file)}
-                >
-                  {file}
+                {#if a.error}
+                  <Icon name="alert-circle" size={14} />
+                {:else if a.thumb}
+                  <img class="thumb" class:loading={!a.path} src={a.thumb} alt="" />
+                {:else if !a.path}
+                  <svg class="ring" viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6" />
+                    <circle cx="8" cy="8" r="6" class="bar" style:stroke-dasharray="{(a.progress ?? 0) * 37.7} 37.7" />
+                  </svg>
+                {:else}
+                  <img class="ficon" src={fileIconUrl(a.name)} alt="" />
+                {/if}
+                <span class="name">{a.name}</span>
+                <button type="button" title="Remove" onclick={() => removeAttachment(a.key)}>
+                  <Icon name="xmark" size={11} />
                 </button>
               </li>
             {/each}
           </ul>
         {/if}
-      </div>
 
-      <div class="toolbar">
-        <div class="left">
-          {#if !pending && !pendingQuestion}
-            <button
-              type="button"
-              class="icon-chip"
-              title={app.connectionMode === "local" ? "Attach files" : "Upload and attach files"}
-              disabled={!connected || !!editingId}
-              onclick={attachFile}
-            >
-              <Icon name="paperclip" size={14} />
-            </button>
+        <div class="input-area">
+          {#if composerRuns.length}
+            <div class="mirror" aria-hidden="true" bind:this={mirror}>{#each composerRuns as r}{#if r.path}<span class="m-chip"><span class="m-at" style:background-image={`url("${fileIconUrl(r.path.split("/").pop() ?? r.path)}")`}>@</span>{r.text.slice(1)}</span>{:else}{r.text}{/if}{/each}&#8203;</div>
+          {/if}
+          <textarea
+            bind:this={textarea}
+            class:decorated={composerRuns.length > 0}
+            onscroll={() => mirror && textarea && (mirror.scrollTop = textarea.scrollTop)}
+            bind:value={text}
+            onkeydown={onKeydown}
+            onpaste={onPaste}
+            onkeyup={trackCursor}
+            onclick={trackCursor}
+            onfocus={() => (focused = true)}
+            onblur={() => (focused = false)}
+            oninput={() => {
+              autosize();
+              trackCursor();
+            }}
+            placeholder={asks.length
+              ? asks.length > 1
+                ? `Or tell it what to do instead (answers all ${asks.length})…`
+                : "Or tell it what to do instead…"
+              : !projectPath
+                ? "Pick a project in the sidebar to start chatting…"
+                : floating
+                  ? "Ask anything about this project…"
+                  : editingId
+                    ? "Edit your message…"
+                    : turnId
+                      ? "Queue a follow-up…"
+                      : "Reply…"}
+            rows="1"
+          ></textarea>
+          <span class="hint" class:shown={focused && !text && !compact && !asks.length && !!projectPath} aria-hidden="true">
+            <kbd>⏎</kbd> {turnId && !editingId ? "queue" : "send"} · <kbd>⇧⏎</kbd> newline
+          </span>
+        </div>
+
+        {#if mentionMatches.length > 0}
+          <ul
+            class="mentions"
+            in:fly={{ y: 8, duration: 160, easing: cubicOut }}
+            out:fly={{ y: 6, duration: 120, easing: cubicIn }}
+          >
+            {#each mentionMatches as file, i (file)}
+              {@const cut = file.lastIndexOf("/") + 1}
+              <li>
+                <button type="button" class:active={i === mentionIndex} onclick={() => pickMention(file)}>
+                  <img class="ficon" src={fileIconUrl(file.slice(cut))} alt="" />
+                  <span class="m-name">{#each marked(file, cut, file.length) as run}{#if run.hit}<mark>{run.t}</mark>{:else}{run.t}{/if}{/each}</span>
+                  <span class="m-dir">{#each marked(file, 0, Math.max(0, cut - 1)) as run}{#if run.hit}<mark>{run.t}</mark>{:else}{run.t}{/if}{/each}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        <div class="toolbar-clip" inert={compact}>
+          <div class="toolbar">
+            <DropdownMenu.Root bind:open={addOpen}>
+              <DropdownMenu.Trigger
+                class="add-chip"
+                title="Add context (double-click to attach files)"
+                ondblclick={() => {
+                  addOpen = false;
+                  void attachFile();
+                }}
+              >
+                <Icon name="paperclip" size={14} />
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  class="context-menu"
+                  side="top"
+                  align="start"
+                  sideOffset={6}
+                  onCloseAutoFocus={(e) => {
+                    e.preventDefault();
+                    textarea?.focus();
+                  }}
+                >
+                  <DropdownMenu.Item class="context-menu-item" disabled={!connected || !!editingId} onSelect={attachFile}>
+                    <Icon name="paperclip" size={13} />
+                    <span>{app.connectionMode === "local" ? "Attach files" : "Upload files"}</span>
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item class="context-menu-item" disabled={!projectPath} onSelect={insertMention}>
+                    <Icon name="at-sign" size={13} />
+                    <span>Mention a file</span>
+                  </DropdownMenu.Item>
+                  {#if changedFiles.length}
+                    <DropdownMenu.Item class="context-menu-item" onSelect={mentionChanged}>
+                      <Icon name="file-diff" size={13} />
+                      <span>Mention changed files ({changedFiles.length})</span>
+                    </DropdownMenu.Item>
+                  {/if}
+                  {#if planClosed}
+                    <DropdownMenu.Item class="context-menu-item" onSelect={() => server && (server.openPlanSessionId = sessionId)}>
+                      <Icon name="clipboard-list" size={13} />
+                      <span>Open the plan</span>
+                    </DropdownMenu.Item>
+                  {/if}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
             <input
               bind:this={fileInput}
               type="file"
@@ -631,85 +788,33 @@
                 input.value = "";
               }}
             />
-
-            <ModelPicker {sessionId} />
-
-            <ModePicker {sessionId} />
-
-            {#if server?.planBySession[sessionId] && server.openPlanSessionId !== sessionId}
-              <button
-                type="button"
-                class="icon-chip"
-                title="Reopen this session's plan"
-                onclick={() => server && (server.openPlanSessionId = sessionId)}
-              >
-                <Icon name="clipboard-list" size={14} />
-              </button>
-            {/if}
-          {/if}
+            <div class="pickers">
+              <ModelPicker {sessionId} />
+              <ModePicker {sessionId} />
+            </div>
+          </div>
         </div>
 
-        <div class="right">
-          {#if turnId}
-            <button
-              type="button"
-              class="stop"
-              onclick={() => cid && turnId && cancelTurn(cid, sessionId, turnId)}
-            >
-              <Icon name="pause" size={13} /> Stop
-            </button>
-          {/if}
-          {#if pendingQuestion}
-            {#if !pendingQuestion.options}
-              <button type="submit" class="send" disabled={!connected || !text.trim()}>
-                <Icon name="send" size={13} /> Answer
-              </button>
-            {/if}
-          {:else if pending}
-            <button
-              type="submit"
-              class="send"
-              disabled={!connected}
-              title={text.trim()
-                ? "Reject and send this instead"
-                : "Reject with no note"}
-            >
-              <Icon name="send" size={13} />
-              {text.trim() ? "Reject & send" : "Reject"}
-            </button>
-          {:else if !turnId}
-            <button
-              type="button"
-              class="icon-chip"
-              title="Mention a file (@path)"
-              onclick={insertMention}
-            >
-              <Icon name="at-sign" size={14} />
-            </button>
-            <button
-              type="submit"
-              class="send icon-only"
-              disabled={(!text.trim() && !attachments.some((a) => a.path)) ||
-                uploading ||
-                !connected ||
-                !projectPath ||
-                !hasProvider}
-              title={!connected
-                ? "Connect to yoakeland to send this"
-                : uploading
-                  ? "Waiting for uploads to finish"
-                : !projectPath
-                  ? "Pick a project first"
-                  : !hasProvider
-                    ? "Pick a provider first"
-                    : "Send"}
-            >
-              <Icon name="send" size={15} />
-            </button>
-          {/if}
-        </div>
-      </div>
-    </form>
+        <!-- Pinned to the corner, so it stays put while the toolbar collapses under it. -->
+        <button
+          type={role === "stop" ? "button" : "submit"}
+          class="primary {role}"
+          class:ready={role === "stop" || canSubmit}
+          disabled={role !== "stop" && !canSubmit}
+          title={primaryTitle}
+          aria-label={primaryTitle}
+          onclick={role === "stop" ? stop : undefined}
+        >
+          <span class="glyph" class:on={role === "send"}><Icon name="send" size={15} /></span>
+          <span class="glyph" class:on={role === "queue"}>
+            <Icon name="send" size={15} />
+            <span class="badge"><Icon name="clock" size={9} /></span>
+          </span>
+          <span class="glyph" class:on={role === "stop"}><Icon name="player-stop" size={14} /></span>
+          <span class="glyph" class:on={role === "confirm"}><Icon name="check" size={16} /></span>
+        </button>
+      </form>
+    </div>
 
     <div
       class="float-controls"
@@ -784,15 +889,16 @@
     opacity: 1;
   }
   /* Fades scrolled-under transcript text instead of a hard cut at the box's edge. Height
-     matches MessageList's reserved bottom padding (--composer-height + 40px, see .list there)
-     exactly, so it only covers the blank buffer zone, never an unscrolled message's footer. */
+     matches MessageList's reserved bottom padding (--composer-height + 56px, see .rows there,
+     room for the status chip included) exactly, so it only covers the blank buffer zone, never
+     an unscrolled message's footer. */
   .wrap::after {
     content: "";
     position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
-    height: calc(var(--composer-height, 90px) + 40px);
+    height: calc(var(--composer-height, 90px) + 56px);
     background: linear-gradient(to bottom, transparent, var(--panel-bg) 65%);
     opacity: 0;
     /* Behind .stack: ::after otherwise paints after it in DOM order and would cover the box. */
@@ -931,7 +1037,7 @@
   }
   .box {
     position: relative;
-    /* Above .hero and .float-controls (both z-index: -1) so they tuck away visibly behind
+    /* Above .hero, .float-controls and .status (all lower), so they tuck away visibly behind
        its solid background. */
     z-index: 1;
     width: 100%;
@@ -946,9 +1052,34 @@
        = 22px at the 14px root size. Right/bottom padding kept equal so the corners nest. */
     border-radius: 22px;
     padding: 0.71rem var(--space-1) var(--space-1);
+    transition:
+      border-color calc(0.15s * var(--anim-speed, 1)) ease,
+      padding var(--morph) ease,
+      transform calc(0.15s * var(--anim-speed, 1)) ease,
+      box-shadow calc(0.15s * var(--anim-speed, 1)) ease;
   }
+  .box:focus-within {
+    border-color: color-mix(in srgb, var(--text) 24%, transparent);
+  }
+  .box.editing {
+    border-color: var(--accent);
+  }
+  /* Dragging files over the chat: everything else dims and the composer lifts to take them. */
   .box.drag-over {
     border-color: var(--accent);
+    transform: scale(1.01);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .dim {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .dim.shown {
+    opacity: 1;
   }
   .drop-hint {
     position: absolute;
@@ -965,100 +1096,133 @@
     font-weight: 500;
     pointer-events: none;
   }
-  .box.pending {
-    border-color: var(--accent);
+  .dock {
+    position: relative;
   }
-  .permission {
-    margin-bottom: 0.71rem;
-    padding-bottom: 0.71rem;
-    border-bottom: 1px solid var(--panel-border);
-  }
-  .permission-head {
-    display: flex;
-    flex-direction: column;
-    gap: 0.14rem;
-    margin-bottom: var(--space-half);
-  }
-  .permission-title {
-    font-size: var(--text-body-size);
-    font-weight: 600;
-    font-family: ui-monospace, monospace;
-  }
-  .permission-desc {
-    font-size: var(--text-label-size);
-    color: var(--text-dim);
-  }
-  .ask-count {
-    font-size: var(--text-label-size);
-    color: var(--warning, var(--text-dim));
-  }
-  .permission-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-1);
-    margin-top: var(--space-1);
-  }
-  .permission-actions button {
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 0.5rem 0.93rem;
-    font-size: var(--text-label-size);
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .editing-banner {
+  /* Rises out from behind the box's top edge: tucked, it sits inside the box's footprint. */
+  .status {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 0.5rem);
+    z-index: 0;
     display: flex;
     align-items: center;
-    gap: 0.36rem;
-    font-size: var(--text-label-size);
+    gap: 0.57rem;
+    max-width: calc(100% - 2rem);
+    height: 1.86rem;
+    padding: 0 0.29rem 0 0.71rem;
+    background: var(--float-bg);
+    backdrop-filter: var(--float-blur);
+    border: 1px solid var(--float-border);
+    border-block-color: var(--float-border-top) var(--float-border-bottom);
+    border-radius: var(--radius-pill);
     color: var(--text-dim);
-    padding: 0.36rem 0.71rem 0;
+    font-size: var(--text-label-size);
+    white-space: nowrap;
+    opacity: 0;
+    transform: translate(-50%, calc(100% + 0.5rem)) scale(0.96);
+    pointer-events: none;
+    transition:
+      opacity calc(0.2s * var(--anim-speed, 1)) ease,
+      transform calc(0.24s * var(--anim-speed, 1)) cubic-bezier(0.2, 0.8, 0.2, 1);
   }
-  .editing-banner .link {
-    margin-left: auto;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--accent);
-    font-size: inherit;
-    cursor: pointer;
-    text-decoration: underline;
+  .status.shown {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    pointer-events: auto;
   }
-  .permission-actions .deny {
-    background: var(--danger-dim);
-    color: var(--danger);
-  }
-  .permission-actions .ghost {
-    background: rgba(255, 255, 255, 0.07);
+  .activity {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
     color: var(--text);
   }
-  .permission-actions .allow {
-    background: var(--accent);
-    color: #0d1020;
+  .activity-label {
+    position: relative;
+    min-width: 0;
+    max-width: 20rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .activity-time {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .jump {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.29rem;
+    height: 1.43rem;
+    min-width: 1.43rem;
+    padding: 0 0.29rem;
+    border: none;
+    border-radius: var(--radius-pill);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  /* Icon-only: .status's own padding (0.71rem/0.29rem) is sized for the activity label
+     beside it, not for this button alone. Cancel it out and reapply the same 0.215rem
+     gap the button already gets top/bottom from being centered in the taller pill
+     ((1.86rem status height - 1.43rem button height) / 2). */
+  .jump.solo {
+    margin: 0 -0.075rem 0 -0.495rem;
+    padding: 0 0.215rem;
+    background: none;
+  }
+  .jump:hover {
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .editing-strip {
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    margin: -0.14rem 0 0.43rem;
+    padding: 0.29rem 0.29rem 0.29rem 0.57rem;
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    color: var(--accent);
+    font-size: var(--text-label-size);
+  }
+  .editing-label {
+    font-weight: 600;
+  }
+  .editing-quote {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-dim);
+  }
+  .editing-cancel {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.29rem;
+    padding: 0.14rem 0.29rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .editing-cancel:hover {
+    color: var(--text);
+  }
+  kbd {
+    font-family: inherit;
+    font-size: 0.7rem;
+    opacity: 0.75;
   }
   .input-area {
     position: relative;
   }
-  .input-area.hidden {
-    display: none;
-  }
-  .question-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1);
-    margin-top: var(--space-1);
-  }
-  .question-options button {
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 0.5rem 0.93rem;
-    font-size: var(--text-label-size);
-    font-weight: 600;
-    cursor: pointer;
-    background: rgba(255, 255, 255, 0.07);
-    color: var(--text);
-  }
   textarea {
+    display: block;
     width: 100%;
     resize: none;
     background: transparent;
@@ -1068,18 +1232,64 @@
     font-size: 0.92rem;
     line-height: 1.5;
     outline: none;
+    /* Lines the text's left edge up with the + button's glyph below it. */
+    padding: 0 0 0 calc((1.86rem - 14px) / 2);
     /* Matches MAX_TEXTAREA_HEIGHT in the script; scrolls internally past this instead of
        pushing the toolbar off the panel. */
     max-height: 240px;
     overflow-y: auto;
   }
-  /* autosize() writes height on every keystroke, but only the floating/docked morph should
-     animate; scoping the transition to .stack.morphing keeps typing snapping instantly. */
+  /* Draws the textarea's text, chips and all, underneath it: same box, font and wrapping. */
+  .mirror {
+    position: absolute;
+    inset: 0;
+    padding: 0 0 0 calc((1.86rem - 14px) / 2);
+    font-size: 0.92rem;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow-y: auto;
+    scrollbar-color: transparent transparent;
+    pointer-events: none;
+  }
+  textarea.decorated {
+    position: relative;
+    color: transparent;
+    caret-color: var(--text);
+  }
+  /* Messages' mention chip (Markdown.svelte), minus padding: a box-shadow ring stands in for it. */
+  .m-chip {
+    color: color-mix(in srgb, var(--accent) 60%, var(--text));
+    background: var(--accent-dim);
+    box-shadow: 0 0 0 0.15em var(--accent-dim);
+    border-radius: var(--radius-sm);
+    box-decoration-break: clone;
+  }
+  /* The file's icon over the @ it stands in for, so the text keeps its width. */
+  .m-at {
+    color: transparent;
+    background: center / contain no-repeat;
+  }
+  /* autosize() writes height on every keystroke, but only the floating/docked and compact
+     morphs should animate; scoping the transition to .stack.morphing keeps typing instant. */
   .stack.morphing textarea {
     transition: height var(--morph) ease;
   }
-  /* A plain {#if} block, not bits-ui, so there's no PresenceManager for a CSS-only exit
-     animation; uses Svelte's own `scale` transition instead. */
+  .hint {
+    position: absolute;
+    top: 0;
+    right: 0;
+    line-height: 1.38rem;
+    color: var(--text-dim);
+    font-size: var(--text-label-size);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .hint.shown {
+    opacity: 0.6;
+  }
   .attachments {
     list-style: none;
     display: flex;
@@ -1091,11 +1301,12 @@
   .attachments li {
     display: inline-flex;
     align-items: center;
-    gap: 0.29rem;
+    gap: 0.36rem;
     max-width: 16rem;
-    padding: 0.14rem 0.29rem 0.14rem 0.43rem;
+    height: 1.71rem;
+    padding: 0 0.29rem 0 0.29rem;
     border: 1px solid var(--panel-border);
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-sm);
     font-size: var(--text-label-size);
     color: var(--text-dim);
   }
@@ -1117,66 +1328,115 @@
     color: inherit;
     cursor: pointer;
   }
+  .thumb {
+    width: 1.29rem;
+    height: 1.29rem;
+    border-radius: 4px;
+    object-fit: cover;
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
+  }
+  .thumb.loading {
+    opacity: 0.45;
+  }
+  .ficon {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+  }
+  .ring {
+    width: 1rem;
+    height: 1rem;
+    transform: rotate(-90deg);
+    fill: none;
+    stroke-width: 2.5;
+    stroke: color-mix(in srgb, var(--text) 15%, transparent);
+  }
+  .ring .bar {
+    stroke: var(--accent);
+    stroke-linecap: round;
+    transition: stroke-dasharray calc(0.2s * var(--anim-speed, 1)) ease;
+  }
+  /* The composer's own width, rising from its top edge. */
   .mentions {
     position: absolute;
-    bottom: 100%;
     left: 0;
-    margin: 0 0 0.43rem;
+    right: 0;
+    bottom: calc(100% + 0.43rem);
+    margin: 0;
     padding: var(--space-half);
     list-style: none;
-    max-width: min(25.71rem, 100%);
-    max-height: 14.29rem;
-    overflow-y: auto;
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: 16px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     z-index: 5;
   }
   .mentions button {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     width: 100%;
     text-align: left;
     background: none;
     border: none;
-    color: var(--text-dim);
-    padding: 0.43rem var(--space-1);
-    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 0.36rem var(--space-1);
+    border-radius: 10px;
     font-size: var(--text-label-size);
-    font-family: ui-monospace, monospace;
     cursor: pointer;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .mentions button.active {
     background: var(--sidebar-active);
-    color: var(--text);
+  }
+  .m-name {
+    font-weight: 600;
+  }
+  .m-dir {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-dim);
+    direction: rtl;
+    text-align: left;
+  }
+  mark {
+    background: none;
+    color: var(--accent);
+  }
+  /* Collapses to nothing when compact (0fr), leaving the text field and the send button. */
+  .toolbar-clip {
+    display: grid;
+    grid-template-rows: 1fr;
+    margin-top: 0.43rem;
+    transition:
+      grid-template-rows var(--morph) ease,
+      margin-top var(--morph) ease,
+      opacity var(--morph) ease;
   }
   .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 0.43rem;
-    gap: var(--space-1);
-  }
-  .left {
+    min-height: 0;
+    overflow: hidden;
     display: flex;
     align-items: center;
     gap: 0.43rem;
-    flex-wrap: wrap;
+    /* Room for the send button pinned in the corner. */
+    padding-right: 2.43rem;
   }
-  .right {
+  .pickers {
     display: flex;
     align-items: center;
     gap: 0.43rem;
+    min-width: 0;
   }
-  .icon-chip {
+  :global(.add-chip) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    flex: none;
     width: 1.86rem;
     height: 1.86rem;
     /* Border stays a real 1px box in every state rather than being dropped, so hovering
@@ -1190,44 +1450,105 @@
       background calc(0.12s * var(--anim-speed, 1)) ease,
       color calc(0.12s * var(--anim-speed, 1)) ease;
   }
-  .icon-chip:hover:not(:disabled) {
+  :global(.add-chip:hover),
+  :global(.add-chip[data-state="open"]) {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text);
   }
-  .icon-chip:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .send,
-  .stop {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.43rem;
-    border: none;
-    border-radius: var(--radius-pill);
-    padding: 0.5rem var(--space-2);
-    font-size: 0.82rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .send {
-    background: var(--accent);
-    color: #0d1020;
-  }
-  .send:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  /* 2rem circle to 1rem corner radius, the send-button half of .box's
-     concentric-corner border-radius calculation above. */
-  .send.icon-only {
+  /* Neutral until there's something to send, then the accent: it lights up when ready. */
+  .primary {
+    position: absolute;
+    right: var(--space-1);
+    bottom: var(--space-1);
+    z-index: 1;
     width: 2rem;
     height: 2rem;
     padding: 0;
-    justify-content: center;
+    border: none;
+    border-radius: var(--radius-pill);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-dim);
+    cursor: default;
+    transition:
+      background calc(0.15s * var(--anim-speed, 1)) ease,
+      color calc(0.15s * var(--anim-speed, 1)) ease,
+      bottom var(--morph) ease;
   }
-  .stop {
-    background: var(--danger-dim);
-    color: var(--danger);
+  .primary.ready {
+    background: var(--accent);
+    color: #0d1020;
+    cursor: pointer;
+  }
+  .primary.stop {
+    background: var(--text);
+    color: var(--panel-bg);
+  }
+  .glyph {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0.6);
+    transition:
+      opacity calc(0.15s * var(--anim-speed, 1)) ease,
+      transform calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .glyph.on {
+    opacity: 1;
+    transform: none;
+  }
+  .badge {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    display: flex;
+    padding: 1px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  /* Scrolled up: one row, the text field and the send button beside it. */
+  .wrap.compact .box {
+    padding: var(--space-1);
+  }
+  .wrap.compact :is(textarea, .mirror) {
+    padding-block: calc((2rem - 1.38rem) / 2);
+    padding-right: 2.57rem;
+  }
+  .wrap.compact .toolbar-clip {
+    grid-template-rows: 0fr;
+    margin-top: 0;
+    opacity: 0;
+  }
+
+  /* Narrow (a split, or a small window): tighter to the edges and less rounded, like a phone's
+     composer, with the model and mode pickers merged into one icon-only pill. */
+  @container (max-width: 36rem) {
+    .stack,
+    .wrap.floating .stack {
+      width: calc(100% - 1rem);
+    }
+    .stack {
+      top: calc(100% - 0.5rem);
+    }
+    .box {
+      border-radius: 16px;
+    }
+    .hint {
+      display: none;
+    }
+    .pickers {
+      gap: 0;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .pickers :global(.picker-trigger) {
+      padding: 0 0.5rem;
+    }
+    .pickers :global(.trigger-label) {
+      display: none;
+    }
   }
 </style>

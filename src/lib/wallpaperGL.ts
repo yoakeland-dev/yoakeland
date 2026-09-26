@@ -31,10 +31,14 @@ const STYLE_MAP: Record<WallpaperStyle, number> = {
 
 export function wallpaperGL(
   canvas: HTMLCanvasElement,
-  params: string | { src: string; style?: WallpaperStyle },
+  params: string | { src: string; style?: WallpaperStyle; visible?: boolean },
 ) {
   let src = typeof params === "string" ? params : params.src;
   let style: WallpaperStyle = (typeof params === "string" ? undefined : params.style) ?? "dither";
+  // Hidden (a chat with messages keeps the canvas faded out): resizes and theme changes only
+  // mark it stale, and it redraws once it's shown again.
+  let visible = typeof params === "string" ? true : (params.visible ?? true);
+  let stale = false;
 
   const ctx = canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: false });
   if (!ctx) return {};
@@ -91,6 +95,8 @@ export function wallpaperGL(
 
   function draw() {
     if (!ready) return;
+    if (!visible) return void (stale = true);
+    stale = false;
     const dpr = window.devicePixelRatio || 1;
     const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
     const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
@@ -101,7 +107,6 @@ export function wallpaperGL(
     gl.viewport(0, 0, w, h);
     gl.uniform2f(uCanvasSize, w, h);
     gl.uniform2f(uImgSize, imgSize[0], imgSize[1]);
-    setThemeUniforms();
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -115,6 +120,7 @@ export function wallpaperGL(
       gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
       ready = true;
+      setThemeUniforms();
       draw();
     };
     img.onerror = () => {
@@ -129,13 +135,22 @@ export function wallpaperGL(
   // applySettings() re-themes by setting inline CSS custom properties on
   // <html>, which doesn't otherwise touch the canvas — watch for it so
   // u_accent/u_panelBg don't go stale on a theme switch.
-  const themeObserver = new MutationObserver(() => draw());
+  // Resolving the colours forces style recalcs, so it happens here and at load, not per draw.
+  const themeObserver = new MutationObserver(() => {
+    setThemeUniforms();
+    draw();
+  });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
 
   load(src);
 
   return {
-    update(newParams: string | { src: string; style?: WallpaperStyle }) {
+    update(newParams: string | { src: string; style?: WallpaperStyle; visible?: boolean }) {
+      const nowVisible = typeof newParams === "string" ? true : (newParams.visible ?? true);
+      if (nowVisible !== visible) {
+        visible = nowVisible;
+        if (visible && stale) draw();
+      }
       const newSrc = typeof newParams === "string" ? newParams : newParams.src;
       const newStyle: WallpaperStyle =
         (typeof newParams === "string" ? undefined : newParams.style) ?? "dither";

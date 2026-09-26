@@ -19,6 +19,7 @@ import type {
   SandboxTier,
   SessionSummary,
   SnapshotInfo,
+  SidebarPanel,
   TerminalStatus,
   TerminalTab,
   TokenInfo,
@@ -27,6 +28,7 @@ import type {
   ToolResultData,
   TurnCompletedData,
   TerminalSummary,
+  QueuedPrompt,
 } from "./types";
 
 /** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
@@ -35,6 +37,7 @@ import { deriveTheme, deriveTerminalTheme, TERMINAL_THEME_PRESETS } from "./them
 import { invoke, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
+import { scanShellEvents } from "./terminalShellIntegration";
 
 export type ConnectionMode = "local" | "remote";
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -58,6 +61,7 @@ const LAST_USED_MODE_KEY = "yoake.lastUsedMode";
 // Event types whose handleEvent case reads the resolved top-level `sessionId`; an envelope of
 // one of these with neither `sessionId` nor a current session is dropped, not processed against "".
 const SESSION_SCOPED_EVENTS = new Set([
+  "turn_started",
   "model_delta",
   "tool_call_requested",
   "permission_request",
@@ -277,6 +281,10 @@ export const SIDEBAR_MIN_WIDTH = 180;
 export const SIDEBAR_MAX_WIDTH = 420;
 export const RIGHT_SIDEBAR_MIN_WIDTH = 220;
 export const CHAT_SIDEBAR_MIN_WIDTH = 220;
+/** The tools column's CSS minimum while it's on the right: room for its tab row (one tab, "…",
+ * swap, all tools: 8rem) past the padding and the chrome island floating over its right end. */
+export const chatSidebarMinCss = (reserveVar: string) =>
+  `max(${CHAT_SIDEBAR_MIN_WIDTH}px, calc(var(--space-1) + 8rem + var(${reserveVar})))`;
 export const TERMINAL_MIN_HEIGHT = 120;
 
 function loadBool(key: string): boolean {
@@ -420,8 +428,7 @@ export class ServerState {
 
   sandboxTierByProject = $state<Record<string, SandboxTier>>({});
   snapshotsByProject = $state<Record<string, SnapshotInfo[]>>({});
-  showSnapshots = $state(false);
-  // Set on snapshot_restored (§3.2) so SnapshotDialog can confirm the restore completed instead of closing optimistically.
+  // Set on snapshot_restored (§3.2) so SnapshotsPanel can confirm the restore completed instead of assuming it.
   lastSnapshotRestored = $state<{ snapshotId: string; at: number } | null>(null);
 
   // Replayed by list_notifications on connect, then kept live by pushes.
@@ -493,10 +500,24 @@ export class ServerState {
   terminalSplitBySession = $state<Record<string, boolean>>({});
   splitTerminalBySession = $state<Record<string, string | undefined>>({});
   // A single chat's own auxiliary view onto itself (plan, file previews, diffs, snapshots) --
-  // NOT `sidebarSessionId`, which is a second linked chat. Also not persisted.
+  // NOT `sidebarSessionId`, which is a second linked chat. These three persist per server with
+  // the sidebar prefs; each applet's own live state is kept by ChatSidebar.svelte.
   chatSidebarOpenBySession = $state<Record<string, boolean>>({});
+  // Which tool that side panel shows; unset shows the picker.
+  chatSidebarPanelBySession = $state<Record<string, SidebarPanel | undefined>>({});
+  // Tools take the main area and the chat the narrow right column (ChatSidebar.svelte).
+  chatSidebarSwappedBySession = $state<Record<string, boolean>>({});
+  // A file for the explorer to open (and lines to select), from a mention click or another panel.
+  revealFileBySession = $state<Record<string, { path: string; from?: number; to?: number } | undefined>>({});
+  // Text for PromptInput to insert at its cursor, e.g. an `@path#L10-20` mention from the editor.
+  composerInsertBySession = $state<Record<string, string | undefined>>({});
+  // Bumped whenever a project's files may have changed on disk, so open file views refetch.
+  fsTickByProject = $state<Record<string, number>>({});
   messagesBySession = $state<Record<string, ChatMessage[]>>({});
   activeTurnBySession = $state<Record<string, string | undefined>>({});
+  // Prompts sent while a turn was running (§3.1 turn_started): shown as queued until the
+  // server starts them, and withdrawable until then. Client memory only.
+  queuedBySession = $state<Record<string, QueuedPrompt[]>>({});
   takenOverSessions = $state<Record<string, boolean>>({});
   // Cleared the moment its session is opened, so "finished" means "done, and you haven't looked yet."
   finishedSessions = $state<Record<string, boolean>>({});
@@ -558,6 +579,9 @@ export class ServerState {
         order: this.projectOrder,
         labels: this.projectLabels,
         lastViewed: this.lastViewedBySession,
+        toolsOpen: this.chatSidebarOpenBySession,
+        toolsPanel: this.chatSidebarPanelBySession,
+        toolsSwapped: this.chatSidebarSwappedBySession,
       }),
     );
   }
@@ -570,6 +594,9 @@ export class ServerState {
       this.projectOrder = this.projectOrder.length ? this.projectOrder : (p.order ?? []);
       this.projectLabels = { ...p.labels, ...this.projectLabels };
       this.lastViewedBySession = { ...p.lastViewed, ...this.lastViewedBySession };
+      this.chatSidebarOpenBySession = { ...p.toolsOpen, ...this.chatSidebarOpenBySession };
+      this.chatSidebarPanelBySession = { ...p.toolsPanel, ...this.chatSidebarPanelBySession };
+      this.chatSidebarSwappedBySession = { ...p.toolsSwapped, ...this.chatSidebarSwappedBySession };
     } catch {
       // corrupt prefs, start fresh
     }
@@ -897,6 +924,22 @@ export class ServerState {
     this.terminalOpenBySession[sessionId] = !this.terminalOpenBySession[sessionId];
   }
 
+  /** Ids this client minted, with the project-relative cwd to start in: their TerminalView sends
+   * terminal_open instead of terminal_attach, once (a remount must attach, the server rejects a
+   * second open). Plain Map, only read at mount. */
+  freshTerminals = new Map<string, string | undefined>();
+
+  /** Opens the drawer with a new shell in it. A draft chat has no server session yet, so it only
+   * opens the drawer, which explains that. */
+  newTerminal(sessionId: string, cwd?: string) {
+    this.terminalOpenBySession[sessionId] = true;
+    if (!(this.messagesBySession[sessionId] ?? []).length) return;
+    const id = `term-${crypto.randomUUID().slice(0, 8)}`;
+    this.freshTerminals.set(id, cwd);
+    this.registerTerminalTab(sessionId, id);
+    this.setActiveTerminalTab(sessionId, id);
+  }
+
   // ---- Built-in terminal (SPEC.md §3.1/§3.2 terminal_*) ----
 
   /** Registers a brand-new tab optimistically, before terminal_snapshot confirms it, so the
@@ -954,6 +997,11 @@ export class ServerState {
     this.terminalsBySession[sessionId] = tabs;
   }
 
+  renameTerminal(terminalId: string, name: string) {
+    const tab = this.terminalById[terminalId];
+    if (tab) this.terminalById = { ...this.terminalById, [terminalId]: { ...tab, name: name.trim() || undefined } };
+  }
+
   /** Drops a tab from local bookkeeping; only from "terminal_closed" (no optimistic removal,
    * closing isn't reversible). Picks a replacement for whichever pane(s) were showing it. */
   private forgetTerminalTab(terminalId: string) {
@@ -964,6 +1012,8 @@ export class ServerState {
     const sessionId = tab.sessionId;
     const remaining = (this.terminalsBySession[sessionId] ?? []).filter((id) => id !== terminalId);
     this.terminalsBySession[sessionId] = remaining;
+    // Closing the last one hides the drawer, else opening it would spawn a replacement right away.
+    if (!remaining.length) this.terminalOpenBySession[sessionId] = false;
     if (this.activeTerminalBySession[sessionId] === terminalId) {
       this.activeTerminalBySession[sessionId] = remaining.find((id) => id !== this.splitTerminalBySession[sessionId]);
     }
@@ -974,6 +1024,31 @@ export class ServerState {
 
   toggleChatSidebar(sessionId: string) {
     this.chatSidebarOpenBySession[sessionId] = !this.chatSidebarOpenBySession[sessionId];
+    this.saveSidebarPrefs();
+  }
+
+  toggleChatSidebarSwapped(sessionId: string) {
+    this.chatSidebarSwappedBySession[sessionId] = !this.chatSidebarSwappedBySession[sessionId];
+    this.saveSidebarPrefs();
+  }
+
+  openSidebarPanel(sessionId: string, panel: SidebarPanel | undefined) {
+    this.chatSidebarPanelBySession[sessionId] = panel;
+    this.chatSidebarOpenBySession[sessionId] = true;
+    this.saveSidebarPrefs();
+  }
+
+  revealFile(sessionId: string, path: string, from?: number, to?: number) {
+    this.revealFileBySession[sessionId] = { path, from, to };
+    this.openSidebarPanel(sessionId, "explorer");
+  }
+
+  insertIntoComposer(sessionId: string, text: string) {
+    this.composerInsertBySession[sessionId] = (this.composerInsertBySession[sessionId] ?? "") + text;
+  }
+
+  private bumpFs(projectPath: string | null | undefined) {
+    if (projectPath) this.fsTickByProject[projectPath] = (this.fsTickByProject[projectPath] ?? 0) + 1;
   }
 
   /** Repaints a session's transcript from `session_history` (§3.2), the server's persisted
@@ -1124,6 +1199,7 @@ export class ServerState {
     delete this.projectBySession[sessionId];
     delete this.messagesBySession[sessionId];
     delete this.activeTurnBySession[sessionId];
+    delete this.queuedBySession[sessionId];
     delete this.takenOverSessions[sessionId];
     delete this.finishedSessions[sessionId];
     delete this.providerBySession[sessionId];
@@ -1136,8 +1212,15 @@ export class ServerState {
     delete this.planBySession[sessionId];
     delete this.syncingSessions[sessionId];
     delete this.composerDraftBySession[sessionId];
-    if (sessionId in this.lastViewedBySession || this.pinnedSessions.includes(sessionId)) {
+    if (
+      sessionId in this.lastViewedBySession ||
+      sessionId in this.chatSidebarOpenBySession ||
+      this.pinnedSessions.includes(sessionId)
+    ) {
       delete this.lastViewedBySession[sessionId];
+      delete this.chatSidebarOpenBySession[sessionId];
+      delete this.chatSidebarPanelBySession[sessionId];
+      delete this.chatSidebarSwappedBySession[sessionId];
       this.pinnedSessions = this.pinnedSessions.filter((id) => id !== sessionId);
       this.saveSidebarPrefs();
     }
@@ -1201,6 +1284,34 @@ export class ServerState {
     };
     this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], reply];
     this.saveChatHistory();
+  }
+
+  queuePrompt(sessionId: string, turnId: string, text: string, attachments?: string[]) {
+    this.ensureSession(sessionId);
+    const item = { turnId, text, attachments: attachments?.length ? attachments : undefined };
+    this.queuedBySession[sessionId] = [...(this.queuedBySession[sessionId] ?? []), item];
+  }
+
+  /** Takes a queued prompt out of the queue, if `turnId` is one. */
+  private unqueue(sessionId: string, turnId: string | undefined): QueuedPrompt | undefined {
+    const queue = this.queuedBySession[sessionId];
+    const i = queue?.findIndex((q) => q.turnId === turnId) ?? -1;
+    if (i === -1) return undefined;
+    const [q] = queue!.splice(i, 1);
+    if (!queue!.length) delete this.queuedBySession[sessionId];
+    return q;
+  }
+
+  /** Offline, this client can't follow its queued prompts any more. They still run server-side
+   * and come back with the session's history on reconnect, so only the bubbles go. */
+  forgetQueuedPrompts() {
+    this.queuedBySession = {};
+  }
+
+  /** Puts `text` back in the composer, ahead of whatever is being typed there now. */
+  private restoreDraft(sessionId: string, text: string) {
+    const typed = this.composerDraftBySession[sessionId];
+    this.restoredDraftBySession[sessionId] = [text, typed].filter(Boolean).join("\n\n");
   }
 
   /** Shared setup for edit_message/retry_message (§3.1/§4d): both resume history from a branch
@@ -1312,10 +1423,15 @@ export class ServerState {
       nextById[t.terminalId] = {
         terminalId: t.terminalId,
         sessionId: sid,
-        cwd: t.cwd,
+        // The server only knows the spawn cwd; shell integration's is live.
+        cwd: existing?.cwd ?? t.cwd,
         status: t.status,
         label: t.label,
         title: existing?.title,
+        name: existing?.name,
+        busy: t.status === "running" ? existing?.busy : false,
+        command: existing?.command,
+        lastExit: existing?.lastExit,
         cols: existing?.cols ?? 80,
         rows: existing?.rows ?? 24,
         sequence: existing?.sequence ?? 0,
@@ -1323,6 +1439,11 @@ export class ServerState {
         pid: existing?.pid,
         sandboxTier: existing?.sandboxTier,
       };
+    }
+    // A tab this client just created may not exist server-side yet; dropping it here would make
+    // the drawer spawn a replacement while the first still opens. terminal_error ends "starting".
+    for (const id of this.terminalsBySession[sid] ?? []) {
+      if (!ids.includes(id) && nextById[id]?.status === "starting") ids.push(id);
     }
     this.terminalById = nextById;
     this.terminalsBySession[sid] = ids;
@@ -1438,10 +1559,22 @@ export class ServerState {
           }
         }
         if (env.toolCallId) this.removeAsk(env.toolCallId);
+        this.bumpFs(this.projectBySession[sessionId]);
+        break;
+      }
+      case "turn_started": {
+        const queued = this.unqueue(sessionId, env.turnId);
+        if (queued && env.turnId) this.addUserMessage(sessionId, env.turnId, queued.text, queued.attachments);
         break;
       }
       case "turn_completed": {
         const data = env.data as unknown as TurnCompletedData;
+        // Withdrawn before it started ("undo"), or cancelled while waiting: it never ran.
+        const withdrawn = this.unqueue(sessionId, env.turnId);
+        if (withdrawn) {
+          if (withdrawn.withdrawing) this.restoreDraft(sessionId, [withdrawn.text, withdrawn.append?.text].filter(Boolean).join("\n\n"));
+          break;
+        }
         if (data.finishReason !== "no_provider") this.app.recordSpend(data.usage?.costUsd ?? 0);
         if (data.finishReason === "no_provider") {
           // Reachable if the provider became unavailable between being picked and the turn
@@ -1468,6 +1601,7 @@ export class ServerState {
           msg.streaming = false;
           msg.finish = data;
         }
+        this.bumpFs(this.projectBySession[sessionId]);
         // Swap the optimistic placeholder ids for the server's real ones as soon as known, so
         // retry/edit work immediately without waiting on a reopen (v2.13 userMessageId/messageId).
         if (data.userMessageId) {
@@ -1479,8 +1613,11 @@ export class ServerState {
         if (data.messageId && msg) {
           msg.id = data.messageId;
         }
-        delete this.activeTurnBySession[sessionId];
-        this.activeTurnBySession = { ...this.activeTurnBySession };
+        // A queued prompt may already have taken over as the active turn.
+        if (!this.activeTurnBySession[sessionId] || this.activeTurnBySession[sessionId] === env.turnId) {
+          delete this.activeTurnBySession[sessionId];
+          this.activeTurnBySession = { ...this.activeTurnBySession };
+        }
         if (sessionId !== this.currentSessionId) {
           this.finishedSessions[sessionId] = true;
           this.finishedSessions = { ...this.finishedSessions };
@@ -1631,6 +1768,8 @@ export class ServerState {
       case "snapshot_restored": {
         const data = env.data as { snapshotId: string };
         this.lastSnapshotRestored = { snapshotId: data.snapshotId, at: Date.now() };
+        const project = this.projectBySession[sessionId] ?? this.currentProjectPath;
+        this.bumpFs(project);
         this.app.log(`snapshot restored: ${data.snapshotId}`);
         break;
       }
@@ -1651,6 +1790,11 @@ export class ServerState {
       case "git_status": {
         const data = env.data as unknown as GitStatus;
         if (data?.projectPath) this.gitStatusByProject = { ...this.gitStatusByProject, [data.projectPath]: data };
+        this.bumpFs(data?.projectPath);
+        break;
+      }
+      case "files_changed": {
+        this.bumpFs((env.data as { projectPath?: string }).projectPath);
         break;
       }
       case "pending_asks": {
@@ -1840,13 +1984,20 @@ export class ServerState {
           exitCode?: number;
         };
         const existing = this.terminalById[data.terminalId];
+        const history = base64ToBytes(data.history ?? "");
         // A snapshot for an id we never registered has no session to attach to; drop it rather than guess.
         if (existing) {
+          // The history is the whole recent window, so its last C/D says whether a command is still running.
+          const ev = scanShellEvents(history, false);
           this.terminalById = {
             ...this.terminalById,
             [data.terminalId]: {
               ...existing,
-              cwd: data.cwd,
+              busy: data.status === "running" && !!ev?.busy,
+              command: ev?.command ?? existing.command,
+              lastExit: ev?.exitCode ?? existing.lastExit,
+              title: ev?.title || existing.title,
+              cwd: ev?.cwd ?? data.cwd,
               cols: data.cols,
               rows: data.rows,
               status: data.status,
@@ -1858,14 +2009,28 @@ export class ServerState {
             },
           };
         }
-        if (data.history) publishTerminalSnapshot(data.terminalId, base64ToBytes(data.history));
+        publishTerminalSnapshot(data.terminalId, history, data.sequence);
         break;
       }
       case "terminal_output": {
         const data = env.data as { terminalId: string; data: string; sequence: number };
         const tab = this.terminalById[data.terminalId];
-        if (tab) this.terminalById = { ...this.terminalById, [data.terminalId]: { ...tab, sequence: data.sequence } };
-        publishTerminalChunk(data.terminalId, base64ToBytes(data.data));
+        const bytes = base64ToBytes(data.data);
+        if (tab) {
+          const ev = scanShellEvents(bytes, !!tab.busy);
+          const next = { ...tab, sequence: data.sequence };
+          if (ev) {
+            if (ev.busy !== undefined) {
+              next.busy = ev.busy;
+              if (ev.busy) next.command = ev.command;
+              next.lastExit = ev.busy ? undefined : ev.exitCode;
+            }
+            if (ev.cwd) next.cwd = ev.cwd;
+            if (ev.title !== undefined) next.title = ev.title || undefined;
+          }
+          this.terminalById = { ...this.terminalById, [data.terminalId]: next };
+        }
+        publishTerminalChunk(data.terminalId, bytes, data.sequence);
         break;
       }
       case "terminal_exited": {
@@ -1874,7 +2039,7 @@ export class ServerState {
         if (tab) {
           this.terminalById = {
             ...this.terminalById,
-            [data.terminalId]: { ...tab, status: "exited", exitCode: data.exitCode },
+            [data.terminalId]: { ...tab, status: "exited", exitCode: data.exitCode, busy: false },
           };
         }
         break;
@@ -1975,7 +2140,10 @@ class AppState {
   // Live, unpersisted: true while the corresponding ratio is being dragged, by that panel's
   // own handle or the corner handle where sidebar and terminal meet; either lights up the same accent.
   rightSidebarResizing = $state(false);
+  chatSidebarResizing = $state(false);
   terminalResizing = $state(false);
+  /** The drawer fills the chat panel (below its header). Not persisted. */
+  terminalMaximized = $state(false);
 
   settings = $state<AppSettings>(typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS });
 
@@ -2142,6 +2310,7 @@ class AppState {
     root.style.setProperty("--code-font-family", this.settings.codeFontFamily);
     root.style.setProperty("--anim-speed", String(this.settings.animationSpeed));
     root.style.setProperty("--code-wrap", this.settings.codeWrapLines ? "pre-wrap" : "pre");
+    root.dataset.codeWrap = this.settings.codeWrapLines ? "on" : "off";
     // Code blocks borrow the terminal palette's ANSI slots for token colors.
     const code =
       (!this.settings.codeUseAppTheme && TERMINAL_THEME_PRESETS.find((p) => p.id === this.settings.codeColorTheme)?.colors) ||

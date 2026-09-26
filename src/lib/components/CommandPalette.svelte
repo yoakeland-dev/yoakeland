@@ -225,6 +225,12 @@
         run: () => run(() => s.toggleTerminal(sid)),
       },
       {
+        id: "chat:new-terminal",
+        label: "New terminal",
+        icon: "plus",
+        run: () => run(() => s.newTerminal(sid)),
+      },
+      {
         id: "chat:sidebar",
         label: s.chatSidebarOpenBySession[sid] ? "Hide chat side panel" : "Show chat side panel",
         icon: "sidebar-right-expand",
@@ -282,17 +288,20 @@
   );
 
   const chats = $derived.by(() => {
-    const out: { cid: string; id: string; title: string; project: string; updatedAt: string; archived: boolean }[] = [];
+    // Keyed by cid+id: a session can be listed under more than one project path (stale
+    // entry left behind by a rename/move) and would otherwise give the palette's keyed
+    // {#each} two rows with the same key, which Svelte throws on (each_key_duplicate).
+    const out = new Map<string, { cid: string; id: string; title: string; project: string; updatedAt: string; archived: boolean }>();
     for (const [scid, srv] of Object.entries(app.servers)) {
       for (const [path, sessions] of Object.entries(srv.sessionsByProject)) {
         for (const s of sessions) {
           if (s.messageCount === 0 && !(srv.messagesBySession[s.sessionId] ?? []).length) continue;
           const project = srv.projectLabel(path);
-          out.push({ cid: scid, id: s.sessionId, title: sessionTitle(s), project, updatedAt: s.updatedAt, archived: !!s.archived });
+          out.set(`${scid}:${s.sessionId}`, { cid: scid, id: s.sessionId, title: sessionTitle(s), project, updatedAt: s.updatedAt, archived: !!s.archived });
         }
       }
     }
-    return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return [...out.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   });
   const shownChats = $derived(
     searching ? chats : chats.filter((c) => !c.archived && !(c.cid === cid && c.id === sessionId)).slice(0, 8),

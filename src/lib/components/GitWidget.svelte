@@ -5,7 +5,6 @@
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
   import { openChatSession, newChat } from "../ipc";
   import type { GitStatus } from "../types";
-  import { markOverflow } from "../overflow";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
 
@@ -41,14 +40,6 @@
   const ahead = $derived(repos.reduce((n, r) => n + (r.git.hasUpstream ? r.git.ahead : 0), 0));
   const behind = $derived(repos.reduce((n, r) => n + (r.git.hasUpstream ? r.git.behind : 0), 0));
 
-  // The open chat's repo starts expanded; the rest are one click away.
-  let toggled = $state<Record<string, boolean>>({});
-  const isExpanded = (r: Repo) => toggled[r.key] ?? r.key === current;
-
-  // Letter to color, matching how editors tint git decorations.
-  const TONE: Record<string, string> = { M: "mod", T: "mod", A: "add", "?": "add", D: "del", U: "del", R: "ren", C: "ren" };
-  const SHOWN = 8;
-
   function latestChat(r: Repo) {
     return [...(r.srv.sessionsByProject[r.path] ?? [])]
       .filter((s) => s.messageCount > 0)
@@ -59,15 +50,6 @@
     const latest = latestChat(r);
     if (latest) openChatSession(r.cid, latest.sessionId);
     else void newChat(r.cid, r.path);
-  }
-  // Terminals belong to a chat, so "a terminal in this repo" is its latest
-  // chat's drawer.
-  function openTerminal(r: Repo) {
-    open = false;
-    const latest = latestChat(r);
-    if (!latest) return void newChat(r.cid, r.path);
-    openChatSession(r.cid, latest.sessionId);
-    r.srv.terminalOpenBySession[latest.sessionId] = true;
   }
 </script>
 
@@ -85,10 +67,8 @@
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content class="sb-panel git-panel" side="top" align="start" sideOffset={8}>
-        <ul class="sb-list" use:markOverflow>
+        <ul class="sb-list">
           {#each repos as r (r.key)}
-            {@const files = r.git.files ?? []}
-            {@const expanded = files.length > 0 && isExpanded(r)}
             <li class="sb-row" class:current={r.key === current}>
               <button type="button" class="sb-row-main" title="Open its latest chat" onclick={() => openRepo(r)}>
                 <span class="lead"><Icon name="folder" size={14} /></span>
@@ -101,7 +81,7 @@
                   </span>
                 </span>
                 <span class="counts">
-                  {#if r.git.dirtyFiles}<span class="changed">±{r.git.dirtyFiles}</span>{/if}
+                  {#if r.git.dirtyFiles}<span class="changed" title={(r.git.files ?? []).map((f) => `${f.status}  ${f.path}`).join("\n") || undefined}>±{r.git.dirtyFiles}</span>{/if}
                   {#if r.git.hasUpstream}
                     {#if r.git.ahead}<span title="To push">↑{r.git.ahead}</span>{/if}
                     {#if r.git.behind}<span class="behind" title="To pull">↓{r.git.behind}</span>{/if}
@@ -111,37 +91,7 @@
                   {/if}
                 </span>
               </button>
-              <button type="button" class="sb-row-action" title="Open a terminal in its latest chat" aria-label="Terminal" onclick={() => openTerminal(r)}>
-                <Icon name="terminal-2" size={12} />
-              </button>
-              {#if files.length}
-                <button
-                  type="button"
-                  class="sb-row-action toggle"
-                  class:open={expanded}
-                  title={expanded ? "Hide changes" : "Show changes"}
-                  aria-label="Changed files"
-                  aria-expanded={expanded}
-                  onclick={() => (toggled[r.key] = !expanded)}
-                >
-                  <Icon name="chevron-down" size={12} />
-                </button>
-              {/if}
             </li>
-            {#if expanded}
-              <li class="files">
-                {#each files.slice(0, SHOWN) as f (f.path)}
-                  {@const cut = f.path.lastIndexOf("/") + 1}
-                  <span class="file" title={f.path}>
-                    <span class="st {TONE[f.status] ?? ''}">{f.status}</span>
-                    <span class="path"><span class="base">{f.path.slice(cut)}</span>{#if cut}<span class="dir">{f.path.slice(0, cut - 1)}</span>{/if}</span>
-                  </span>
-                {/each}
-                {#if r.git.dirtyFiles > SHOWN}
-                  <span class="more">+{r.git.dirtyFiles - SHOWN} more</span>
-                {/if}
-              </li>
-            {/if}
           {/each}
         </ul>
         <div class="sb-foot">
@@ -181,63 +131,5 @@
   }
   .counts .behind {
     color: var(--accent);
-  }
-  /* The toggle stays visible (it carries state); only the terminal action
-     waits for hover. */
-  .toggle {
-    opacity: 1;
-  }
-  .toggle :global(.icon) {
-    transition: transform calc(0.15s * var(--anim-speed, 1)) ease;
-  }
-  .toggle:not(.open) :global(.icon) {
-    transform: rotate(-90deg);
-  }
-  .files {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 0.14rem 0.5rem 0.36rem 2.07rem;
-  }
-  .file {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    min-width: 0;
-    font-size: var(--text-label-size);
-  }
-  .st {
-    flex-shrink: 0;
-    width: 0.71rem;
-    font-family: var(--code-font-family, monospace);
-    font-weight: 600;
-    color: var(--text-dim);
-  }
-  .st.mod {
-    color: var(--warning);
-  }
-  .st.add {
-    color: var(--success);
-  }
-  .st.del {
-    color: var(--danger);
-  }
-  .st.ren {
-    color: var(--accent);
-  }
-  .path {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .dir {
-    margin-left: 0.43rem;
-    color: var(--text-dim);
-  }
-  .more {
-    padding-left: 1.21rem;
-    font-size: var(--text-label-size);
-    color: var(--text-dim);
   }
 </style>

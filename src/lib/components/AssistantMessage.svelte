@@ -4,6 +4,8 @@
   import { retryMessage } from "../ipc";
   import { vendorMetaFor, titleFor, type Entry } from "../modelVendor";
   import { relTime, shortNum } from "../format";
+  import { liveActivity } from "../activity.svelte";
+  import { fade } from "svelte/transition";
   import ToolCallGroup from "./ToolCallGroup.svelte";
   import WorkGroup from "./WorkGroup.svelte";
   import ThinkingBlock from "./ThinkingBlock.svelte";
@@ -11,6 +13,7 @@
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
   import VersionCycle from "./VersionCycle.svelte";
+  import DotMatrix from "./DotMatrix.svelte";
 
   let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
 
@@ -159,6 +162,9 @@
   // doubles as cumulative tokens-in; `outputTokens` is just this reply.
   const usage = $derived(message.usage ?? message.finish?.usage ?? null);
 
+  // What the spinner in the model chip shows, and the elapsed time beside it.
+  const activity = liveActivity(() => message);
+
   const durationS = $derived.by(() => {
     const ms = message.finish?.durationMs ?? message.generationMs;
     return ms !== undefined ? (ms / 1000).toFixed(1) : null;
@@ -173,16 +179,15 @@
     {:else if seg.kind === "workgroup"}
       <WorkGroup steps={seg.steps} {live} />
     {:else if seg.kind === "thinking"}
-      <ThinkingBlock text={seg.text} {live} />
-    {:else if seg.text || live}
+      <ThinkingBlock text={seg.text} />
+    {:else if seg.text}
       <div class="text">
-        <Markdown text={seg.text} />
-        {#if live}<span class="cursor"></span>{/if}
+        <Markdown text={seg.text} {live} mentions />
       </div>
     {/if}
   {/each}
 
-  {#if modelMeta || message.finish || usage || durationS !== null}
+  {#if message.streaming || modelMeta || message.finish || usage || durationS !== null}
     <div
       class="finish"
       class:cancelled={message.finish?.finishReason === "cancelled" ||
@@ -190,10 +195,18 @@
         message.finish?.finishReason === "no_provider"}
       class:truncated={message.finish?.finishReason === "length"}
     >
-      {#if modelMeta}
-        <span class="model-chip" title={modelTitle}>
-          <LobeIcon name={modelMeta.icon} fallback="openrouter" size={13} />
-          <span class="model-label">{modelTitle}</span>
+      {#if modelMeta || message.streaming}
+        <!-- While streaming the model's icon gives way to the spinner; hovering brings it back. -->
+        <span class="model-chip" class:live={message.streaming} title={modelTitle || undefined}>
+          <span class="icon-slot">
+            {#if modelMeta}
+              <span class="model-icon"><LobeIcon name={modelMeta.icon} fallback="openrouter" size={13} /></span>
+            {/if}
+            {#if message.streaming}
+              <span class="spinner" transition:fade={{ duration: 200 }}><DotMatrix mode={activity.mode} size={13} /></span>
+            {/if}
+          </span>
+          {#if modelMeta}<span class="model-label">{modelTitle}</span>{/if}
         </span>
       {/if}
 
@@ -233,8 +246,8 @@
         {/if}
 
         {#if message.streaming}
-          <span class="dot">·</span>
-          <span class="stat">generating…</span>
+          {#if modelMeta || usage}<span class="dot">·</span>{/if}
+          <span class="stat elapsed">{activity.elapsed}</span>
         {:else}
           {#if durationS !== null}
             <span class="dot">·</span>
@@ -251,12 +264,11 @@
         {/if}
       {/if}
 
-      <span class="dot">·</span>
-      <span class="stat" title={new Date(message.createdAt).toLocaleString()}
-        >{relTime(message.createdAt)}</span
-      >
-
       {#if !message.streaming}
+        <span class="dot">·</span>
+        <span class="stat" title={new Date(message.createdAt).toLocaleString()}
+          >{relTime(message.createdAt)}</span
+        >
         <span class="dot">·</span>
         <VersionCycle {message} {sessionId} />
         <button
@@ -284,20 +296,6 @@
   }
   .text :global(.markdown) {
     line-height: 1.55;
-  }
-  .cursor {
-    display: inline-block;
-    width: 0.5rem;
-    height: 1em;
-    margin-left: 0.07rem;
-    background: var(--text-dim);
-    vertical-align: text-bottom;
-    animation: blink calc(1s * var(--anim-speed, 1)) step-start infinite;
-  }
-  @keyframes blink {
-    50% {
-      opacity: 0;
-    }
   }
 
   .finish {
@@ -335,6 +333,35 @@
     font-weight: 600;
     color: var(--text-dim);
     flex-shrink: 0;
+  }
+  /* Same crossfade slot as ThinkingBlock's icon: the hidden one shrinks as it fades. */
+  .icon-slot {
+    position: relative;
+    width: 13px;
+    height: 13px;
+    flex: none;
+  }
+  .icon-slot > span {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      opacity calc(0.2s * var(--anim-speed, 1)) ease,
+      transform calc(0.2s * var(--anim-speed, 1)) ease;
+  }
+  .model-chip.live .model-icon,
+  .model-chip.live:has(.model-icon):hover .spinner {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  .model-chip.live:hover .model-icon {
+    opacity: 1;
+    transform: none;
+  }
+  .elapsed {
+    font-variant-numeric: tabular-nums;
   }
   .model-label {
     overflow: hidden;

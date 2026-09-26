@@ -11,7 +11,6 @@
   import UsagePanel from "$lib/components/UsagePanel.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
-  import SnapshotDialog from "$lib/components/SnapshotDialog.svelte";
   import FirstServerPanel from "$lib/components/FirstServerPanel.svelte";
   import Icon from "$lib/components/Icon.svelte";
 
@@ -100,7 +99,13 @@
     return () => ro.disconnect();
   });
 
+  // Measured once per drag: reading layout on every pointermove forces a synchronous layout.
+  let dragRow: DOMRect | null = null;
+  let dragPanel: DOMRect | null = null;
   function startCornerResize(e: PointerEvent) {
+    if (!rightPanelEl || !contentRowEl) return;
+    dragRow = contentRowEl.getBoundingClientRect();
+    dragPanel = rightPanelEl.getBoundingClientRect();
     cornerDragging = true;
     app.rightSidebarResizing = true;
     app.terminalResizing = true;
@@ -108,12 +113,12 @@
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }
   function onCornerResize(e: PointerEvent) {
-    if (!cornerDragging || !rightPanelEl || !contentRowEl) return;
-    const rowRect = contentRowEl.getBoundingClientRect();
+    if (!cornerDragging || !dragRow || !dragPanel) return;
+    const rowRect = dragRow;
     const fromRight = Math.min(rowRect.width * 0.5, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, rowRect.right - e.clientX));
     app.rightSidebarRatio = Math.min(0.5, Math.max(0, fromRight / rowRect.width));
 
-    const panelRect = rightPanelEl.getBoundingClientRect();
+    const panelRect = dragPanel;
     const fromBottom = Math.min(panelRect.height * 0.5, Math.max(TERMINAL_MIN_HEIGHT, panelRect.bottom - e.clientY));
     app.terminalHeightRatio = Math.min(0.5, Math.max(0, fromBottom / panelRect.height));
   }
@@ -157,6 +162,15 @@
     // Ctrl/Cmd+K opens the command palette from anywhere, except inside a
     // terminal, where Ctrl+K belongs to the shell (readline's kill-line).
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl+` toggles the open chat's terminal, Ctrl+Shift+` adds one (VS Code's bindings).
+      const sid = app.active?.currentSessionId;
+      if (e.ctrlKey && !e.altKey && e.code === "Backquote" && sid) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.shiftKey) app.active!.newTerminal(sid);
+        else app.active!.toggleTerminal(sid);
+        return;
+      }
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "k") return;
       if ((e.target as Element | null)?.closest?.(".xterm")) return;
       e.preventDefault();
@@ -284,7 +298,6 @@
 <SettingsPanel />
 <CommandPalette />
 <Toasts />
-<SnapshotDialog />
 
 <style>
   .shell {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, protocol, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, protocol, session, shell } from "electron";
 import { readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -13,6 +13,12 @@ const isAppUrl = (url) => url.startsWith(APP_ORIGIN + "/");
 const BUILD_DIR = path.join(here, "..", "build");
 
 app.setPath("userData", path.join(app.getPath("appData"), "com.aveline.yoake-gui"));
+
+// At 1x scale Chromium won't give a scroller with a transparent background its own layer (it
+// would lose LCD subpixel text), so scrolling the chat, a diff or the editor repainted and
+// re-rasterized the whole window every frame. Composite them anyway: text inside scrollers is
+// grayscale-antialiased, which is what most Linux desktops use already.
+app.commandLine.appendSwitch("enable-prefer-compositing-to-lcd-text");
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -60,6 +66,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The side panel's browser (BrowserPanel.svelte); locked down in lockDownWebviews.
+      webviewTag: true,
       additionalArguments: [
         `--yoake-chrome=${JSON.stringify({ overlay: overlayOn, trafficLights })}`,
       ],
@@ -140,7 +148,33 @@ handle("shell:style_overlay", ({ symbolColor, height }, event) => {
   }
 });
 
+// The side panel's browser shows arbitrary sites: http(s) only, no preload, sandboxed, its own
+// storage partition, no permissions, and popups open in place instead of new windows.
+const WEB = /^(https?:|about:blank)/;
+const BROWSER_PARTITION = "persist:yoake-browser";
+function lockDownWebviews() {
+  session.fromPartition(BROWSER_PARTITION).setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  app.on("web-contents-created", (_e, contents) => {
+    contents.on("will-attach-webview", (e, prefs, params) => {
+      delete prefs.preload;
+      prefs.nodeIntegration = false;
+      prefs.contextIsolation = true;
+      prefs.sandbox = true;
+      if (!WEB.test(params.src) || params.partition !== BROWSER_PARTITION) e.preventDefault();
+    });
+    if (contents.getType() !== "webview") return;
+    contents.setWindowOpenHandler(({ url }) => {
+      if (WEB.test(url)) void contents.loadURL(url);
+      return { action: "deny" };
+    });
+    contents.on("will-navigate", (e, url) => {
+      if (!WEB.test(url)) e.preventDefault();
+    });
+  });
+}
+
 app.whenReady().then(() => {
+  lockDownWebviews();
   // Not file://: adapter-static emits absolute asset paths.
   protocol.handle("app", async (req) => {
     const rel = decodeURIComponent(new URL(req.url).pathname);

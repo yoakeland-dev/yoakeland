@@ -17,10 +17,13 @@
 
   // `items` also accepts a thunk for callers needing a fresh read of
   // non-reactive state at open time (e.g. xterm's term.hasSelection()).
+  // `restoreFocus={false}` keeps focus where a menu action put it (e.g. an inline name input)
+  // instead of returning it to the right-clicked element.
   let {
     items,
     children,
-  }: { items: ContextMenuItem[] | (() => ContextMenuItem[]); children: Snippet } = $props();
+    restoreFocus = true,
+  }: { items: ContextMenuItem[] | (() => ContextMenuItem[]); children: Snippet; restoreFocus?: boolean } = $props();
 
   let open = $state(false);
   const resolvedItems = $derived(open ? (typeof items === "function" ? items() : items) : []);
@@ -31,7 +34,7 @@
     {@render children()}
   </ContextMenu.Trigger>
   <ContextMenu.Portal>
-    <ContextMenu.Content class="context-menu">
+    <ContextMenu.Content class="context-menu" onCloseAutoFocus={(e) => !restoreFocus && e.preventDefault()}>
       {#each resolvedItems as item}
         <ContextMenu.Item
           class={item.danger ? "context-menu-item danger" : "context-menu-item"}

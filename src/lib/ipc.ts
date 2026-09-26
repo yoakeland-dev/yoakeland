@@ -1,4 +1,4 @@
-import type { ChatMode, Envelope, ServerStatus } from "./types";
+import type { ChatMode, Envelope, FileContent, FileDiff, GitChange, ServerStatus, TreeEntry } from "./types";
 import {
   app,
   ServerState,
@@ -89,6 +89,7 @@ function handleConnectionLost(connectionId: ConnectionId, reason: string) {
   app.log(`disconnected: ${reason}`);
   server.clearAllSessionSyncing();
   server.pendingAsks = [];
+  server.forgetQueuedPrompts();
   for (const w of uploadWaiters.values()) {
     if (w.connectionId === connectionId) w.resolve({ error: "connection lost" });
   }
@@ -151,7 +152,27 @@ export function wireEvents() {
       uploadWaiters.get(data.uploadId)?.resolve(data);
       return;
     }
+    const requestId = (env.data as { requestId?: string } | undefined)?.requestId;
+    if (requestId && rpcWaiters.has(requestId)) {
+      rpcWaiters.get(requestId)!(env.data!);
+      return;
+    }
+    // A queued prompt being merged (sendPrompt): withdrawn, it goes out again as one prompt with
+    // what was appended; if the withdrawal lost the race and it started, the rest goes on its own.
+    const merging =
+      (env.type === "turn_completed" || env.type === "turn_started") && env.sessionId
+        ? server.queuedBySession[env.sessionId]?.find((q) => q.turnId === env.turnId && q.append && !q.withdrawing)
+        : undefined;
     server.handleEvent(env);
+    if (merging?.append && env.sessionId) {
+      const started = env.type === "turn_started";
+      sendPrompt(
+        connectionId,
+        env.sessionId,
+        started ? merging.append.text : `${merging.text}\n\n${merging.append.text}`,
+        started ? merging.append.attachments : [...(merging.attachments ?? []), ...(merging.append.attachments ?? [])],
+      );
+    }
 
     // provider_registered only carries {name}, not the full roster, so refetch it.
     if (env.type === "provider_registered") {
@@ -366,6 +387,7 @@ export async function disconnect(connectionId: ConnectionId) {
     server.connectionStatus = "disconnected";
     server.clearAllSessionSyncing();
     server.pendingAsks = [];
+    server.forgetQueuedPrompts();
   }
 }
 
@@ -459,7 +481,27 @@ export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt
   const turnId = `turn-${crypto.randomUUID().slice(0, 8)}`;
   const server = app.servers[connectionId];
   if (!server) return turnId;
-  server.addUserMessage(sessionId, turnId, prompt, attachments);
+  // A new chat's mode is seeded locally from lastUsedMode (ensureSession) without telling the
+  // server, which defaults to read_write: the picker said Autonomous while every bash call still
+  // asked. Assert it before the first prompt; envelopes are handled in order, so it lands first.
+  if (!server.messagesBySession[sessionId]?.length) {
+    setMode(connectionId, sessionId, server.modeBySession[sessionId] ?? "read_write");
+  }
+  // Follow-ups merge into the one already waiting rather than stacking up as separate turns:
+  // that one is withdrawn and goes out again with these appended (see the turn_completed hook).
+  const waiting = server.queuedBySession[sessionId]?.at(-1);
+  if (waiting && !waiting.withdrawing) {
+    const append = waiting.append;
+    waiting.append = {
+      text: [append?.text, prompt].filter(Boolean).join("\n\n"),
+      attachments: [...(append?.attachments ?? []), ...(attachments ?? [])],
+    };
+    if (!append) void send(connectionId, { type: "cancel_turn", sessionId, turnId: waiting.turnId, data: { sessionId, turnId: waiting.turnId, queuedOnly: true } });
+    return waiting.turnId;
+  }
+  // Mid-turn, the server holds it until the running turn ends (turn_started).
+  if (server.activeTurnBySession[sessionId] || server.queuedBySession[sessionId]) server.queuePrompt(sessionId, turnId, prompt, attachments);
+  else server.addUserMessage(sessionId, turnId, prompt, attachments);
   // Always included: a session is permanently bound to one project (§4b), so this never conflicts.
   const projectPath = server.projectBySession[sessionId];
   if (server.sessionById.get(sessionId)?.archived) setSessionArchived(connectionId, sessionId, false);
@@ -605,6 +647,14 @@ export function cancelTurn(connectionId: ConnectionId, sessionId: string, turnId
   void send(connectionId, { type: "cancel_turn", sessionId, turnId, data: { sessionId, turnId } });
 }
 
+/** Undoes a queued prompt if the server hasn't started it yet; turn_completed confirms. */
+export function withdrawPrompt(connectionId: ConnectionId, sessionId: string, turnId: string) {
+  const queued = app.servers[connectionId]?.queuedBySession[sessionId]?.find((q) => q.turnId === turnId);
+  if (!queued) return;
+  queued.withdrawing = true;
+  void send(connectionId, { type: "cancel_turn", sessionId, turnId, data: { sessionId, turnId, queuedOnly: true } });
+}
+
 export function respondPermission(
   connectionId: ConnectionId,
   sessionId: string,
@@ -637,8 +687,8 @@ export function denyPermissionWithFeedback(
   server?.removeAsk(toolCallId);
 }
 
-export function restoreSnapshot(connectionId: ConnectionId, sessionId: string, snapshotId: string) {
-  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+export function restoreSnapshot(connectionId: ConnectionId, sessionId: string, snapshotId: string, project?: string) {
+  const projectPath = project ?? app.servers[connectionId]?.projectBySession[sessionId];
   void send(connectionId, { type: "restore_snapshot", sessionId, turnId: "", data: { snapshotId, projectPath } });
 }
 
@@ -894,9 +944,10 @@ export function setWebToolsEnabled(connectionId: ConnectionId, projectPath: stri
   void send(connectionId, { type: "set_web_tools_enabled", data: { projectPath, enabled } });
 }
 
-/** Answers an outstanding ask_user_question_requested (§3.1); toolCallId is envelope-level. */
-export function askUserAnswer(connectionId: ConnectionId, toolCallId: string, answer: string) {
-  void send(connectionId, { type: "ask_user_answer", toolCallId, data: { answer } });
+/** Answers an outstanding ask_user_question_requested (§3.1). Needs the sessionId: without it the
+ * server resolves the "default" session and the waiting turn never gets the answer. */
+export function askUserAnswer(connectionId: ConnectionId, sessionId: string, toolCallId: string, answer: string) {
+  void send(connectionId, { type: "ask_user_answer", sessionId, toolCallId, data: { answer } });
 }
 
 export function registerProvider(connectionId: ConnectionId, data: Record<string, unknown>) {
@@ -1099,3 +1150,51 @@ export function openNotificationTarget(connectionId: ConnectionId, n: { sessionI
   if (n.projectPath && !server.projectBySession[n.sessionId]) server.projectBySession[n.sessionId] = n.projectPath;
   openChatSession(connectionId, n.sessionId);
 }
+
+// ---- Project files (§3.1 "Project files", v2.17) ----
+// These requests carry a requestId the reply echoes, so callers can simply await them.
+
+const RPC_TIMEOUT_MS = 20_000;
+const rpcWaiters = new Map<string, (data: Record<string, unknown>) => void>();
+
+function rpc<T>(connectionId: ConnectionId, type: string, data: Record<string, unknown>): Promise<T> {
+  const requestId = `rq-${crypto.randomUUID().slice(0, 8)}`;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      rpcWaiters.delete(requestId);
+      reject(new Error(`${type}: no reply from the server (it may be too old for this)`));
+    }, RPC_TIMEOUT_MS);
+    rpcWaiters.set(requestId, (reply) => {
+      clearTimeout(timer);
+      rpcWaiters.delete(requestId);
+      resolve(reply as T);
+    });
+    void send(connectionId, { type, data: { ...data, requestId } });
+  });
+}
+
+type Reply<T = object> = T & { error?: string };
+
+export const listTree = (cid: ConnectionId, projectPath: string, path: string) =>
+  rpc<Reply<{ entries: TreeEntry[] }>>(cid, "list_tree", { projectPath, path });
+
+export const readFile = (cid: ConnectionId, projectPath: string, path: string) =>
+  rpc<FileContent>(cid, "read_file", { projectPath, path });
+
+/** `baseVersion` is the read_file version the edit started from; a reply with `conflict` means it changed since. */
+export const writeFile = (cid: ConnectionId, projectPath: string, path: string, content: string, baseVersion: string, force = false) =>
+  rpc<Reply<{ version?: string; conflict?: boolean }>>(cid, "write_file", { projectPath, path, content, baseVersion, force });
+
+export const fsOp = (
+  cid: ConnectionId,
+  projectPath: string,
+  op: "create" | "mkdir" | "rename" | "delete",
+  path: string,
+  newPath?: string,
+) => rpc<Reply>(cid, "fs_op", { projectPath, op, path, newPath });
+
+export const listGitChanges = (cid: ConnectionId, projectPath: string) =>
+  rpc<Reply<{ files: GitChange[]; truncated?: boolean }>>(cid, "list_git_changes", { projectPath });
+
+export const getFileDiff = (cid: ConnectionId, projectPath: string, path: string, opts: { snapshotId?: string; basePath?: string } = {}) =>
+  rpc<Reply<{ diff?: FileDiff; binary?: boolean }>>(cid, "get_file_diff", { projectPath, path, ...opts });

@@ -24,3 +24,7 @@ export function basename(path: string): string {
 export function sessionTitle(s: { title?: string | null }): string {
   return s.title || "New chat";
 }
+
+export function terminalTitle(t: { name?: string; title?: string; label: string }): string {
+  return t.name || t.title || t.label;
+}

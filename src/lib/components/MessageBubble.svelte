@@ -3,13 +3,19 @@
   import { isPhotoAvatar } from "../avatar";
   import { app } from "../state.svelte";
   import { basename } from "../format";
-  import { startEditingMessage } from "../ipc";
+  import { startEditingMessage, withdrawPrompt } from "../ipc";
   import type { ChatMessage } from "../types";
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
   import VersionCycle from "./VersionCycle.svelte";
 
-  let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
+  // `queued`: sent mid-turn, waiting for that turn to end (§3.1 turn_started); undoable until then.
+  let {
+    message,
+    sessionId,
+    queued = false,
+    withdrawing = false,
+  }: { message: ChatMessage; sessionId: string; queued?: boolean; withdrawing?: boolean } = $props();
   const text = $derived(message.text);
   const author = $derived(message.author);
   const authorAvatar = $derived(message.authorAvatar);
@@ -52,7 +58,7 @@
   const clipPadBottom = $derived(capped ? "3rem" : "0.71rem");
 </script>
 
-<div class="row">
+<div class="row" class:queued>
   <div class="column">
     {#if author}
       <span class="author">{author}</span>
@@ -86,15 +92,28 @@
       </ul>
     {/if}
     <div class="footer">
-      <VersionCycle {message} {sessionId} />
-      <button
-        class="action"
-        onclick={edit}
-        title="Edit — regenerates from here; doesn't undo any file changes the discarded reply made"
-      >
-        <Icon name="pencil" size={12} />
-        Edit
-      </button>
+      {#if queued}
+        <span class="queued-note"><Icon name="clock" size={12} /> Queued · sends when this turn ends</span>
+        <button
+          class="action"
+          disabled={withdrawing}
+          onclick={() => app.activeConnectionId && message.turnId && withdrawPrompt(app.activeConnectionId, sessionId, message.turnId)}
+          title="Take it back into the composer"
+        >
+          <Icon name="arrow-back-up" size={12} />
+          {withdrawing ? "Undoing…" : "Undo"}
+        </button>
+      {:else}
+        <VersionCycle {message} {sessionId} />
+        <button
+          class="action"
+          onclick={edit}
+          title="Edit — regenerates from here; doesn't undo any file changes the discarded reply made"
+        >
+          <Icon name="pencil" size={12} />
+          Edit
+        </button>
+      {/if}
     </div>
   </div>
   <span class="avatar">
@@ -165,14 +184,28 @@
     cursor: pointer;
     padding: 0;
   }
-  .action:hover {
+  .action:hover:not(:disabled) {
     color: var(--text);
+  }
+  .action:disabled {
+    cursor: default;
+  }
+  .queued-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.21rem;
+  }
+  /* Sent, but not read yet: a dashed, dimmer bubble until turn_started. */
+  .row.queued .bubble {
+    opacity: 0.6;
+    outline: 1px dashed var(--panel-border);
+    outline-offset: -1px;
   }
   .avatar {
     flex: none;
     width: 26px;
     height: 26px;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     background: var(--sidebar-hover);
     display: flex;
     align-items: center;

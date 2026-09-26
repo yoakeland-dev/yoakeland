@@ -32,6 +32,7 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import copyIcon from "@tabler/icons/outline/copy.svg?raw";
 import checkIcon from "@tabler/icons/outline/check.svg?raw";
+import chevronIcon from "@tabler/icons/outline/chevron-right.svg?raw";
 
 for (const [name, lang] of Object.entries({
   bash, c, cpp, csharp, css, diff, dockerfile, go, ini, java, javascript, json, kotlin, lua, makefile,
@@ -46,17 +47,21 @@ hljs.registerAliases(["toml"], { languageName: "ini" });
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /** No highlightAuto: it re-guesses on every streamed token and guesses wrong on short snippets.
- * The copy button's click is handled by Markdown.svelte's delegated onClick, since this is raw HTML, not a component. */
+ * The toggle and copy clicks are handled by Markdown.svelte's delegated onClick, since this is raw HTML,
+ * not a component. .code-clip is the grid row the collapse animates (see Markdown.svelte). */
 export const highlightCode: MarkedExtension = {
   renderer: {
     code({ text, lang }: Tokens.Code) {
       const id = (lang ?? "").trim().split(/\s/)[0].toLowerCase();
       const known = !!id && !!hljs.getLanguage(id);
       const body = known ? hljs.highlight(text, { language: id, ignoreIllegals: true }).value : escapeHtml(text);
+      const lines = text.split("\n").length;
       return (
-        `<div class="code-block"><div class="code-head"><span class="code-lang">${escapeHtml(id || "text")}</span>` +
+        `<div class="code-block"><div class="code-head">` +
+        `<button type="button" class="code-toggle" title="Collapse or expand">${chevronIcon}` +
+        `<span class="code-lang">${escapeHtml(id || "text")}</span><span class="code-lines">${lines} line${lines === 1 ? "" : "s"}</span></button>` +
         `<button type="button" class="code-copy" title="Copy" aria-label="Copy code">${copyIcon}${checkIcon}</button></div>` +
-        `<pre><code class="hljs${known ? ` language-${id}` : ""}">${body}</code></pre></div>\n`
+        `<div class="code-body"><div class="code-clip"><pre><code class="hljs${known ? ` language-${id}` : ""}">${body}</code></pre></div></div></div>\n`
       );
     },
   },

@@ -7,15 +7,26 @@
   let {
     sessionId,
     reserveToggle = false,
+    reserveChrome = true,
     ownsChrome = true,
     sidePanel = false,
     overlay = false,
+    chatWidth,
+    swapped = false,
+    leftWidth = $bindable(0),
   }: {
     sessionId: string;
     reserveToggle?: boolean;
+    /** Off while the tools column sits between this header and the window chrome. */
+    reserveChrome?: boolean;
     ownsChrome?: boolean;
     sidePanel?: boolean;
     overlay?: boolean;
+    /** The chat column's width while the tools column shares the panel. */
+    chatWidth?: string;
+    /** Tools on the left: the header still spans the panel so its left end stays put. */
+    swapped?: boolean;
+    leftWidth?: number;
   } = $props();
 
   let server = $derived(app.active);
@@ -94,12 +105,16 @@
 </script>
 
 <header
-  class="header reserve-chrome"
+  class="header"
+  class:reserve-chrome={reserveChrome}
   class:reserve-toggle={reserveToggle}
   class:overlay
-  style={`--header-chrome-reserve: var(${ownsChrome ? "--chrome-reserve" : "--local-island-reserve"})`}
+  class:has-island={!sidePanel}
+  class:split={!!chatWidth && !swapped}
+  class:swapped={!!chatWidth && swapped}
+  style={`--header-chrome-reserve: var(${ownsChrome ? "--chrome-reserve" : "--local-island-reserve"})${chatWidth ? `; --chat-w: ${chatWidth}` : ""}`}
 >
-  <div class="left">
+  <div class="left" bind:clientWidth={leftWidth}>
     {#if !sidePanel}
       <!-- Arrows before the title: it types in a character at a time, so
            anything to its left would shuffle sideways each keystroke. -->
@@ -226,6 +241,38 @@
     height: 1.5rem;
     background: linear-gradient(to bottom, var(--header-fade-mid), transparent);
     pointer-events: none;
+  }
+  .header.split {
+    right: var(--chat-w);
+  }
+  /* Spans the whole panel so the island stays where it was, but only the chat column (on the
+     right) gets the fade, and only the header's own pieces take clicks. */
+  .header.swapped {
+    pointer-events: none;
+    background: none;
+  }
+  .header.swapped > * {
+    pointer-events: auto;
+  }
+  .header.swapped::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: var(--chat-w);
+    z-index: -1;
+    background: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--panel-bg) 70%, transparent) 40%,
+      var(--header-fade-mid)
+    );
+  }
+  .header.swapped::after {
+    left: auto;
+    width: var(--chat-w);
+  }
+  /* The island sits as far from the panel's left edge as from its top. */
+  .header.has-island {
+    padding-left: var(--chrome-inset-in-panel);
   }
   /* In-panel variant: padding here is measured from this panel's own
      hairline, not the window edge. */
