@@ -15,6 +15,7 @@
   let rows: HTMLDivElement;
   const messages = $derived(app.active?.messagesBySession[sessionId] ?? []);
   const queued = $derived(app.active?.queuedBySession[sessionId] ?? []);
+  const steering = $derived(app.active?.steeringBySession[sessionId] ?? []);
 
   // Editing a message regenerates from it: it gets outlined and whatever follows dims, so
   // what the edit will replace is visible rather than only described.
@@ -164,6 +165,15 @@
         {:else}
           <div class="msg-placeholder"></div>
         {/if}
+      </div>
+    {/each}
+    {#each steering as text, i (i + text)}
+      <div class="msg-row">
+        <MessageBubble
+          {sessionId}
+          steering
+          message={{ id: `steering-${i}`, role: "user", text, toolCalls: [], streaming: false, createdAt: 0, author: app.settings.profileName || undefined, authorAvatar: app.settings.profileAvatar || undefined }}
+        />
       </div>
     {/each}
     {#each queued as q (q.turnId)}

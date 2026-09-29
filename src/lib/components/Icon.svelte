@@ -115,6 +115,7 @@
   import browser from "@tabler/icons/outline/browser.svg?raw";
   import arrowsDiff from "@tabler/icons/outline/arrows-diff.svg?raw";
   import robot from "@tabler/icons/outline/robot.svg?raw";
+  import shieldCheck from "@tabler/icons/outline/shield-check.svg?raw";
   import files from "@tabler/icons/outline/files.svg?raw";
   import arrowLeft from "@tabler/icons/outline/arrow-left.svg?raw";
   import arrowRight from "@tabler/icons/outline/arrow-right.svg?raw";
@@ -231,6 +232,7 @@
     "browser": browser,
     "arrows-diff": arrowsDiff,
     "robot": robot,
+    "shield-check": shieldCheck,
     "files": files,
     "arrow-left": arrowLeft,
     "arrow-right": arrowRight,

@@ -7,6 +7,7 @@
   import { app } from "../state.svelte";
   import {
     sendPrompt,
+    steerPrompt,
     editMessage,
     cancelEditingMessage,
     cancelTurn,
@@ -21,6 +22,7 @@
   import { fileIconUrl } from "../fileIcons";
   import { mentionText, MENTION_RE } from "../mentions";
   import { liveActivity } from "../activity.svelte";
+  import { sessionModes } from "../modes";
   import Icon from "./Icon.svelte";
   import AskCard from "./AskCard.svelte";
   import DotMatrix from "./DotMatrix.svelte";
@@ -503,6 +505,8 @@
           ? connected && !!text.trim() && !turnId && !!projectPath && hasProvider
           : connected && hasDraft && !uploading && !!projectPath && hasProvider,
   );
+  // A CLI agent can be given a message while it works; the server says so if this one can't.
+  const canSteer = $derived(!!sessionModes(server, sessionId).cli);
   const primaryTitle = $derived(
     role === "stop"
       ? "Stop (Esc)"
@@ -521,11 +525,13 @@
                     ? "Wait for this turn to finish to send the edit"
                     : "Send the edit"
                   : role === "queue"
-                    ? "Queue, sends when this turn ends"
+                    ? canSteer
+                      ? "Queue, sends when this turn ends (Ctrl+Enter sends it into this turn now)"
+                      : "Queue, sends when this turn ends"
                     : "Send",
   );
 
-  function submit(e?: Event) {
+  function submit(e?: Event, steer = false) {
     e?.preventDefault();
     const value = text.trim();
     if (!cid || !canSubmit) return;
@@ -537,6 +543,8 @@
       askCard?.dismissAll(value);
     } else if (editingId) {
       editMessage(cid, sessionId, editingId, value);
+    } else if (steer && turnId && canSteer && !attachments.length && steerPrompt(cid, sessionId, value)) {
+      // Into the turn that is running (steerPrompt); an agent that can't take it hands it back to the queue.
     } else {
       // Mid-turn is fine: it queues until the running turn ends (sendPrompt).
       sendPrompt(cid, sessionId, value, attachments.flatMap((a) => (a.path ? [a.path] : [])));
@@ -590,7 +598,8 @@
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
-      submit(e);
+      // With Ctrl/Cmd, into the running turn instead of behind it.
+      submit(e, e.metaKey || e.ctrlKey);
     }
   }
 </script>

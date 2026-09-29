@@ -14,7 +14,7 @@
     ["run", "Run"],
     ["network", "Web"],
   ] as const;
-  const WORD = { allow: "without asking", ask: "asks first", deny: "not allowed" };
+  const WORD = { allow: "without asking", ask: "asks first", deny: "not allowed", auto: "its reviewer decides" };
 
   const agent = $derived(cli ? cliMeta(cli).title : "");
   // The one provider-specific line: how it is backed, or how the plan gets made.
@@ -81,6 +81,10 @@
   }
   .cell.ask i {
     background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+  }
+  /* Auto: a dot in a ring, decided case by case. */
+  .cell.auto i {
+    background: radial-gradient(circle, currentColor 32%, transparent 36%);
   }
   .cell.deny {
     opacity: 0.4;

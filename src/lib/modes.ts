@@ -3,7 +3,8 @@ import type { ServerState } from "./state.svelte";
 import { setMode } from "./ipc";
 import { isCli } from "./modelVendor";
 
-/** The four rungs, by how much the agent may do without asking, and Plan, the phase in front of them. */
+/** The rungs, by how much the agent may do without asking, and Plan, the phase in front of them.
+ * Auto is only there for an agent whose own reviewer can do the deciding. */
 export interface ModeMeta {
   id: ChatMode;
   label: string;
@@ -15,6 +16,7 @@ export const LADDER: ModeMeta[] = [
   { id: "read_only", label: "Read", icon: "eye" },
   { id: "read_write", label: "Ask", icon: "question-mark" },
   { id: "accept_edits", label: "Edit", icon: "pencil" },
+  { id: "auto", label: "Auto", icon: "shield-check" },
   {
     id: "autonomous",
     label: "Run",
@@ -41,6 +43,8 @@ export function modeHint(id: ChatMode, spec?: ModeSpec): string {
       return "Asks before any change.";
     case "accept_edits":
       return "Edits freely, asks to run.";
+    case "auto":
+      return "Its own reviewer decides what to ask.";
     case "autonomous":
       return spec?.sandbox ? "Edits and runs freely, sandboxed." : spec ? "Edits and runs freely, unconfined." : "Edits and runs freely.";
     case "plan":
@@ -49,7 +53,7 @@ export function modeHint(id: ChatMode, spec?: ModeSpec): string {
 }
 
 /** The modes a chat's model offers and what each does there (SPEC.md §4c permissionModes). `specs`
- * is absent for a server or model list that doesn't say, which is the four pre-Edit modes. */
+ * is absent for a server or model list that doesn't say, which is the four pre-Edit modes (no Edit, no Auto). */
 export function sessionModes(
   server: ServerState | null | undefined,
   sessionId: string,
@@ -69,7 +73,7 @@ export function sessionModes(
       >)
     : undefined;
   const available = MODES.filter((m) =>
-    specs ? !!specs[m.id] : m.id !== "accept_edits",
+    specs ? !!specs[m.id] : m.id !== "accept_edits" && m.id !== "auto",
   ).map((m) => m.id);
   return { provider, cli: !!provider && isCli(provider), specs, available };
 }

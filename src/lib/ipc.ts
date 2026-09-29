@@ -170,6 +170,7 @@ export function wireEvents() {
         ? server.queuedBySession[env.sessionId]?.find((q) => q.turnId === env.turnId && q.append && !q.withdrawing)
         : undefined;
     server.handleEvent(env);
+    if (env.type === "steer_rejected" && env.sessionId) sendPrompt(connectionId, env.sessionId, (env.data as { prompt: string }).prompt);
     // Run for one turn only: back to where the chat was once that turn is over.
     if (env.type === "turn_completed" && env.sessionId && server.runOnce[env.sessionId]) {
       const back = server.runOnce[env.sessionId];
@@ -537,6 +538,30 @@ export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt
   });
   // No client-side title: the backend pushes its generated one as an unprompted session_updated.
   return turnId;
+}
+
+/** SPEC.md §3.1 steer_turn: puts a message into the turn that is running, for an agent that can take one
+ * while it works. False when no turn is running. steer_rejected (an agent that can't) comes back through
+ * handleEnvelope, which sends the text as an ordinary, queued prompt. */
+export function steerPrompt(connectionId: ConnectionId, sessionId: string, prompt: string): boolean {
+  const server = app.servers[connectionId];
+  const turnId = server?.activeTurnBySession[sessionId];
+  if (!server || !turnId) return false;
+  server.addSteering(sessionId, prompt);
+  void send(connectionId, {
+    type: "steer_turn",
+    sessionId,
+    turnId,
+    data: {
+      sessionId,
+      turnId,
+      prompt,
+      projectPath: server.projectBySession[sessionId],
+      authorName: app.settings.profileName || undefined,
+      authorAvatar: app.settings.profileAvatar || undefined,
+    },
+  });
+  return true;
 }
 
 /** SPEC.md §3.1 edit_message: replaces a past user message's content and regenerates from there. */

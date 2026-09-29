@@ -17,14 +17,15 @@
 
   // What each kind of provider reports for permissionModes (SPEC.md §4c), for the mode picker.
   const P = (read: string, edit: string, run: string, network: string) => ({ read, edit, run, network }) as ModeSpec["policy"];
-  const ladder = (by: (m: string) => ModeSpec["enforcedBy"], native: Record<string, string>, plan: ModeSpec["plan"], sandbox: boolean): ModeSpec[] => [
+  const ladder = (by: (m: string) => ModeSpec["enforcedBy"], native: Record<string, string>, plan: ModeSpec["plan"], sandbox: boolean, auto = false): ModeSpec[] => [
     { mode: "read_only", policy: P("allow", "deny", "deny", "deny"), enforcedBy: by("read_only"), native: native.read_only },
     { mode: "read_write", policy: P("allow", "ask", "ask", "ask"), enforcedBy: by("read_write"), native: native.read_write },
     { mode: "accept_edits", policy: P("allow", "allow", "ask", "ask"), enforcedBy: by("accept_edits"), native: native.accept_edits },
+    ...(auto ? [{ mode: "auto", policy: P("allow", "allow", "auto", "auto"), enforcedBy: by("auto"), native: native.auto } as ModeSpec] : []),
     { mode: "autonomous", policy: P("allow", "allow", "allow", "allow"), enforcedBy: by("autonomous"), native: native.autonomous, sandbox },
     { mode: "plan", policy: P("allow", "deny", "deny", "deny"), enforcedBy: by("plan"), native: native.plan, plan },
   ];
-  const claudeModes = ladder(() => "agent", { read_only: "plan", read_write: "default", accept_edits: "acceptEdits", autonomous: "bypassPermissions", plan: "plan" }, "native", true);
+  const claudeModes = ladder(() => "agent", { read_only: "plan", read_write: "default", accept_edits: "acceptEdits", auto: "auto", autonomous: "bypassPermissions", plan: "plan" }, "native", true, true);
   const apiModes = ladder(() => "yoakeland", {}, "yoakeland", true);
   // An ACP agent with only build and plan: everything else is yoakeland's bridge alone.
   const acpModes = ladder((m) => (m === "read_only" || m === "read_write" || m === "plan" ? "agent" : "yoakeland"), { read_only: "plan", read_write: "build", plan: "plan" }, "native", false);

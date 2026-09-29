@@ -75,6 +75,8 @@ const SESSION_SCOPED_EVENTS = new Set([
   "turn_completed",
   "session_taken_over",
   "plan_written",
+  "steer_accepted",
+  "steer_rejected",
 ]);
 
 // Catches a path handler passed straight to `onclick`: it receives the DOM event instead of
@@ -86,7 +88,7 @@ function looksLikePath(p: unknown): p is string {
 /** A pre-upgrade install may have "ask"/"auto" persisted here; treated as invalid rather than
  * migrated, since ensureSession's "read_write" fallback is a cosmetic default, not data loss. */
 function isChatMode(m: unknown): m is ChatMode {
-  return m === "read_only" || m === "read_write" || m === "accept_edits" || m === "autonomous" || m === "plan";
+  return m === "read_only" || m === "read_write" || m === "accept_edits" || m === "auto" || m === "autonomous" || m === "plan";
 }
 
 interface ChatHistory {
@@ -529,6 +531,8 @@ export class ServerState {
   // Prompts sent while a turn was running (§3.1 turn_started): shown as queued until the
   // server starts them, and withdrawable until then. Client memory only.
   queuedBySession = $state<Record<string, QueuedPrompt[]>>({});
+  /** Messages sent into the running turn (steer_turn) that the server hasn't answered yet (§3.1). */
+  steeringBySession = $state<Record<string, string[]>>({});
   takenOverSessions = $state<Record<string, boolean>>({});
   // Cleared the moment its session is opened, so "finished" means "done, and you haven't looked yet."
   finishedSessions = $state<Record<string, boolean>>({});
@@ -1444,6 +1448,20 @@ export class ServerState {
    * and come back with the session's history on reconnect, so only the bubbles go. */
   forgetQueuedPrompts() {
     this.queuedBySession = {};
+    this.steeringBySession = {};
+  }
+
+  /** A message on its way into the running turn; steer_accepted turns it into part of the transcript. */
+  addSteering(sessionId: string, text: string) {
+    this.steeringBySession[sessionId] = [...(this.steeringBySession[sessionId] ?? []), text];
+  }
+
+  private takeSteering(sessionId: string, text: string) {
+    const list = this.steeringBySession[sessionId];
+    const i = list?.indexOf(text) ?? -1;
+    if (i === -1) return;
+    list!.splice(i, 1);
+    if (!list!.length) delete this.steeringBySession[sessionId];
   }
 
   /** Puts `text` back in the composer, ahead of whatever is being typed there now. */
@@ -1504,8 +1522,8 @@ export class ServerState {
 
   private findAssistantMessage(sessionId: string, turnId: string | undefined): ChatMessage | undefined {
     if (!turnId) return undefined;
-    const list = this.messagesBySession[sessionId];
-    return list?.find((m) => m.turnId === turnId && m.role === "assistant");
+    // The latest one: a message steered into the turn splits it into several.
+    return this.messagesBySession[sessionId]?.findLast((m) => m.turnId === turnId && m.role === "assistant");
   }
 
   /** Runs once, the first time serverId becomes known: loads this server's namespaced
@@ -1700,6 +1718,49 @@ export class ServerState {
         }
         if (env.toolCallId) this.removeAsk(env.toolCallId);
         this.bumpFs(this.projectBySession[sessionId]);
+        break;
+      }
+      case "steer_accepted": {
+        // The message went into the running turn: what the agent had said so far is one bubble,
+        // the message follows it, and what it says next fills a new one (SPEC.md §3.2).
+        const data = env.data as { prompt: string; messageId?: string };
+        this.takeSteering(sessionId, data.prompt);
+        const turnId = env.turnId;
+        if (!turnId) break;
+        const cur = this.findAssistantMessage(sessionId, turnId);
+        if (cur) cur.streaming = false;
+        const n = this.messagesBySession[sessionId].filter((m) => m.turnId === turnId && m.role === "assistant").length;
+        this.messagesBySession[sessionId] = [
+          ...this.messagesBySession[sessionId],
+          {
+            id: data.messageId ?? `${turnId}-steer-${n}`,
+            role: "user",
+            turnId,
+            text: data.prompt,
+            toolCalls: [],
+            streaming: false,
+            createdAt: Date.now(),
+            author: this.app.settings.profileName || undefined,
+            authorAvatar: this.app.settings.profileAvatar || undefined,
+          },
+          {
+            id: `${turnId}-reply-${n + 1}`,
+            role: "assistant",
+            turnId,
+            text: "",
+            toolCalls: [],
+            streaming: true,
+            createdAt: Date.now(),
+            provider: this.providerBySession[sessionId],
+            model: this.modelBySession[sessionId],
+          },
+        ];
+        this.saveChatHistory();
+        break;
+      }
+      case "steer_rejected": {
+        // The agent couldn't take it; ipc.ts sends it as a prompt of its own, which queues.
+        this.takeSteering(sessionId, (env.data as { prompt: string }).prompt);
         break;
       }
       case "turn_started": {

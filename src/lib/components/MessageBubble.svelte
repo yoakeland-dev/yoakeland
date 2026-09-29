@@ -11,12 +11,14 @@
   import VersionCycle from "./VersionCycle.svelte";
 
   // `queued`: sent mid-turn, waiting for that turn to end (§3.1 turn_started); undoable until then.
+  // `steering`: sent into the running turn (§3.1 steer_turn), waiting for the agent to take it.
   let {
     message,
     sessionId,
     queued = false,
+    steering = false,
     withdrawing = false,
-  }: { message: ChatMessage; sessionId: string; queued?: boolean; withdrawing?: boolean } = $props();
+  }: { message: ChatMessage; sessionId: string; queued?: boolean; steering?: boolean; withdrawing?: boolean } = $props();
   const text = $derived(message.text);
   const author = $derived(message.author);
   const authorAvatar = $derived(message.authorAvatar);
@@ -59,7 +61,7 @@
   const clipPadBottom = $derived(capped ? "3rem" : "0.71rem");
 </script>
 
-<div class="row" class:queued>
+<div class="row" class:queued={queued || steering}>
   <div class="column">
     {#if author}
       <span class="author">{author}</span>
@@ -93,7 +95,9 @@
       </ul>
     {/if}
     <div class="footer">
-      {#if queued}
+      {#if steering}
+        <span class="queued-note"><Icon name="clock" size={12} /> Sending to the agent</span>
+      {:else if queued}
         <span class="queued-note"><Icon name="clock" size={12} /> Queued · sends when this turn ends</span>
         <button
           class="action"

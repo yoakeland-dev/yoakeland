@@ -341,12 +341,13 @@ export interface TerminalTab {
 
 // ---- Chat-side (frontend-only) message model, built up from the wire events ----
 
-export type ChatMode = "read_only" | "read_write" | "accept_edits" | "autonomous" | "plan";
+export type ChatMode = "read_only" | "read_write" | "accept_edits" | "auto" | "autonomous" | "plan";
 
 /** What one mode does on a model's provider (SPEC.md §4c `permissionModes`). */
 export interface ModeSpec {
   mode: ChatMode;
-  policy: Record<"read" | "edit" | "run" | "network", "allow" | "ask" | "deny">;
+  /** "auto": the agent's own reviewer decides, asking only when it isn't sure. */
+  policy: Record<"read" | "edit" | "run" | "network", "allow" | "ask" | "deny" | "auto">;
   /** "agent": its own mode or sandbox backs the policy; "yoakeland": only the permission bridge does. */
   enforcedBy: "agent" | "yoakeland";
   native?: string;
