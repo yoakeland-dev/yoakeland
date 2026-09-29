@@ -2,6 +2,7 @@
   import { EditorView, basicSetup } from "codemirror";
   import { Compartment, EditorState } from "@codemirror/state";
   import { keymap } from "@codemirror/view";
+  import { matches } from "../../keybinds.svelte";
   import { indentWithTab } from "@codemirror/commands";
   import { gotoLine } from "@codemirror/search";
   import { HighlightStyle, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
@@ -100,9 +101,10 @@
 </script>
 
 <script lang="ts">
+  import { tip } from "../../tooltip.svelte";
   import { onDestroy, untrack } from "svelte";
   import { app } from "../../state.svelte";
-  import { readFile, writeFile } from "../../ipc";
+  import { readFile, readMedia, writeFile } from "../../ipc";
   import { refreshWhenVisible } from "../../refresh.svelte";
   import { mentionText } from "../../mentions";
   import Icon from "../Icon.svelte";
@@ -128,6 +130,41 @@
   const server = $derived(app.active);
   const cid = $derived(app.activeConnectionId);
   const name = $derived(path.split("/").pop() ?? path);
+
+  // Extensions the explorer previews instead of opening as text (matches the server's own
+  // read_media allow-list). Decided by extension up front: read_file's 2MB text cap would
+  // otherwise turn away nearly every video before the preview got a chance.
+  type MediaKind = "image" | "video" | "audio" | "pdf" | "font";
+  const MEDIA_KIND: Record<string, MediaKind> = {};
+  for (const [kind, exts] of Object.entries({
+    image: "png jpg jpeg jfif gif webp bmp ico cur svg avif apng",
+    video: "mp4 m4v webm ogv mov",
+    audio: "mp3 wav ogg oga opus flac m4a aac",
+    pdf: "pdf",
+    font: "ttf otf woff woff2",
+  })) for (const ext of exts.split(" ")) MEDIA_KIND[ext] = kind as MediaKind;
+  const ext = $derived(name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toLowerCase() : "");
+  // SVG is text too: it previews by default but can flip to the editor.
+  let showSource = $state(false);
+  const mediaKind = $derived(showSource ? null : (MEDIA_KIND[ext] ?? null));
+
+  let media = $state<{ kind: MediaKind; url: string; size: number; font?: FontFace } | null>(null);
+  let dims = $state(""); // an image's or video's natural size, once it has loaded
+  let mediaSeq = 0; // bumps on every (re)load and on destroy, so a stale fetch drops its result
+  function setMedia(next: typeof media) {
+    if (media && media.url !== next?.url) {
+      URL.revokeObjectURL(media.url);
+      if (media.font) document.fonts.delete(media.font);
+    }
+    media = next;
+    dims = "";
+  }
+  const FONT_SAMPLE = "The quick brown fox jumps over the lazy dog";
+  let fontSample = $state(FONT_SAMPLE);
+
+  function formatSize(n: number) {
+    return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
+  }
 
   let host = $state<HTMLDivElement | null>(null);
   let view: EditorView | null = null;
@@ -156,12 +193,17 @@
 
   async function load() {
     if (!cid) return;
+    if (mediaKind) return void loadMediaPreview(mediaKind);
     const r = await readFile(cid, projectPath, path).catch((e) => ({ error: String(e) }) as const);
     if ("error" in r && r.error) return void (notice = r.error);
     if (!("content" in r)) return;
-    if (r.binary) return void (notice = "Binary file, not shown.");
+    if (r.binary) {
+      version = r.version ?? "";
+      return void (notice = "Binary file, not shown.");
+    }
     if (r.tooLarge) return void (notice = `Too large to open here (${Math.round(r.size / 1024)} KB).`);
     notice = null;
+    setMedia(null);
     version = r.version ?? "";
     if (!view) {
       view = new EditorView({
@@ -174,11 +216,7 @@
             theme,
             syntaxHighlighting(highlight),
             language.of([]),
-            keymap.of([
-              { key: "Mod-s", preventDefault: true, run: () => (void save(), true) },
-              { key: "Mod-g", preventDefault: true, run: gotoLine },
-              indentWithTab,
-            ]),
+            keymap.of([indentWithTab]),
             EditorView.updateListener.of((u) => {
               if (u.docChanged) dirty = true;
               if (u.docChanged || u.selectionSet) {
@@ -186,7 +224,16 @@
                 pill = null;
               }
             }),
-            EditorView.domEventHandlers({ scroll: () => void (pill = null) }),
+            EditorView.domEventHandlers({
+              scroll: () => void (pill = null),
+              // Rebindable (Settings > Keyboard), so checked live rather than baked into a keymap.
+              keydown: (e, v) => {
+                if (matches(e, "files.save")) void save();
+                else if (!(matches(e, "files.gotoLine") && gotoLine(v))) return false;
+                e.preventDefault();
+                return true;
+              },
+            }),
           ],
         }),
       });
@@ -199,6 +246,50 @@
     dirty = false;
     conflict = null;
     select(from, to);
+  }
+
+  async function loadMediaPreview(kind: MediaKind) {
+    if (!cid) return;
+    const seq = ++mediaSeq;
+    notice = "Loading preview…";
+    const r = await readMedia(cid, projectPath, path).catch((e) => ({ error: String(e) }) as const);
+    let font: FontFace | undefined;
+    if (!("error" in r) && kind === "font") {
+      font = new FontFace(`yoake-preview-${seq}-${crypto.randomUUID()}`, `url(${r.url})`);
+      await font.load().catch(() => (font = undefined));
+    }
+    if (seq !== mediaSeq) {
+      if (!("error" in r)) URL.revokeObjectURL(r.url);
+      return;
+    }
+    if ("error" in r) {
+      setMedia(null);
+      return void (notice = r.error);
+    }
+    if (kind === "font" && !font) {
+      URL.revokeObjectURL(r.url);
+      setMedia(null);
+      return void (notice = "Couldn't load this font.");
+    }
+    if (font) document.fonts.add(font);
+    notice = null;
+    setMedia({ kind, url: r.url, size: r.size, font });
+  }
+
+  /** SVG only: flip between the rendered image and its source in the editor. */
+  function toggleSource() {
+    showSource = !showSource;
+    mediaSeq++;
+    notice = null;
+    setMedia(null);
+    if (!showSource) {
+      // The editor's host goes away with the preview back; a fresh one is built next time.
+      view?.destroy();
+      view = null;
+      dirty = false;
+      void load();
+    }
+    // Otherwise the host renders now that media is gone, and its effect loads the text.
   }
 
   async function save(force = false) {
@@ -258,7 +349,9 @@
   });
 
   onDestroy(() => {
+    mediaSeq++;
     view?.destroy();
+    setMedia(null);
   });
 
   function syncCursor() {
@@ -306,11 +399,22 @@
 
 <div class="editor">
   <div class="bar">
-    <span class="name" title={path}>{#if path.includes("/")}<span class="dir">{path.slice(0, path.lastIndexOf("/") + 1)}</span>{/if}{name}{#if dirty}<span class="dot" title="Unsaved changes">●</span>{/if}</span>
-    <button type="button" class="btn" title="Mention in chat (the selected lines, if any)" onclick={mention}>
+    <span class="name" {@attach tip(path)}>{#if path.includes("/")}<span class="dir">{path.slice(0, path.lastIndexOf("/") + 1)}</span>{/if}{name}{#if dirty}<span class="dot" {@attach tip("Unsaved changes")}>●</span>{/if}</span>
+    {#if ext === "svg"}
+      <button
+        type="button"
+        class="btn"
+        {@attach tip(showSource ? (dirty ? "Save or undo your edits to preview" : "Preview") : "Edit source")}
+        disabled={showSource && dirty}
+        onclick={toggleSource}
+      >
+        <Icon name={showSource ? "eye" : "code"} size={13} />
+      </button>
+    {/if}
+    <button type="button" class="btn" {@attach tip("Mention in chat (the selected lines, if any)")} onclick={mention}>
       <Icon name="at-sign" size={13} />
     </button>
-    <button type="button" class="btn" title="Save (Ctrl+S)" disabled={!dirty || saving || !!notice} onclick={() => save()}>
+    <button type="button" class="btn" {@attach tip("Save", "files.save")} disabled={!dirty || saving || !!notice} onclick={() => save()}>
       <Icon name="device-floppy" size={13} />
     </button>
   </div>
@@ -323,22 +427,56 @@
   {/if}
   {#if error}<div class="banner error">{error}</div>{/if}
   {#if notice}<div class="notice">{notice}</div>{/if}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="host" bind:this={host} hidden={!!notice} onpointerup={onPointerUp}>
-    {#if pill}
-      <button
-        type="button"
-        class="ask-pill"
-        style="left: {pill.x}px; top: {pill.y}px"
-        onpointerdown={(e) => e.preventDefault()}
-        onclick={mention}
-      >
-        <Icon name="message-question" size={13} />
-        Ask about this
-      </button>
+  {#if media}
+    {#if media.kind === "pdf"}
+      <iframe class="pdf" src={media.url} title={name}></iframe>
+    {:else if media.kind === "font"}
+      <div class="font" style:font-family="'{media.font?.family}'">
+        <input class="sample" bind:value={fontSample} placeholder={FONT_SAMPLE} spellcheck="false" aria-label="Sample text" />
+        {#each [12, 16, 24, 36, 56] as px (px)}
+          <div class="line" style:font-size="{px}px"><span class="px">{px}</span>{fontSample || FONT_SAMPLE}</div>
+        {/each}
+        <div class="glyphs">ABCDEFGHIJKLMNOPQRSTUVWXYZ<br />abcdefghijklmnopqrstuvwxyz<br />0123456789 !?&amp;@#$%*()[]{"{}"}&lt;&gt;/\+-=.,:;'"</div>
+      </div>
+    {:else}
+      <div class="media" class:checker={media.kind === "image"}>
+        {#if media.kind === "image"}
+          <img src={media.url} alt={name} onload={(e) => {
+            const img = e.currentTarget as HTMLImageElement;
+            dims = `${img.naturalWidth} × ${img.naturalHeight}`;
+          }} />
+        {:else if media.kind === "video"}
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video src={media.url} controls onloadedmetadata={(e) => (dims = `${e.currentTarget.videoWidth} × ${e.currentTarget.videoHeight}`)}></video>
+        {:else}
+          <audio src={media.url} controls></audio>
+        {/if}
+      </div>
     {/if}
-  </div>
-  {#if !notice}
+    <div class="status">
+      {#if dims}<span>{dims}</span>{/if}
+      <span>{formatSize(media.size)}</span>
+      <span class="spacer"></span>
+      <span>{ext.toUpperCase()}</span>
+    </div>
+  {:else}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="host" bind:this={host} hidden={!!notice} onpointerup={onPointerUp}>
+      {#if pill}
+        <button
+          type="button"
+          class="ask-pill"
+          style="left: {pill.x}px; top: {pill.y}px"
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={mention}
+        >
+          <Icon name="message-question" size={13} />
+          Ask about this
+        </button>
+      {/if}
+    </div>
+  {/if}
+  {#if !notice && !media}
     <div class="status">
       <span>Ln {cursor.line}, Col {cursor.col}</span>
       {#if cursor.chars}<span>{cursor.chars} selected{cursor.lines > 1 ? ` · ${cursor.lines} lines` : ""}</span>{/if}
@@ -427,6 +565,74 @@
     padding: var(--space-2);
     color: var(--text-dim);
     text-align: center;
+  }
+  .media {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: var(--space-2);
+  }
+  .media img,
+  .media video {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+  .media audio {
+    width: 100%;
+    max-width: 28rem;
+  }
+  /* Transparent pixels read as a checkerboard, not as the panel's own background. */
+  .media.checker {
+    background: repeating-conic-gradient(rgba(128, 128, 128, 0.16) 0 25%, transparent 0 50%) 0 0 / 16px 16px;
+  }
+  .pdf {
+    flex: 1;
+    min-height: 0;
+    border: none;
+    background: #fff;
+  }
+  .font {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--space-2);
+    color: var(--text);
+  }
+  .sample {
+    width: 100%;
+    margin-bottom: var(--space-2);
+    padding: 0.29rem 0.5rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+  }
+  .line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.3;
+    margin-bottom: 0.5rem;
+  }
+  .px {
+    display: inline-block;
+    width: 2.2rem;
+    color: var(--text-dim);
+    font-family: system-ui, sans-serif;
+    font-size: 0.7rem;
+    vertical-align: middle;
+  }
+  .glyphs {
+    margin-top: var(--space-2);
+    font-size: 22px;
+    line-height: 1.5;
+    word-break: break-all;
   }
   .host {
     flex: 1;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../../tooltip.svelte";
   // The project tree plus an editor with tabs. Narrow (beside the chat) it's either the tree or
   // the open files; wide (the tools column swapped into the main area) it's both side by side.
   // Ctrl+P filters every project file by name; Ctrl+W closes the current tab.
@@ -10,6 +11,7 @@
   import { mentionText } from "../../mentions";
   import { fileIconUrl, folderIcon } from "../../fileIcons";
   import { fuzzyFilter } from "../../fuzzy";
+  import { keyLabel, matches as keyMatches } from "../../keybinds.svelte";
   import type { TreeEntry } from "../../types";
   import ContextMenu, { type ContextMenuItem } from "../ContextMenu.svelte";
   import Icon from "../Icon.svelte";
@@ -306,12 +308,10 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
-    const k = e.key.toLowerCase();
-    if (k === "p") {
+    if (keyMatches(e, "files.quickOpen")) {
       e.preventDefault();
       focusQuickOpen();
-    } else if (k === "w" && active) {
+    } else if (keyMatches(e, "files.close") && active) {
       e.preventDefault();
       closeTab(active);
     }
@@ -349,7 +349,7 @@
         class:selected={selected === path}
         class:current={path === active}
         style="--depth: {depth}"
-        title={path}
+        {@attach tip(path)}
         oncontextmenu={() => (menuTarget = { path, isDir: e.isDir })}
         onclick={() => {
           selected = path;
@@ -381,28 +381,28 @@
             bind:this={queryInput}
             bind:value={query}
             placeholder="Go to file…"
-            title="Go to file (Ctrl+P)"
+            {@attach tip("Go to file", "files.quickOpen")}
             spellcheck="false"
             onfocus={() => !allFiles && cid && listFiles(cid, projectPath)}
             onkeydown={onQueryKey}
           />
         </label>
-        <button type="button" class="btn" title="New file" onclick={() => startNaming({ kind: "file", dir: "", value: "" })}>
+        <button type="button" class="btn" {@attach tip("New file")} onclick={() => startNaming({ kind: "file", dir: "", value: "" })}>
           <Icon name="file-plus" size={14} />
         </button>
-        <button type="button" class="btn" title="New folder" onclick={() => startNaming({ kind: "folder", dir: "", value: "" })}>
+        <button type="button" class="btn" {@attach tip("New folder")} onclick={() => startNaming({ kind: "folder", dir: "", value: "" })}>
           <Icon name="folder-plus" size={14} />
         </button>
-        <button type="button" class="btn" title="Refresh" onclick={() => void refreshAll()}><Icon name="refresh" size={14} /></button>
-        <button type="button" class="btn" title="Collapse all" onclick={collapseAll}><Icon name="arrows-minimize" size={14} /></button>
+        <button type="button" class="btn" {@attach tip("Refresh")} onclick={() => void refreshAll()}><Icon name="refresh" size={14} /></button>
+        <button type="button" class="btn" {@attach tip("Collapse all")} onclick={collapseAll}><Icon name="arrows-minimize" size={14} /></button>
       </div>
       {#if opError}
-        <button type="button" class="op-error" title="Dismiss" onclick={() => (opError = "")}>{opError}</button>
+        <button type="button" class="op-error" {@attach tip("Dismiss")} onclick={() => (opError = "")}>{opError}</button>
       {/if}
       {#if query.trim()}
         <div class="tree">
           {#each matches as path, i (path)}
-            <button type="button" class="row match" class:selected={i === hit} title={path} onclick={() => (open(path), (query = ""))}>
+            <button type="button" class="row match" class:selected={i === hit} {@attach tip(path)} onclick={() => (open(path), (query = ""))}>
               <img class="ficon" src={fileIconUrl(path)} alt="" />
               <span class="label">{path.split("/").pop()}</span>
               <span class="dir">{parentOf(path)}</span>
@@ -451,13 +451,13 @@
       {#if tabs.length || !wide}
         <div class="tabs" onwheel={wheelSideways}>
           {#if !wide}
-            <button type="button" class="btn" title="Files (Ctrl+P to search)" onclick={() => (showing = "tree")}>
+            <button type="button" class="btn" {@attach tip("Files", "files.quickOpen")} onclick={() => (showing = "tree")}>
               <Icon name="chevron-left" size={14} />
             </button>
           {/if}
           {#each tabs as t (t.path)}
             {@const name = t.path.split("/").pop() ?? t.path}
-            <div class="tab" class:active={t.path === active} title={t.path}>
+            <div class="tab" class:active={t.path === active} {@attach tip(t.path)}>
               <button
                 type="button"
                 class="tab-main"
@@ -467,7 +467,7 @@
                 <img class="ficon" src={fileIconUrl(name)} alt="" />
                 <span>{name}</span>
               </button>
-              <button type="button" class="tab-x" class:dirty={dirty[t.path]} title="Close (Ctrl+W)" onclick={() => closeTab(t.path)}>
+              <button type="button" class="tab-x" class:dirty={dirty[t.path]} {@attach tip("Close", "files.close")} onclick={() => closeTab(t.path)}>
                 <span class="dot">●</span>
                 <Icon name="xmark" size={11} />
               </button>
@@ -489,7 +489,7 @@
         </div>
       {/each}
       {#if !tabs.length}
-        <EmptyState icon="file" title="No file open" body="Pick one from the tree, or press Ctrl+P and type part of its name." />
+        <EmptyState icon="file" title="No file open" body={keyLabel("files.quickOpen") ? `Pick one from the tree, or press ${keyLabel("files.quickOpen")} and type part of its name.` : "Pick one from the tree, or search for it by name."} />
       {/if}
     </div>
   {/if}
@@ -630,7 +630,7 @@
     margin-right: 0.29rem;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     color: inherit;
     cursor: pointer;
   }
