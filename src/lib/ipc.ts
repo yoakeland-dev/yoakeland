@@ -497,7 +497,7 @@ export function sendPrompt(connectionId: ConnectionId, sessionId: string, prompt
   const server = app.servers[connectionId];
   if (!server) return turnId;
   // A new chat's mode is seeded locally from lastUsedMode (ensureSession) without telling the
-  // server, which defaults to read_write: the picker said Autonomous while every bash call still
+  // server, which defaults to read_write: the picker said Run while every bash call still
   // asked. Assert it before the first prompt; envelopes are handled in order, so it lands first.
   if (!server.messagesBySession[sessionId]?.length) {
     setMode(connectionId, sessionId, server.modeBySession[sessionId] ?? "read_write");

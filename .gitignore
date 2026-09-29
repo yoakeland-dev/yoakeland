@@ -15,3 +15,8 @@ vite.config.ts.timestamp-*
 # graphify skill output/cache — generated, not source
 /graphify-out/
 /dist
+
+# written here when the app's terminals and previews run with HOME set to the project root
+/.bash_history
+/.cache/
+/.claude/
