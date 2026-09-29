@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { untrack } from "svelte";
   import { app } from "../state.svelte";
   import { navigateSessionHistory } from "../ipc";
   import Icon from "./Icon.svelte";
+  import { shortNum } from "../format";
 
   let {
     sessionId,
@@ -104,6 +106,32 @@
   );
 </script>
 
+{#snippet gitCard()}
+  {#if git}
+    <div class="tip-title">{git.detached ? "Detached HEAD" : git.branch}</div>
+    <dl class="tip-rows">
+      <dt>Changed</dt><dd>{git.dirtyFiles} file{git.dirtyFiles === 1 ? "" : "s"}</dd>
+      {#if git.hasUpstream}
+        <dt>Ahead</dt><dd>{git.ahead} to push</dd>
+        <dt>Behind</dt><dd>{git.behind} to pull</dd>
+      {:else}
+        <dt>Upstream</dt><dd class="tip-dim">none</dd>
+      {/if}
+    </dl>
+  {/if}
+{/snippet}
+
+{#snippet contextCard()}
+  {#if lastFinish?.context}
+    <div class="tip-title">Context window</div>
+    <dl class="tip-rows">
+      <dt>Used</dt><dd>{shortNum(lastFinish.context.estimatedTokens)} tokens ({contextPct}%)</dd>
+      <dt>Limit</dt><dd>{shortNum(lastFinish.context.maxTokens)} tokens</dd>
+      {#if lastFinish.usage}<dt>Last reply</dt><dd>{shortNum(lastFinish.usage.outputTokens)} out</dd>{/if}
+    </dl>
+  {/if}
+{/snippet}
+
 <header
   class="header"
   class:reserve-chrome={reserveChrome}
@@ -121,7 +149,7 @@
       <div class="chrome-surface chat-island">
         <button
           class="chrome-btn"
-          title="Previous chat"
+          {@attach tip("Previous chat", "chat.back")}
           aria-label="Previous chat"
           disabled={!server?.canGoBack}
           onclick={() => cid && navigateSessionHistory(cid, "back")}
@@ -130,7 +158,7 @@
         </button>
         <button
           class="chrome-btn"
-          title="Next chat"
+          {@attach tip("Next chat", "chat.forward")}
           aria-label="Next chat"
           disabled={!server?.canGoForward}
           onclick={() => cid && navigateSessionHistory(cid, "forward")}
@@ -153,7 +181,7 @@
     {#if sandboxTier === "local_restricted_fallback"}
       <span
         class="badge warn"
-        title="bash tool calls in this project have no sandbox isolation"
+        {@attach tip("bash tool calls in this project have no sandbox isolation")}
       >
         <Icon name="warning" size={12} /> No sandbox
       </span>
@@ -168,7 +196,7 @@
     {#if git}
       <span
         class="stat git"
-        title={`${git.detached ? "Detached HEAD" : `On ${git.branch}`} · ${git.dirtyFiles} changed file${git.dirtyFiles === 1 ? "" : "s"}${git.hasUpstream ? ` · ${git.ahead} ahead, ${git.behind} behind upstream` : " · no upstream"}`}
+        {@attach tip(gitCard, { side: "bottom" })}
       >
         <Icon name="git-branch" size={12} />
         {git.detached ? "detached" : git.branch}
@@ -178,21 +206,19 @@
       </span>
     {/if}
     {#if lastFinish?.context}
-      <div
-        class="meter"
-        title="{lastFinish.context.estimatedTokens} / {lastFinish.context
-          .maxTokens} tokens"
-      >
-        <div class="meter-fill" style="width: {contextPct}%"></div>
-      </div>
-      <span class="stat">{contextPct}% ctx</span>
+      <span class="ctx" {@attach tip(contextCard, { side: "bottom" })}>
+        <div class="meter">
+          <div class="meter-fill" style="width: {contextPct}%"></div>
+        </div>
+        <span class="stat">{contextPct}% ctx</span>
+      </span>
     {/if}
     {#if lastFinish?.spend}
       {@const total = lastFinish.spend.sessionTotalUsd ?? 0}
       <span
         class="stat"
         class:over={sessionCap != null && total >= sessionCap * 0.8}
-        title={sessionCap != null ? `The server stops a session at $${sessionCap.toFixed(2)}` : undefined}
+        {@attach tip(sessionCap != null ? `The server stops a session at $${sessionCap.toFixed(2)}` : undefined)}
         >${total.toFixed(2)}{#if sessionCap != null}&nbsp;/ ${sessionCap.toFixed(2)}{/if} session</span
       >
     {/if}
@@ -353,6 +379,11 @@
     align-items: center;
     gap: 0.6rem;
     flex-shrink: 0;
+  }
+  .ctx {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
   }
   .meter {
     width: 4rem;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Per-chat terminal drawer (SPEC.md §3.1/§3.2 terminal_*), laid out like VS Code's panel: a top
   // bar that is both the toolbar and the active terminal's status line, and a list of terminals
   // on the right once there's more than one. `overflow: hidden` + height:0 when closed means the
@@ -168,23 +169,23 @@
     </div>
   {:else if open}
     <div class="bar">
-      <div class="status" title={active?.cwd}>
+      <div class="status" {@attach tip(active?.cwd)}>
         {#if active && activeState}
           <TerminalStatusIcon tab={active} />
           <span class="name">{terminalTitle(active)}</span>
           {#if active.cwd}<span class="meta cwd">{shortPath(active.cwd)}</span>{/if}
           <span class="meta state {activeState.tone}">{activeState.text}</span>
-          {#if active.sandboxTier}<span class="badge" title="Sandbox tier">{active.sandboxTier}</span>{/if}
+          {#if active.sandboxTier}<span class="badge" {@attach tip("Sandbox tier")}>{active.sandboxTier}</span>{/if}
         {/if}
       </div>
       <div class="bar-actions">
-        <button class="bar-btn" title="New terminal (Ctrl+Shift+`)" aria-label="New terminal" onclick={newTerminal}>
+        <button class="bar-btn" {@attach tip("New terminal", "terminal.new")} aria-label="New terminal" onclick={newTerminal}>
           <Icon name="plus" size={14} />
         </button>
         <button
           class="bar-btn"
           class:on={splitOn}
-          title={splitOn ? "Unsplit" : "Split"}
+          {@attach tip(splitOn ? "Unsplit" : "Split", "terminal.split")}
           aria-label="Split"
           disabled={tabIds.length < 2 && !splitOn}
           onclick={() => server?.toggleTerminalSplit(sessionId)}
@@ -192,30 +193,30 @@
           <Icon name="layout-columns" size={14} />
         </button>
         <span class="sep"></span>
-        <button class="bar-btn" title="Find (Ctrl+F)" aria-label="Find" disabled={!activeId} onclick={() => activeId && views[activeId]?.openFind()}>
+        <button class="bar-btn" {@attach tip("Find", "terminal.find")} aria-label="Find" disabled={!activeId} onclick={() => activeId && views[activeId]?.openFind()}>
           <Icon name="search" size={14} />
         </button>
-        <button class="bar-btn" title="Clear" aria-label="Clear" disabled={!activeId} onclick={() => activeId && views[activeId]?.clear()}>
+        <button class="bar-btn" {@attach tip("Clear")} aria-label="Clear" disabled={!activeId} onclick={() => activeId && views[activeId]?.clear()}>
           <Icon name="clear-all" size={14} />
         </button>
         {#if active?.status === "exited"}
-          <button class="bar-btn" title="Restart" aria-label="Restart" onclick={() => restart(active.terminalId)}>
+          <button class="bar-btn" {@attach tip("Restart")} aria-label="Restart" onclick={() => restart(active.terminalId)}>
             <Icon name="refresh" size={14} />
           </button>
         {/if}
-        <button class="bar-btn danger" title="Kill terminal" aria-label="Kill terminal" disabled={!activeId} onclick={() => activeId && kill(activeId)}>
+        <button class="bar-btn danger" {@attach tip("Kill terminal")} aria-label="Kill terminal" disabled={!activeId} onclick={() => activeId && kill(activeId)}>
           <Icon name="trash" size={14} />
         </button>
         <span class="sep"></span>
         <button
           class="bar-btn"
-          title={app.terminalMaximized ? "Restore panel size" : "Maximize panel"}
+          {@attach tip(app.terminalMaximized ? "Restore panel size" : "Maximize panel", "terminal.maximize")}
           aria-label="Maximize"
           onclick={() => (app.terminalMaximized = !app.terminalMaximized)}
         >
           <Icon name={app.terminalMaximized ? "arrows-minimize" : "maximize"} size={14} />
         </button>
-        <button class="bar-btn" title="Hide (Ctrl+`)" aria-label="Hide terminal" onclick={() => server?.toggleTerminal(sessionId)}>
+        <button class="bar-btn" {@attach tip("Hide", "terminal.toggle")} aria-label="Hide terminal" onclick={() => server?.toggleTerminal(sessionId)}>
           <Icon name="chevron-down" size={14} />
         </button>
       </div>
@@ -265,13 +266,21 @@
                     />
                   </div>
                 {:else}
+                  {#snippet termCard()}
+                    <div class="tip-title">{terminalTitle(tab)}</div>
+                    <dl class="tip-rows">
+                      <dt>Status</dt><dd>{terminalState(tab).text}</dd>
+                      {#if tab.cwd}<dt>Folder</dt><dd>{tab.cwd}</dd>{/if}
+                    </dl>
+                    {#if splitOn}<div class="tip-dim tip-foot">Alt+click to show it in the split pane</div>{/if}
+                  {/snippet}
                   <ContextMenu items={() => menuFor(id)}>
                     <button
                       type="button"
                       class="term-main"
                       role="tab"
                       aria-selected={id === activeId}
-                      title="{terminalTitle(tab)} · {terminalState(tab).text}{tab.cwd ? `\n${tab.cwd}` : ''}{splitOn ? '\nAlt+click: show in split pane' : ''}"
+                      {@attach tip(termCard, { side: "bottom" })}
                       onclick={(e) => select(id, e)}
                       ondblclick={() => void startRename(id)}
                       onkeydown={(e) => {
@@ -281,10 +290,10 @@
                     >
                       <TerminalStatusIcon {tab} />
                       <span class="label">{terminalTitle(tab)}</span>
-                      {#if splitOn && id === splitId}<span class="split-mark" title="In the split pane"><Icon name="layout-columns" size={11} /></span>{/if}
+                      {#if splitOn && id === splitId}<span class="split-mark" {@attach tip("In the split pane")}><Icon name="layout-columns" size={11} /></span>{/if}
                     </button>
                   </ContextMenu>
-                  <button type="button" class="term-close" title="Kill terminal" aria-label="Kill terminal" onclick={() => kill(id)}>
+                  <button type="button" class="term-close" {@attach tip("Kill terminal")} aria-label="Kill terminal" onclick={() => kill(id)}>
                     <Icon name="xmark" size={12} />
                   </button>
                 {/if}
@@ -410,7 +419,7 @@
     height: 1.5rem;
     background: transparent;
     border: none;
-    border-radius: calc(var(--radius-sm) - 2px);
+    border-radius: var(--radius-sm);
     color: var(--text-dim);
     cursor: pointer;
     transition:
@@ -477,7 +486,7 @@
     position: relative;
     display: flex;
     align-items: center;
-    border-radius: calc(var(--radius-sm) - 2px);
+    border-radius: var(--radius-sm);
     color: var(--text-dim);
     transition: background-color calc(0.12s * var(--anim-speed, 1)) ease;
   }
@@ -529,7 +538,7 @@
     min-width: 0;
     background: var(--input-bg, transparent);
     border: 1px solid var(--accent);
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     color: var(--text);
     font: inherit;
     padding: 0 0.21rem;
@@ -545,7 +554,7 @@
     margin-right: 0.21rem;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     color: inherit;
     cursor: pointer;
     opacity: 0;

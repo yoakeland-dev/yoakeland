@@ -19,6 +19,8 @@
     removeServer,
     setRemoteAccess,
     setAutoGenerateTitle,
+    setModelRoles,
+    listModels,
     setRemotePassword,
     setServerIdentity,
     registerProvider,
@@ -30,7 +32,8 @@
   import { extractAccentFromImage, hexToHue, hslToHex, deriveTheme, TERMINAL_THEME_PRESETS } from "../theme";
   import { encodePairingCode } from "../pairing";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
-  import type { CliKind, ProviderInfo } from "../types";
+  import type { CliKind, ModelRole, ProviderInfo } from "../types";
+  import { effortLevels, effortLabel } from "./EffortPicker.svelte";
   import { CLI_AGENTS } from "../modelVendor";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
@@ -39,6 +42,20 @@
   import ConnectForm from "./ConnectForm.svelte";
   import Markdown from "./Markdown.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
+  import Kbd from "./Kbd.svelte";
+  import { tip } from "../tooltip.svelte";
+  import {
+    ACTIONS,
+    bindsFor,
+    comboFromEvent,
+    conflictsFor,
+    isCustomized,
+    recorder,
+    removeBind,
+    resetBinds,
+    setBind,
+    type KeyAction,
+  } from "../keybinds.svelte";
 
   const QUICK_AVATARS = ["🐣", "🦊", "🐙", "🐢", "🐝", "🐺"];
 
@@ -107,6 +124,56 @@
   });
 
   const connected = $derived(server?.connectionStatus === "connected");
+
+  // --- Model roles (SPEC.md §4f) ---
+  const ROLE_ROWS = [
+    { key: "plan", label: "Planning", hint: "Runs every turn in Plan mode. Pick your strongest model." },
+    { key: "explore", label: "Exploring", hint: "Read-only subagents that search the code and report back. A small, fast model is enough." },
+    { key: "utility", label: "Titles & summaries", hint: "Names chats and summarizes long ones when they outgrow the context." },
+    { key: "advisor", label: "Advisor", hint: "A stronger Anthropic model the chat's model can consult mid-task (Anthropic chats only)." },
+  ];
+  const apiProviders = $derived((server?.providers ?? []).filter((p) => p.kind === "api_key"));
+  // The role pickers list models the composer may not have fetched yet.
+  $effect(() => {
+    if (!cid || !server) return;
+    for (const p of apiProviders) if (!server.modelsByProvider[p.name]) listModels(cid, p.name);
+  });
+  function roleModelItems(key: string) {
+    const items: { value: string; label: string; group?: string }[] = [{ value: "", label: "Same as chat" }];
+    for (const p of apiProviders) {
+      if (key === "advisor" && p.httpProvider !== "anthropic") continue;
+      for (const m of server?.modelsByProvider[p.name] ?? []) {
+        items.push({ value: `${p.name}\n${m.id}`, label: m.displayName ?? m.id, group: p.name });
+      }
+    }
+    return items;
+  }
+  const roleValue = (key: string) => {
+    const r = server?.modelRoles[key];
+    return r ? `${r.providerName}\n${r.model ?? ""}` : "";
+  };
+  function roleEfforts(key: string) {
+    const r = server?.modelRoles[key];
+    const p = r && apiProviders.find((x) => x.name === r.providerName);
+    const levels = effortLevels(p, server?.modelsByProvider[r?.providerName ?? ""]?.find((m) => m.id === r?.model), r?.model);
+    return levels && [{ value: "", label: "Default" }, ...levels.map((l) => ({ value: l, label: effortLabel(l) }))];
+  }
+  function saveRole(key: string, role: ModelRole | undefined) {
+    if (!cid || !server) return;
+    const roles = { ...server.modelRoles };
+    if (role) roles[key] = role;
+    else delete roles[key];
+    setModelRoles(cid, roles);
+  }
+  function pickRoleModel(key: string, v: string) {
+    if (!v) return saveRole(key, undefined);
+    const [providerName, model] = v.split("\n");
+    saveRole(key, { providerName, model });
+  }
+  function pickRoleEffort(key: string, v: string) {
+    const r = server?.modelRoles[key];
+    if (r) saveRole(key, { ...r, reasoningEffort: v || undefined });
+  }
   const isLocalConnection = $derived(connected && server?.connectionMode === "local");
 
   function onProfileNameChange() {
@@ -342,11 +409,12 @@
 
   // ---- Search: dims non-matching rows rather than hiding them, so the page doesn't reflow.
   // Every tab's content stays mounted (bits-ui only toggles `hidden`), so all are indexed. ----
-  const TAB_ORDER = ["profile", "appearance", "terminal", "servers", "general", "providers", "projects", "access"];
+  const TAB_ORDER = ["profile", "appearance", "terminal", "keyboard", "servers", "general", "providers", "projects", "access"];
   const TAB_LABELS: Record<string, string> = {
     profile: "profile you name avatar picture",
     appearance: "appearance look theme fonts",
     terminal: "terminal shell colors",
+    keyboard: "keyboard shortcuts keybinds keybindings hotkeys keys",
     servers: "servers connections remote",
     general: "general server name titles",
     providers: "providers models api keys subscriptions",
@@ -389,6 +457,42 @@
     update(params);
     return { update };
   }
+
+  // ---- Keyboard tab ----
+  const actionGroups = $derived(
+    [...new Set(ACTIONS.map((a) => a.group))].map((g) => [g, ACTIONS.filter((a) => a.group === g)] as const),
+  );
+  const anyCustomized = $derived(ACTIONS.some((a) => isCustomized(a.id)));
+  // The slot being recorded; `combo` + `taken` once a pressed combo turned out to be in use.
+  let rec = $state<{ id: string; slot: number; combo?: string; taken?: KeyAction[] } | null>(null);
+
+  function startRecording(id: string, slot: number) {
+    rec = { id, slot };
+    recorder.active = true;
+  }
+  function stopRecording() {
+    rec = null;
+    recorder.active = false;
+  }
+  function commit(id: string, slot: number, combo: string) {
+    setBind(id, slot, combo);
+    stopRecording();
+  }
+  function onRecordKey(e: KeyboardEvent) {
+    if (!rec || rec.combo) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") return stopRecording();
+    const combo = comboFromEvent(e);
+    if (!combo) return;
+    const taken = conflictsFor(rec.id, combo);
+    if (bindsFor(rec.id).includes(combo) || !taken.length) return commit(rec.id, rec.slot, combo);
+    rec = { ...rec, combo, taken };
+    recorder.active = false;
+  }
+  $effect(() => {
+    if (!app.showSettings || app.settingsTab !== "keyboard") stopRecording();
+  });
 
   const noMatches = $derived(!!settingsSearch.trim() && TAB_ORDER.every((t) => tabHasMatch[t] === false));
 
@@ -479,6 +583,36 @@
   </Tabs.Trigger>
 {/snippet}
 
+<svelte:window onkeydowncapture={onRecordKey} />
+
+{#snippet bindSlot(a: KeyAction, slot: number, combo: string | undefined)}
+  {@const recording = rec?.id === a.id && rec.slot === slot}
+  <span class="bind" class:recording class:empty={!combo}>
+    <button
+      type="button"
+      class="bind-main"
+      onclick={() => (recording ? stopRecording() : startRecording(a.id, slot))}
+      onblur={() => recording && !rec?.combo && stopRecording()}
+      aria-label={combo ? `Change ${a.label} shortcut` : `Add a ${a.label} shortcut`}
+    >
+      {#if recording && !rec?.combo}
+        <span class="bind-prompt">Press keys…</span>
+      {:else if recording && rec?.combo}
+        <Kbd combo={rec.combo} />
+      {:else if combo}
+        <Kbd {combo} />
+      {:else}
+        <Icon name="plus" size={12} />
+      {/if}
+    </button>
+    {#if combo && !recording}
+      <button type="button" class="bind-x" {@attach tip("Remove")} onclick={() => removeBind(a.id, slot)}>
+        <Icon name="xmark" size={11} />
+      </button>
+    {/if}
+  </span>
+{/snippet}
+
 <Dialog.Root bind:open={app.showSettings}>
   <Dialog.Portal>
     <Dialog.Overlay class="settings-overlay" />
@@ -495,9 +629,10 @@
           {@render tab("profile", "Profile", "user")}
           {@render tab("appearance", "Appearance", "palette")}
           {@render tab("terminal", "Terminal", "terminal-2")}
+          {@render tab("keyboard", "Keyboard", "keyboard")}
           {@render tab("servers", "Servers", "server")}
 
-          <div class="tabs-group-label" title="These apply to one server — pick which at the top of each page">
+          <div class="tabs-group-label" {@attach tip("These apply to one server — pick which at the top of each page")}>
             {server ? server.label : "Server"}
           </div>
           {@render tab("general", "General", "settings")}
@@ -517,7 +652,7 @@
                     type="button"
                     class="avatar-preview"
                     onclick={() => avatarInput?.click()}
-                    title="Choose a picture"
+                    {@attach tip("Choose a picture")}
                     disabled={uploadingAvatar}
                   >
                     {#if isPhotoAvatar(app.settings.profileAvatar)}
@@ -543,7 +678,7 @@
                           type="button"
                           class="quick-avatar"
                           class:active={app.settings.profileAvatar === emoji}
-                          title="Use {emoji} instead of a picture"
+                          {@attach tip(`Use ${emoji} instead of a picture`)}
                           onclick={() => setEmojiAvatar(emoji)}
                         >
                           {emoji}
@@ -612,7 +747,7 @@
                     class="swatch wallpaper-swatch"
                     class:active={app.settings.accentFromWallpaper}
                     disabled={!app.settings.wallpaper}
-                    title={app.settings.wallpaper ? "Use the wallpaper's color" : "Set a wallpaper below to use this"}
+                    {@attach tip(app.settings.wallpaper ? "Use the wallpaper's color" : "Set a wallpaper below to use this")}
                     onclick={() => onAccentFromWallpaperToggle(true)}
                   >
                     {#if app.settings.wallpaper}
@@ -649,12 +784,12 @@
                     type="button"
                     class="btn icon"
                     onclick={() => wallpaperInput?.click()}
-                    title={app.settings.wallpaper ? "Change image" : "Choose image"}
+                    {@attach tip(app.settings.wallpaper ? "Change image" : "Choose image")}
                   >
                     <Icon name="pencil" size={13} />
                   </button>
                   {#if app.settings.wallpaper}
-                    <button type="button" class="btn icon danger" onclick={clearWallpaper} title="Remove image">
+                    <button type="button" class="btn icon danger" onclick={clearWallpaper} {@attach tip("Remove image")}>
                       <Icon name="trash" size={13} />
                     </button>
                   {/if}
@@ -818,6 +953,52 @@
           </div>
         </Tabs.Content>
 
+        <Tabs.Content value="keyboard" class="tab-panel">
+          <div class="tab-body" use:searchable={{ tab: "keyboard", query: settingsSearch }}>
+            {@render pageHead("Keyboard", false)}
+            <div class="keys-intro">
+              <p class="hint">Click a shortcut to change it, then press the new keys (Esc cancels). Each action takes up to two.</p>
+              {#if anyCustomized}
+                <button type="button" class="btn small ghost" onclick={() => (stopRecording(), resetBinds())}>
+                  <Icon name="restore" size={12} /> Reset all
+                </button>
+              {/if}
+            </div>
+            {#each actionGroups as [group, actions] (group)}
+              <section class="settings-section">
+                <h3 class="section-heading">{group}</h3>
+                {#each actions as a (a.id)}
+                  {@const binds = bindsFor(a.id)}
+                  <div class="setting-row keybind-row">
+                    {@render rowText(a.label)}
+                    <div class="binds">
+                      {#if isCustomized(a.id)}
+                        <button type="button" class="btn icon ghost reset" {@attach tip("Reset to default")} onclick={() => resetBinds(a.id)}>
+                          <Icon name="restore" size={12} />
+                        </button>
+                      {/if}
+                      {@render bindSlot(a, 0, binds[0])}
+                      {#if binds.length || (rec?.id === a.id && rec.slot === 1)}
+                        {@render bindSlot(a, 1, binds[1])}
+                      {/if}
+                    </div>
+                  </div>
+                  {#if rec?.id === a.id && rec.combo && rec.taken}
+                    <div class="conflict" role="alert">
+                      <Icon name="warning" size={13} />
+                      <span class="grow">
+                        <Kbd combo={rec.combo} /> is already used by {rec.taken.map((t) => t.label).join(", ")}.
+                      </span>
+                      <button type="button" class="btn small primary" onclick={() => commit(a.id, rec!.slot, rec!.combo!)}>Use here</button>
+                      <button type="button" class="btn small ghost" onclick={stopRecording}>Cancel</button>
+                    </div>
+                  {/if}
+                {/each}
+              </section>
+            {/each}
+          </div>
+        </Tabs.Content>
+
         <Tabs.Content value="servers" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "servers", query: settingsSearch }}>
             {@render pageHead("Servers", false)}
@@ -830,9 +1011,9 @@
                     <div class="list-text">
                       <span class="list-title">
                         {r.label}
-                        <span class="status-dot {r.status}" title={r.status}></span>
+                        <span class="status-dot {r.status}" {@attach tip(r.status)}></span>
                       </span>
-                      <span class="list-meta" title={r.address}>{r.address}</span>
+                      <span class="list-meta" {@attach tip(r.address)}>{r.address}</span>
                     </div>
                     {#if r.connectionId && (r.status === "connected" || r.status === "connecting")}
                       <button type="button" class="btn small" onclick={() => disconnect(r.connectionId!)}>Disconnect</button>
@@ -841,7 +1022,7 @@
                         {r.connectionId ? "Reconnect" : "Connect"}
                       </button>
                     {/if}
-                    <button type="button" class="btn icon ghost danger" onclick={() => onRemoveRow(r)} title={r.connectionId ? "Remove" : "Forget"}>
+                    <button type="button" class="btn icon ghost danger" onclick={() => onRemoveRow(r)} {@attach tip(r.connectionId ? "Remove" : "Forget")}>
                       <Icon name="trash" size={13} />
                     </button>
                   </li>
@@ -854,7 +1035,7 @@
                   <div class="inset-card">
                     <div class="inset-head">
                       <span class="row-label">Add a remote server</span>
-                      <button type="button" class="btn icon ghost" onclick={() => (addPrefill = null)} title="Cancel">
+                      <button type="button" class="btn icon ghost" onclick={() => (addPrefill = null)} {@attach tip("Cancel")}>
                         <Icon name="xmark" size={13} />
                       </button>
                     </div>
@@ -907,9 +1088,9 @@
                     <div class="list-text">
                       <span class="list-title">{c.title}</span>
                       {#if connected && !c.available}
-                        <span class="list-meta warn" title={`${c.cli} isn't on the server's PATH`}><Icon name="warning" size={11} /> Not installed</span>
+                        <span class="list-meta warn" {@attach tip(`${c.cli} isn't on the server's PATH`)}><Icon name="warning" size={11} /> Not installed</span>
                       {:else}
-                        <span class="list-meta" title={`Runs the server's own ${c.cli} CLI`}>{c.cli}</span>
+                        <span class="list-meta" {@attach tip(`Runs the server's own ${c.cli} CLI`)}>{c.cli}</span>
                       {/if}
                     </div>
                   </div>
@@ -928,7 +1109,7 @@
                         <span class="list-title">{p.name}</span>
                         <span class="list-meta">{p.httpProvider}</span>
                       </div>
-                      <button type="button" class="btn icon ghost danger" onclick={() => onRemoveProvider(p.name)} title="Remove">
+                      <button type="button" class="btn icon ghost danger" onclick={() => onRemoveProvider(p.name)} {@attach tip("Remove")}>
                         <Icon name="trash" size={13} />
                       </button>
                     </li>
@@ -968,6 +1149,33 @@
                 </button>
               </form>
             </section>
+
+            <section class="settings-section">
+              <h3 class="section-heading">Model roles</h3>
+              <p class="hint">Hand parts of every chat's work on this server to other models — strong where it pays, cheap where it doesn't. Unset roles use the chat's own model. Coding agents route their own models and skip these.</p>
+              {#each ROLE_ROWS as r (r.key)}
+                {@const efforts = roleEfforts(r.key)}
+                <div class="setting-row">
+                  {@render rowText(r.label, r.hint)}
+                  <div class="btn-row">
+                    <Dropdown
+                      items={roleModelItems(r.key)}
+                      bind:value={() => roleValue(r.key), (v) => pickRoleModel(r.key, v ?? "")}
+                      placeholder="Same as chat"
+                      searchable
+                      contentClass="above-modal"
+                    />
+                    {#if efforts}
+                      <Dropdown
+                        items={efforts}
+                        bind:value={() => server?.modelRoles[r.key]?.reasoningEffort ?? "", (v) => pickRoleEffort(r.key, v ?? "")}
+                        contentClass="above-modal"
+                      />
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </section>
           </div>
         </Tabs.Content>
 
@@ -982,7 +1190,7 @@
                     <Icon name="folder" size={14} />
                     <div class="list-text">
                       <span class="list-title">{basename(path)}</span>
-                      <span class="list-meta" title={path}>{path}</span>
+                      <span class="list-meta" {@attach tip(path)}>{path}</span>
                     </div>
                     <button
                       type="button"
@@ -991,7 +1199,7 @@
                         server?.forgetProject(path);
                         if (cid) removeProject(cid, path);
                       }}
-                      title="Remove from list"
+                      {@attach tip("Remove from list")}
                     >
                       <Icon name="trash" size={13} />
                     </button>
@@ -1090,7 +1298,7 @@
                       class="btn icon ghost danger"
                       onclick={() => onRemoveToken(token.name)}
                       disabled={!isLocalConnection}
-                      title="Revoke access"
+                      {@attach tip("Revoke access")}
                     >
                       <Icon name="user-x" size={13} />
                     </button>
@@ -1136,7 +1344,7 @@
                         type="button"
                         class="btn icon ghost danger"
                         onclick={() => onDisconnectPeer(peer.peerId, peer.name)}
-                        title="Disconnect"
+                        {@attach tip("Disconnect")}
                       >
                         <Icon name="unlink" size={13} />
                       </button>
@@ -1186,7 +1394,7 @@
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
     z-index: var(--z-overlay-content);
     overflow: hidden;
@@ -1485,7 +1693,7 @@
     padding: 0 0.78rem;
     background: none;
     border: none;
-    border-radius: calc(var(--radius-sm) - 2px);
+    border-radius: var(--radius-xs);
     color: var(--text-dim);
     font: inherit;
     font-size: var(--text-label-size);
@@ -1501,6 +1709,93 @@
     background: var(--sidebar-active);
     color: var(--text);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  }
+  .keys-intro {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .keybind-row {
+    min-height: 1.86rem;
+  }
+  .binds {
+    display: flex;
+    align-items: center;
+    gap: 0.29rem;
+  }
+  .binds .reset {
+    --ctrl-h: 1.57rem;
+  }
+  .bind {
+    display: inline-flex;
+    align-items: center;
+    height: 1.57rem;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .bind:hover {
+    border-color: color-mix(in srgb, var(--text) 25%, transparent);
+  }
+  .bind.empty {
+    border-style: dashed;
+  }
+  .bind.recording {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  .bind-main {
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+    min-width: 1.57rem;
+    justify-content: center;
+    padding: 0 0.36rem;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .bind-prompt {
+    font-size: var(--text-label-size);
+    color: var(--accent);
+  }
+  .bind-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.29rem;
+    height: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    border-left: 1px solid var(--panel-border);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .bind-x:hover {
+    color: var(--danger);
+  }
+  .conflict {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.43rem 0.57rem;
+    border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--warning) 8%, transparent);
+    font-size: var(--text-label-size);
+  }
+  .conflict > :global(.icon) {
+    color: var(--warning);
+  }
+  .conflict .grow {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.36rem;
+    flex-wrap: wrap;
   }
   .btn-row {
     display: flex;
@@ -1576,7 +1871,7 @@
     display: flex;
     flex-direction: column;
     border: 1px solid var(--panel-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     overflow: hidden;
   }
   .list li {
@@ -1647,7 +1942,7 @@
     padding: 0.86rem;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--panel-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
   }
   .inset-head {
     display: flex;
@@ -1686,7 +1981,7 @@
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
   .warning-card {
@@ -1696,7 +1991,7 @@
     padding: 0.86rem;
     background: color-mix(in srgb, var(--warning) 6%, transparent);
     border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--panel-border));
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
   }
   .warning-heading {
     display: flex;
@@ -1732,7 +2027,7 @@
     background: none;
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     padding: 0.43rem;
     cursor: pointer;
   }
@@ -1755,7 +2050,7 @@
   .mode-skeleton {
     width: 100%;
     height: 5.7rem;
-    border-radius: calc(var(--radius-sm) - 2px);
+    border-radius: var(--radius-xs);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1885,7 +2180,7 @@
     gap: 0.14rem;
     width: 1.57rem;
     height: 1.14rem;
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     border: 1px solid rgba(255, 255, 255, 0.12);
   }
   .term-theme-swatch span {

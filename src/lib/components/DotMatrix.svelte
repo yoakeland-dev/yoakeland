@@ -65,7 +65,7 @@
     display: inline-block;
     flex: none;
     /* 1500ms at the design's 1.35× speed. */
-    --cycle: calc(1111ms * var(--anim-speed, 1));
+    --cycle: calc(1111ms * var(--icon-slow, 1));
     --base: 0.12;
     --mid: 0.42;
   }

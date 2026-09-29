@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // A saved pairing (splitPartnerFor, linkedSessionId, SPEC.md §3.1 set_session_layout):
   // `primary` keeps its normal position; `secondary` tags along underneath regardless of its own state.
   import { app, type ConnectionId } from "../state.svelte";
@@ -35,7 +36,7 @@
           <button
             type="button"
             class="act"
-            title="Maximize"
+            {@attach tip("Maximize")}
             aria-label={`Maximize ${sessionTitle(s)}`}
             onclick={() => {
               setSessionLayout(connectionId, primary.sessionId, null);
@@ -48,7 +49,7 @@
             <button
               type="button"
               class="act"
-              title="Ungroup"
+              {@attach tip("Ungroup")}
               aria-label="Ungroup"
               onclick={() => setSessionLayout(connectionId, primary.sessionId, null)}
             >
@@ -88,7 +89,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     color: var(--sidebar-fg-dim);
     cursor: pointer;
   }

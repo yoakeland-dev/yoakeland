@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { slide } from "svelte/transition";
   import { tick } from "svelte";
   import { revealItemInDir } from "../platform";
@@ -37,6 +38,11 @@
       (s) => s.messageCount > 0 || (server?.messagesBySession[s.sessionId]?.length ?? 0) > 0,
     ),
   );
+
+  // Sessions arrive sorted by recency, so the first N are the recent ones.
+  const LIMIT = 10;
+  let showAll = $state(false);
+  const visible = $derived(showAll ? sessions : sessions.slice(0, LIMIT));
 
   const slideDuration = $derived(Math.round(180 * app.settings.animationSpeed));
 
@@ -110,7 +116,7 @@
         />
       </form>
     {:else}
-      <button class="summary" onclick={toggle} title={projectPath} aria-expanded={open}>
+      <button class="summary" onclick={toggle} {@attach tip(projectPath)} aria-expanded={open}>
         <span class="lead">
           <span class="face icon-face"><Icon name="folder" size={13} /></span>
           <span class="face chevron-face" class:open><Icon name="chevron-right" size={12} /></span>
@@ -118,7 +124,7 @@
         <span class="name">{projectName}</span>
         <span class="divider"></span>
         {#if server?.refreshingProjects[projectPath]}
-          <span class="spin" title="Refreshing chats…"><Icon name="loader-2" size={11} /></span>
+          <span class="spin" {@attach tip("Refreshing chats…")}><Icon name="loader-2" size={11} /></span>
         {/if}
         <span class="count-slot">
           <span class="count">{sessions.length}</span>
@@ -127,7 +133,7 @@
               role="button"
               tabindex="0"
               class="new-chat-btn"
-              title="New chat"
+              {@attach tip("New chat")}
               aria-label={`New chat in ${projectName}`}
               onclick={(e) => {
                 e.stopPropagation();
@@ -158,7 +164,7 @@
             — <button class="link" onclick={onNewChat}>start one</button>{/if}
         </p>
       {/if}
-      {#each sessions as s (s.sessionId)}
+      {#each visible as s (s.sessionId)}
         {@const paired = server?.splitPartnerFor(s.sessionId) ?? null}
         {#if paired}
           <SplitEntry primary={s} secondary={paired} {connectionId} />
@@ -166,6 +172,12 @@
           <ChatRow {connectionId} session={s} variant={archived ? "archived" : "default"} />
         {/if}
       {/each}
+      {#if sessions.length > LIMIT}
+        <button class="more" onclick={() => (showAll = !showAll)}>
+          <Icon name={showAll ? "chevron-up" : "chevron-down"} size={13} />
+          <span>{showAll ? "Show less" : `Show ${sessions.length - LIMIT} more`}</span>
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -303,6 +315,26 @@
   }
   .link:hover {
     text-decoration: underline;
+  }
+  /* Matches a ChatRow's .main: same padding, icon slot, font and hover. */
+  .more {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    width: 100%;
+    padding: 0.45rem 0.43rem 0.45rem var(--row-indent, 0.71rem);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--sidebar-fg-dim);
+    font: inherit;
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .more:hover {
+    background: var(--sidebar-hover);
+    color: var(--sidebar-fg);
   }
   .rows {
     --row-indent: calc(1.28rem + var(--project-indent, 0rem));

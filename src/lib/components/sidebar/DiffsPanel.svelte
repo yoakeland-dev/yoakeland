@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../../tooltip.svelte";
   // Every file that differs from HEAD, staged or not, each expanding into its diff.
   import { app } from "../../state.svelte";
   import { listGitChanges } from "../../ipc";
@@ -38,11 +39,11 @@
   {#if !error && files.length}
   <div class="toolbar">
     <span class="title">{files.length}{truncated ? "+" : ""} changed {files.length === 1 ? "file" : "files"}</span>
-    <button type="button" class="btn" title="Refresh" onclick={load}><Icon name="refresh" size={14} /></button>
+    <button type="button" class="btn" {@attach tip("Refresh")} onclick={load}><Icon name="refresh" size={14} /></button>
     <button
       type="button"
       class="btn"
-      title={anyOpen ? "Collapse all" : "Expand all"}
+      {@attach tip(anyOpen ? "Collapse all" : "Expand all")}
       onclick={() => (open = anyOpen ? {} : Object.fromEntries(files.map((f) => [f.path, true])))}
     >
       <Icon name={anyOpen ? "arrows-minimize" : "maximize"} size={14} />

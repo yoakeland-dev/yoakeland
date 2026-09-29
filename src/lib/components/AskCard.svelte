@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // The oldest pending ask (permission or question) as a card that rises out of the composer's
   // top edge; any others stack behind it. Its own buttons answer just this one ask. The composer
   // underneath stays the "tell it what to do instead" path, which answers every pending ask at
@@ -8,6 +9,7 @@
   import { app } from "../state.svelte";
   import { respondPermission, askUserAnswer } from "../ipc";
   import { metaFor, summaryFor } from "../toolMeta";
+  import { findCallInMessages, subagentOwning, subagentTitle } from "../subagents";
   import { fileIconUrl } from "../fileIcons";
   import type { PendingAsk } from "../types";
   import DiffView from "./DiffView.svelte";
@@ -17,9 +19,9 @@
 
   const server = $derived(app.active);
   const ask = $derived(asks[0]);
-  const call = $derived(
-    server?.messagesBySession[sessionId]?.findLast((m) => m.turnId === ask.turnId)?.toolCalls.find((c) => c.toolCallId === ask.toolCallId),
-  );
+  // Searched by id, nested ones included: a subagent's ask carries its own turn id, not the chat's.
+  const call = $derived(findCallInMessages(server?.messagesBySession[sessionId], ask.toolCallId));
+  const owner = $derived(subagentOwning(server?.messagesBySession[sessionId], ask.toolCallId));
 
   const permission = $derived(ask.kind === "permission" ? ask : null);
   const question = $derived(ask.kind === "question" ? ask : null);
@@ -45,8 +47,10 @@
   });
   const target = $derived(diff || command ? "" : call ? summaryFor(call) : "");
 
-  // read_write forces every bash call to ask and can't remember it (SPEC.md §4c).
-  const alwaysUnavailable = $derived(server?.modeBySession[sessionId] === "read_write" && permission?.toolName === "bash");
+  // read_write forces every shell call (bash, the terminal tools) to ask and can't remember it (SPEC.md §4c).
+  const alwaysUnavailable = $derived(
+    server?.modeBySession[sessionId] === "read_write" && ["bash", "terminal_start", "terminal_output"].includes(permission?.toolName ?? ""),
+  );
 
   const cid = () => app.activeConnectionId;
   function done() {
@@ -170,6 +174,9 @@
         {/if}
         {#if asks.length > 1}<span class="count">1 of {asks.length}</span>{/if}
       </div>
+      {#if owner}
+        <div class="owner"><Icon name="robot" size={12} /> Asked by subagent “{subagentTitle(owner)}”</div>
+      {/if}
 
       {#if permission}
         {#if diff}
@@ -183,7 +190,7 @@
           <button type="button" class="btn danger" onclick={reject}>Reject <kbd>Esc</kbd></button>
           <span class="spacer"></span>
           {#if alwaysUnavailable}
-            <span class="note" title="Read/Write mode asks for every bash command, so this one can't be remembered.">
+            <span class="note" {@attach tip("Read/Write mode asks for every bash command, so this one can't be remembered.")}>
               <Icon name="info-circle" size={13} />
             </span>
           {:else}
@@ -283,6 +290,14 @@
   .kind {
     display: inline-flex;
     color: var(--accent);
+  }
+  .owner {
+    display: flex;
+    align-items: center;
+    gap: 0.29rem;
+    padding: 0.14rem 0.29rem 0;
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
   }
   .verb {
     font-weight: 600;
@@ -442,7 +457,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
+    border-radius: var(--radius-xs);
     background: rgba(255, 255, 255, 0.07);
     color: var(--text-dim);
     font-size: 0.72rem;

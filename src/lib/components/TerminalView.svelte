@@ -19,6 +19,7 @@
   import { attachShellIntegration, type ShellIntegration } from "../terminalShellIntegration";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import FindBar from "./FindBar.svelte";
+  import { matches } from "../keybinds.svelte";
 
   let { sessionId, terminalId, visible }: { sessionId: string; terminalId: string; visible: boolean } = $props();
 
@@ -206,32 +207,32 @@
       // handle the key, the raw DOM event still bubbles and would also trigger ChatPanel's
       // own Ctrl+F.
       // Ctrl+Shift+C/V, like every Linux terminal: plain Ctrl+C/V belong to the shell.
-      if (e.ctrlKey && e.shiftKey && e.code === "KeyC") {
+      if (matches(e, "terminal.copy")) {
         e.stopPropagation();
         e.preventDefault();
         const sel = term?.getSelection();
         if (sel) void writeClipboard(sel);
         return false;
       }
-      if (e.ctrlKey && e.shiftKey && e.code === "KeyV") {
+      if (matches(e, "terminal.paste")) {
         e.stopPropagation();
         e.preventDefault();
         void readClipboard().then(paste);
         return false;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      if (matches(e, "terminal.find")) {
         e.stopPropagation();
         openFind();
         return false;
       }
       // VS Code's own bindings for jumping between shell-integration command
       // boundaries (a no-op until at least one OSC 633;D has fired).
-      if (e.altKey && e.key === "ArrowUp") {
+      if (matches(e, "terminal.prevCommand")) {
         e.stopPropagation();
         shellIntegration?.goToPreviousCommand();
         return false;
       }
-      if (e.altKey && e.key === "ArrowDown") {
+      if (matches(e, "terminal.nextCommand")) {
         e.stopPropagation();
         shellIntegration?.goToNextCommand();
         return false;

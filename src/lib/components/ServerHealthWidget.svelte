@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Health snapshot comes from each server's ping (SPEC.md §2a status).
   import { Popover } from "bits-ui";
   import { app, type ServerState } from "../state.svelte";
@@ -43,10 +44,23 @@
   }
 </script>
 
+{#snippet serversCard()}
+  <div class="tip-title">Servers</div>
+  <ul class="tip-list">
+    {#each servers as s (s.connectionId)}
+      <li>
+        <ServerAvatar name={s.label} seed={s.serverId} size={12} />
+        <span class="grow">{s.label}</span>
+        <span class="tip-dim">{s.connectionStatus}</span>
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
 <Popover.Root bind:open>
   <Popover.Trigger
     class="sb-trigger servers"
-    title={servers.map((s) => `${s.label} — ${s.connectionStatus}`).join("\n") || "Servers"}
+    {@attach tip(servers.length ? serversCard : "Servers")}
     aria-label="Servers"
   >
     {#if servers.length}
@@ -92,24 +106,24 @@
                   </span>
                   {#if st}
                     <span class="sb-row-meta facts">
-                      <span class:busy={st.activeTurns > 0}>{st.activeTurns} running</span>
-                      <span>{st.openProjects} {st.openProjects === 1 ? "project" : "projects"}</span>
-                      <span>{st.peers} {st.peers === 1 ? "client" : "clients"}</span>
-                      <span title="yoakeland's own memory">{Math.round(st.heapBytes / 1024 ** 2)} MB</span>
+                      <span class="fact" class:busy={st.activeTurns > 0} {@attach tip(`${st.activeTurns} running`)}><Icon name="player-play" size={11} />{st.activeTurns}</span>
+                      <span class="fact" {@attach tip(`${st.openProjects} ${st.openProjects === 1 ? "project" : "projects"}`)}><Icon name="folder" size={11} />{st.openProjects}</span>
+                      <span class="fact" {@attach tip(`${st.peers} ${st.peers === 1 ? "client" : "clients"}`)}><Icon name="devices" size={11} />{st.peers}</span>
+                      <span {@attach tip("yoakeland's own memory")}>{Math.round(st.heapBytes / 1024 ** 2)} MB</span>
                     </span>
                   {/if}
                 </span>
                 {#if st}
                   <span class="meters">
                     {#if h.cpu != null}
-                      <span class="m" title="Load {st.load1?.toFixed(2)} across {st.cpus} cores">
+                      <span class="m" {@attach tip(`Load ${st.load1?.toFixed(2)} across ${st.cpus} cores`)}>
                         <span class="k">CPU</span>
                         <span class="sb-bar"><span class="sb-fill {level(h.cpu)}" style="width: {Math.min(h.cpu, 100)}%"></span></span>
                         <span class="v sb-level {level(h.cpu)}">{h.cpu}%</span>
                       </span>
                     {/if}
                     {#if h.mem != null}
-                      <span class="m" title="{gb(h.memUsed!)} of {gb(h.memTotal!)} GB in use">
+                      <span class="m" {@attach tip(`${gb(h.memUsed!)} of ${gb(h.memTotal!)} GB in use`)}>
                         <span class="k">RAM</span>
                         <span class="sb-bar"><span class="sb-fill {level(h.mem)}" style="width: {h.mem}%"></span></span>
                         <span class="v sb-level {level(h.mem)}">{h.mem}%</span>
@@ -213,6 +227,11 @@
   .facts span + span::before {
     content: "·";
     margin: 0 0.36rem;
+  }
+  .fact {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.21rem;
   }
   .busy {
     color: var(--accent);

@@ -5,13 +5,14 @@
     { id: "browser", label: "Browser", icon: "browser", hint: "Preview a page beside the chat" },
     { id: "snapshots", label: "Snapshots", icon: "history", hint: "Rewind the agent's edits" },
     { id: "diffs", label: "Diffs", icon: "arrows-diff", hint: "Everything changed since the last commit" },
-    { id: "subagents", label: "Subagents", icon: "robot", hint: "Coming soon" },
+    { id: "subagents", label: "Subagents", icon: "robot", hint: "Follow the agent's helpers" },
     { id: "explorer", label: "Explorer", icon: "files", hint: "Browse and edit project files" },
     { id: "git", label: "Git", icon: "git-branch", hint: "Branch and working tree status" },
   ];
 </script>
 
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Not to be confused with the "split view" feature (ServerState.sidebarSessionId
   // / RightSidebar.svelte), a second independent chat shown side by side.
   //
@@ -27,7 +28,9 @@
   import DiffsPanel from "./sidebar/DiffsPanel.svelte";
   import ExplorerPanel from "./sidebar/ExplorerPanel.svelte";
   import GitPanel from "./sidebar/GitPanel.svelte";
+  import SubagentsPanel from "./sidebar/SubagentsPanel.svelte";
   import EmptyState from "./sidebar/EmptyState.svelte";
+  import { agentBrowsers } from "../browserAgent.svelte";
 
   let {
     sessionId,
@@ -52,6 +55,11 @@
   let visited = $state<Record<string, Partial<Record<SidebarPanel, boolean>>>>({});
   $effect(() => {
     if (panel) (visited[sessionId] ??= {})[panel] = true;
+  });
+  // A chat whose agent is using the browser gets its pane even while it's off screen.
+  $effect(() => {
+    // Only chats the next effect keeps, or the two undo each other forever (a deleted chat).
+    for (const sid of Object.keys(agentBrowsers)) if (sid in (server?.messagesBySession ?? {})) (visited[sid] ??= {}).browser = true;
   });
   $effect(() => {
     // Drop a deleted chat's panes (forgetSessionState clears its messages entry).
@@ -145,7 +153,7 @@
               class="tab"
               class:active={p.id === panel}
               aria-selected={p.id === panel}
-              title={p.label}
+              {@attach tip(p.label)}
               onclick={() => pick(p.id)}
             >
               <Icon name={p.icon as any} size={14} />
@@ -153,7 +161,7 @@
           {/each}
           {#if overflow.length}
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger class="tab" title="More tools">
+              <DropdownMenu.Trigger class="tab" {@attach tip("More tools")}>
                 <Icon name="dots" size={14} />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
@@ -175,13 +183,13 @@
         type="button"
         class="tab"
         class:active={swapped}
-        title={swapped ? "Put the chat back in the middle" : "Give tools the main area, chat on the side"}
+        {@attach tip(swapped ? "Put the chat back in the middle" : "Give tools the main area, chat on the side")}
         onclick={() => server?.toggleChatSidebarSwapped(sessionId)}
       >
         <Icon name="switch-horizontal" size={14} />
       </button>
       {#if current}
-        <button type="button" class="tab" title="All tools" onclick={() => pick(undefined)}>
+        <button type="button" class="tab" {@attach tip("All tools")} onclick={() => pick(undefined)}>
           <Icon name="layout-grid" size={14} />
         </button>
       {/if}
@@ -194,7 +202,7 @@
         </div>
         <div class="grid">
           {#each PANELS as p (p.id)}
-            <button type="button" class="card" class:soon={p.id === "subagents"} onclick={() => pick(p.id)}>
+            <button type="button" class="card" onclick={() => pick(p.id)}>
               <span class="card-icon"><Icon name={p.icon as any} size={17} /></span>
               <span class="card-label">{p.label}</span>
               <span class="card-hint">{p.hint}</span>
@@ -211,15 +219,11 @@
       {@const sidSwapped = !!server?.chatSidebarSwappedBySession[sid]}
       {#each PANELS as p (p.id)}
         {#if seen[p.id]}
-          <div class="pane" hidden={!here || p.id !== panel}>
+          <div class="pane" class:keep-layout={p.id === "browser"} hidden={!here || p.id !== panel}>
             {#if p.id === "browser"}
-              <BrowserPanel />
+              <BrowserPanel sessionId={sid} />
             {:else if p.id === "subagents"}
-              <EmptyState
-                icon="robot"
-                title="Subagents are coming"
-                body="When an agent hands work to helpers, each one will show up here with its own progress and transcript."
-              />
+              <SubagentsPanel sessionId={sid} />
             {:else if !sidProject || !server}
               <EmptyState icon="folder" title="No project yet" body="Pick a project for this chat and its files, changes and history show up here." />
             {:else if p.id === "snapshots"}
@@ -393,7 +397,7 @@
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-md, var(--radius-sm));
+    border-radius: var(--radius-lg);
     color: var(--text);
     cursor: pointer;
     transition:
@@ -403,9 +407,6 @@
   .card:hover {
     background: var(--sidebar-hover);
     border-color: color-mix(in srgb, var(--accent) 35%, var(--panel-border));
-  }
-  .card.soon {
-    opacity: 0.6;
   }
   .card-icon {
     display: flex;
@@ -434,6 +435,15 @@
   }
   .pane[hidden] {
     display: none;
+  }
+  /* A hidden browser keeps its size, so the agent can still aim clicks and pages lay out as
+     they would on screen. */
+  .pane.keep-layout[hidden] {
+    display: flex;
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
   /* Chromium still counts content scrolled out of a pane's view (clipped, but above it, under
      the title bar strip) as no-drag, so a scrolled tree or editor made the window ungrabbable

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // §3.2 git_status: every project's git state on every server, where the
   // chat header only shows the open chat's.
   import { Popover } from "bits-ui";
@@ -53,11 +54,25 @@
   }
 </script>
 
+{#snippet reposCard()}
+  <div class="tip-title">Git</div>
+  <ul class="tip-list">
+    {#each repos.slice(0, 8) as r (r.cid + r.path)}
+      <li>
+        <span class="grow">{r.name}</span>
+        <span class="tip-dim">{r.git.detached ? "detached" : r.git.branch}</span>
+        {#if r.git.dirtyFiles}<span>±{r.git.dirtyFiles}</span>{/if}
+      </li>
+    {/each}
+    {#if repos.length > 8}<li class="tip-dim">and {repos.length - 8} more</li>{/if}
+  </ul>
+{/snippet}
+
 {#if repos.length}
   <Popover.Root bind:open>
     <Popover.Trigger
       class="sb-trigger"
-      title={repos.map((r) => `${r.name}: ${r.git.detached ? "detached" : r.git.branch}${r.git.dirtyFiles ? ` ±${r.git.dirtyFiles}` : ""}`).join("\n")}
+      {@attach tip(reposCard)}
       aria-label="Git"
     >
       <Icon name="git-branch" size={12} />
@@ -70,24 +85,24 @@
         <ul class="sb-list">
           {#each repos as r (r.key)}
             <li class="sb-row" class:current={r.key === current}>
-              <button type="button" class="sb-row-main" title="Open its latest chat" onclick={() => openRepo(r)}>
+              <button type="button" class="sb-row-main" {@attach tip("Open its latest chat")} onclick={() => openRepo(r)}>
                 <span class="lead"><Icon name="folder" size={14} /></span>
                 <span class="sb-row-text">
                   <span class="sb-row-name">{r.name}</span>
-                  <span class="sb-row-meta" title={r.path}>
+                  <span class="sb-row-meta" {@attach tip(r.path)}>
                     <Icon name="git-branch" size={11} />
                     <span class="branch">{r.git.detached ? "detached HEAD" : r.git.branch}</span>
                     {#if multiServer}<ServerAvatar name={r.srv.label} seed={r.srv.serverId} size={12} />{/if}
                   </span>
                 </span>
                 <span class="counts">
-                  {#if r.git.dirtyFiles}<span class="changed" title={(r.git.files ?? []).map((f) => `${f.status}  ${f.path}`).join("\n") || undefined}>±{r.git.dirtyFiles}</span>{/if}
+                  {#if r.git.dirtyFiles}<span class="changed" {@attach tip((r.git.files ?? []).map((f) => `${f.status}  ${f.path}`).join("\n") || undefined)}>±{r.git.dirtyFiles}</span>{/if}
                   {#if r.git.hasUpstream}
-                    {#if r.git.ahead}<span title="To push">↑{r.git.ahead}</span>{/if}
-                    {#if r.git.behind}<span class="behind" title="To pull">↓{r.git.behind}</span>{/if}
+                    {#if r.git.ahead}<span {@attach tip("To push")}>↑{r.git.ahead}</span>{/if}
+                    {#if r.git.behind}<span class="behind" {@attach tip("To pull")}>↓{r.git.behind}</span>{/if}
                     {#if !r.git.dirtyFiles && !r.git.ahead && !r.git.behind}<span class="dim">in sync</span>{/if}
                   {:else}
-                    <span class="dim" title="No upstream branch">local</span>
+                    <span class="dim" {@attach tip("No upstream branch")}>local</span>
                   {/if}
                 </span>
               </button>

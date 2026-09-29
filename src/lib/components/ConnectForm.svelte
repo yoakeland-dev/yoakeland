@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // connectTcp/connectLocalUnix (ipc.ts) are additive: calling this a second
   // time adds another entry to app.servers, so no "first server" branching needed here.
   import { isDesktop, pickFiles } from "../platform";
@@ -218,7 +219,7 @@
         <Icon name="chevron-right" size={13} />
       </button>
       <div class="step-actions">
-        <button type="button" class="back-step" onclick={goToAddress} title="Back (Backspace)">
+        <button type="button" class="back-step" onclick={goToAddress} {@attach tip("Back", "Backspace")}>
           <Icon name="chevron-left" size={13} />
         </button>
         <button class="primary grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
@@ -253,7 +254,7 @@
         <p class="hint">Your browser checks the server's certificate itself. Trust the server's CA in your browser or OS once, or give the server a real certificate.</p>
       {/if}
       <div class="step-actions">
-        <button type="button" class="back-step" onclick={goToCode} title="Back (Backspace)">
+        <button type="button" class="back-step" onclick={goToCode} {@attach tip("Back", "Backspace")}>
           <Icon name="chevron-left" size={13} />
         </button>
         <button class="primary grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
@@ -320,7 +321,7 @@
     gap: var(--space-half);
     background: rgba(255, 255, 255, 0.04);
     padding: var(--space-half);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     margin-bottom: 1.29rem;
   }
   :global(.connect-tab-trigger) {

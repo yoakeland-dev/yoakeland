@@ -28,7 +28,7 @@
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     padding: 1.7rem;
   }
   h1 {

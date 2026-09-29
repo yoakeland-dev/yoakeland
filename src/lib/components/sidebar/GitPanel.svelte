@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../../tooltip.svelte";
   // Full `git status`: branch and upstream from git_status (§3.2), files grouped like VS Code's
   // Source Control view from list_git_changes. A file staged and then edited again shows in both.
   import { app } from "../../state.svelte";
@@ -55,18 +56,18 @@
     {#if git}
       <span class="branch">{git.detached ? "detached HEAD" : git.branch}</span>
       {#if git.hasUpstream}
-        <span class="sync" title="{git.ahead} to push, {git.behind} to pull">
+        <span class="sync" {@attach tip(`${git.ahead} to push, ${git.behind} to pull`)}>
           {#if git.ahead}<span>↑{git.ahead}</span>{/if}
           {#if git.behind}<span class="behind">↓{git.behind}</span>{/if}
           {#if !git.ahead && !git.behind}<span class="dim">in sync</span>{/if}
         </span>
       {:else}
-        <span class="dim" title="No upstream branch">no upstream</span>
+        <span class="dim" {@attach tip("No upstream branch")}>no upstream</span>
       {/if}
     {:else}
       <span class="branch dim">{error ? "No repository" : "…"}</span>
     {/if}
-    <button type="button" class="btn" title="Refresh" onclick={load}><Icon name="refresh" size={14} /></button>
+    <button type="button" class="btn" {@attach tip("Refresh")} onclick={load}><Icon name="refresh" size={14} /></button>
   </div>
   <div class="list">
     {#if error}

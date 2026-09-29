@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Owns only the widget (query input, prev/next/close, counter); every
   // caller supplies its own onNext/onPrevious since "next match" differs per backend.
   import Icon from "./Icon.svelte";
@@ -51,13 +52,13 @@
   {#if query}
     <span class="find-count">{matchCount > 0 ? `${matchIndex + 1}/${matchCount}` : "No results"}</span>
   {/if}
-  <button class="find-btn" title="Previous match (Shift+Enter)" onclick={onPrevious}>
+  <button class="find-btn" {@attach tip("Previous match", "Shift+Enter")} onclick={onPrevious}>
     <Icon name="chevron-up" size={13} />
   </button>
-  <button class="find-btn" title="Next match (Enter)" onclick={onNext}>
+  <button class="find-btn" {@attach tip("Next match", "Enter")} onclick={onNext}>
     <Icon name="chevron-down" size={13} />
   </button>
-  <button class="find-btn" title="Close (Esc)" onclick={onClose}>
+  <button class="find-btn" {@attach tip("Close", "Escape")} onclick={onClose}>
     <Icon name="xmark" size={13} />
   </button>
 </div>
@@ -101,7 +102,7 @@
     flex-shrink: 0;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     color: inherit;
     cursor: pointer;
   }

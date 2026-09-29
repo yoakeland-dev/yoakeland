@@ -58,7 +58,7 @@
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     padding: var(--space-2);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
     z-index: var(--z-overlay-content);

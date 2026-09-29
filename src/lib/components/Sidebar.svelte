@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { app, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, type ConnectionId, type ServerState } from "../state.svelte";
   import { selectProject, browseAndAddProject, openChatSession, listSessionsForProjects, newChat as newChatIn, disconnect, reconnectServer } from "../ipc";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
@@ -12,6 +13,7 @@
   import Dropdown from "./Dropdown.svelte";
   import AboutDialog from "./AboutDialog.svelte";
   import SearchInput from "./SearchInput.svelte";
+  import { matches } from "../keybinds.svelte";
   import { DropdownMenu } from "bits-ui";
   import { untrack } from "svelte";
   import { slide } from "svelte/transition";
@@ -291,7 +293,24 @@
   const running = $derived<Row[]>(
     allRows.filter((r) => r.srv.activeTurnBySession[r.s.sessionId] && !needsYouKeys.has(key(r))).sort((a, b) => byRecent(a.s, b.s)),
   );
-  const runningKeys = $derived(new Set(running.map(key)));
+  // A chat stays under Running after its reply lands, until you've seen it and moved on, so it's
+  // still at hand when you want to answer. Held while unseen (finishedSessions) or while open.
+  const isOpen = (r: Row) =>
+    r.cid === app.activeConnectionId && (r.s.sessionId === r.srv.currentSessionId || r.s.sessionId === r.srv.sidebarSessionId);
+  let held = $state<string[]>([]);
+  $effect(() => {
+    const prev = untrack(() => held);
+    const next = allRows
+      .filter((r) => !needsYouKeys.has(key(r)) && !r.srv.activeTurnBySession[r.s.sessionId])
+      .filter((r) => r.srv.finishedSessions[r.s.sessionId] || (isOpen(r) && prev.includes(key(r))))
+      .map(key);
+    const live = running.map(key);
+    held = [...live, ...next];
+  });
+  const shown = $derived(
+    [...running, ...allRows.filter((r) => held.includes(key(r)) && !r.srv.activeTurnBySession[r.s.sessionId] && !needsYouKeys.has(key(r)))],
+  );
+  const runningKeys = $derived(new Set(shown.map(key)));
 
   // In pinned order; Ctrl+1-9 jumps to them.
   const pinned = $derived<Row[]>(
@@ -411,10 +430,10 @@
     srv.setProjectOrder(order);
   }
 
-  // Ctrl/Cmd+1–9 opens the nth pinned chat.
+  // Ctrl/Cmd+1–9 (by default) opens the nth pinned chat.
   function onWindowKey(e: KeyboardEvent) {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || !/^[1-9]$/.test(e.key)) return;
-    const r = pinned[Number(e.key) - 1];
+    const n = pinned.findIndex((_, i) => i < 9 && matches(e, `chat.pinned${i + 1}`));
+    const r = pinned[n];
     if (!r) return;
     e.preventDefault();
     openChatSession(r.cid, r.s.sessionId);
@@ -456,7 +475,7 @@
       <DropdownMenu.Root>
         <DropdownMenu.Trigger
           class="filter-btn{chip ? ' on' : ''}"
-          title={chip ? `Showing: ${CHIPS.find((c) => c.id === chip)?.label}` : "Filter chats"}
+          {@attach tip(chip ? `Showing: ${CHIPS.find((c) => c.id === chip)?.label}` : "Filter chats")}
           aria-label="Filter chats"
         >
           <Icon name="filter" size={15} />
@@ -478,7 +497,7 @@
       <button
         class="new-chat"
         onclick={newChat}
-        title={pickerCid && projectFilter ? `New chat in ${pickedServer?.projectName(projectFilter)}` : "New chat…"}
+        {@attach tip(pickerCid && projectFilter ? `New chat in ${pickedServer?.projectName(projectFilter)}` : "New chat…", "chat.new")}
         aria-label="New chat"
       >
         <Icon name="message-circle-plus" size={16} />
@@ -504,7 +523,7 @@
               {@const srv = app.servers[value.slice(8)]}
               {#if srv}<ServerAvatar name={srv.label} seed={srv.serverId} size={12} />{/if}
             {/if}
-            <span class="dropdown-item-label" title={path}>{label}</span>
+            <span class="dropdown-item-label" {@attach tip(path)}>{label}</span>
             {#if selected}<Icon name="check" size={11} />{/if}
           {/snippet}
         </Dropdown>
@@ -516,7 +535,7 @@
       {/if}
       <button
         class="manage-projects"
-        title="Add project"
+        {@attach tip("Add project")}
         aria-label="Add project"
         onclick={() => addProject(pickerCid ?? cid)}
       >
@@ -528,7 +547,7 @@
       {#if chip}
         <div class="section-label filter-head">
           {CHIPS.find((c) => c.id === chip)?.label}
-          <button class="clear-filter" title="Clear filter" aria-label="Clear filter" onclick={() => (chip = null)}>
+          <button class="clear-filter" {@attach tip("Clear filter")} aria-label="Clear filter" onclick={() => (chip = null)}>
             <Icon name="xmark" size={11} />
           </button>
         </div>
@@ -563,11 +582,11 @@
       {:else}
         {#if needsYou.length}
           <div class="section-label attention">Needs you</div>
-          {#each needsYou as r (key(r))}{@render rowFor(r, "attention")}{/each}
+          <div class="live-card attention">{#each needsYou as r (key(r))}{@render rowFor(r, "attention")}{/each}</div>
         {/if}
-        {#if running.length}
+        {#if shown.length}
           <div class="section-label">Running</div>
-          {#each running as r (key(r))}{@render rowFor(r, "running")}{/each}
+          <div class="live-card">{#each shown as r (key(r))}{@render rowFor(r, "running")}{/each}</div>
         {/if}
         {#if pinnedShown.length}
           <div class="section-label">Pinned</div>
@@ -597,7 +616,7 @@
                 {/if}
               </button>
               {#if connected}
-                <button class="server-add" title={`Add a project on ${sec.srv.label}`} aria-label="Add project" onclick={() => addProject(sec.cid)}>
+                <button class="server-add" {@attach tip(`Add a project on ${sec.srv.label}`)} aria-label="Add project" onclick={() => addProject(sec.cid)}>
                   <Icon name="folder-plus" size={12} />
                 </button>
               {/if}
@@ -672,7 +691,7 @@
         <DropdownMenu.Trigger
           class="profile{userMenuOpen ? ' open' : ''}"
           ondblclick={() => ((userMenuOpen = false), openSettings("profile"))}
-          title={connectedServers.length ? `Visible to peers on ${connectedServers.map(([, srv]) => srv.label).join(", ")}` : "Offline"}
+          {@attach tip(connectedServers.length ? `Visible to peers on ${connectedServers.map(([, srv]) => srv.label).join(", ")}` : "Offline")}
         >
           <span class="avatar-wrap">
             <span class="avatar">
@@ -725,15 +744,18 @@
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      <!-- Turns into a back arrow while the usage page is open, since that's what it does then. -->
       <button
         class="icon-btn"
         class:on={app.showUsage}
         onclick={() => (app.showUsage = !app.showUsage)}
-        title="Usage"
-        aria-label="Usage"
-        aria-pressed={app.showUsage}
+        {@attach tip(app.showUsage ? "Back" : "Usage", "usage.toggle")}
+        aria-label={app.showUsage ? "Close usage" : "Usage"}
       >
-        <Icon name="chart-bar" size={15} />
+        <span class="swap" class:back={app.showUsage}>
+          <span class="usage-face"><Icon name="chart-bar" size={15} /></span>
+          <span class="usage-face"><Icon name="arrow-left" size={15} /></span>
+        </span>
       </button>
     </div>
     <AboutDialog bind:open={showAbout} />
@@ -965,6 +987,22 @@
   .link:hover {
     text-decoration: underline;
   }
+  /* Needs you / Running float like the chat hover card: one surface, rows inside. */
+  .live-card {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0.21rem;
+    background: var(--float-bg);
+    /* Outer radius = inner radius + padding, so the rows' corners nest evenly. */
+    border: 1px solid var(--float-border);
+    border-block-color: var(--float-border-top) var(--float-border-bottom);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  }
+  .live-card.attention {
+    border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  }
   .section-label.attention {
     color: var(--warning);
     opacity: 1;
@@ -1111,6 +1149,8 @@
     height: 1.5rem;
     background: none;
     border: none;
+    /* Lines up with the project rows' new-chat button (ProjectGroup .summary padding). */
+    margin-right: 0.26rem;
     border-radius: var(--radius-sm);
     color: var(--sidebar-fg-dim);
     cursor: pointer;
@@ -1261,6 +1301,28 @@
   .icon-btn.on {
     color: var(--text);
     background: var(--sidebar-active);
+  }
+  .swap {
+    display: grid;
+  }
+  .swap .usage-face {
+    grid-area: 1 / 1;
+    display: grid;
+    transition:
+      opacity calc(0.18s * var(--anim-speed, 1)) ease,
+      transform calc(0.18s * var(--anim-speed, 1)) ease;
+  }
+  .swap .usage-face:last-child,
+  .swap.back .usage-face:first-child {
+    opacity: 0;
+    transform: translateX(5px);
+  }
+  .swap.back .usage-face:first-child {
+    transform: translateX(-5px);
+  }
+  .swap.back .usage-face:last-child {
+    opacity: 1;
+    transform: none;
   }
   .resize-handle {
     position: absolute;

@@ -13,6 +13,10 @@
   import Toasts from "$lib/components/Toasts.svelte";
   import FirstServerPanel from "$lib/components/FirstServerPanel.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import TooltipHost from "$lib/components/TooltipHost.svelte";
+  import QuietRoom from "$lib/components/QuietRoom.svelte";
+  import { dispatchKeybind, dispatchMouseNav } from "$lib/keybinds.svelte";
+  import { tip } from "$lib/tooltip.svelte";
 
   // Window chrome lives here instead of a dedicated title bar row, as floating
   // pieces over whatever surface is beneath them (see the layout tokens in
@@ -159,28 +163,12 @@
     };
     media.addEventListener("change", onSchemeChange);
 
-    // Ctrl/Cmd+K opens the command palette from anywhere, except inside a
-    // terminal, where Ctrl+K belongs to the shell (readline's kill-line).
-    const onKey = (e: KeyboardEvent) => {
-      // Ctrl+` toggles the open chat's terminal, Ctrl+Shift+` adds one (VS Code's bindings).
-      const sid = app.active?.currentSessionId;
-      if (e.ctrlKey && !e.altKey && e.code === "Backquote" && sid) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.shiftKey) app.active!.newTerminal(sid);
-        else app.active!.toggleTerminal(sid);
-        return;
-      }
-      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "k") return;
-      if ((e.target as Element | null)?.closest?.(".xterm")) return;
-      e.preventDefault();
-      if (app.paletteOpen) app.paletteOpen = false;
-      else app.openPalette();
-    };
-    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keydown", dispatchKeybind, true);
+    window.addEventListener("mouseup", dispatchMouseNav);
     return () => {
       media.removeEventListener("change", onSchemeChange);
-      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keydown", dispatchKeybind, true);
+      window.removeEventListener("mouseup", dispatchMouseNav);
     };
   });
 
@@ -202,7 +190,7 @@
     <div class="traffic-lights"></div>
     <button
       class="chrome-btn"
-      title={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      {@attach tip(app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar", { keys: "sidebar.toggle", side: "bottom" })}
       aria-label={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
       onclick={() => app.toggleSidebar()}
     >
@@ -220,7 +208,7 @@
         <button
           class="chrome-btn"
           class:active={app.active?.terminalOpenBySession[chromeSessionId]}
-          title={app.active?.terminalOpenBySession[chromeSessionId] ? "Hide terminal" : "Show terminal"}
+          {@attach tip(app.active?.terminalOpenBySession[chromeSessionId] ? "Hide terminal" : "Show terminal", "terminal.toggle")}
           aria-label={app.active?.terminalOpenBySession[chromeSessionId] ? "Hide terminal" : "Show terminal"}
           onclick={() => app.active?.toggleTerminal(chromeSessionId)}
         >
@@ -229,7 +217,7 @@
         <button
           class="chrome-btn"
           class:active={app.active?.chatSidebarOpenBySession[chromeSessionId]}
-          title={app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide sidebar" : "Show sidebar"}
+          {@attach tip(app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide side panel" : "Show side panel", "panel.toggle")}
           aria-label={app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide sidebar" : "Show sidebar"}
           onclick={() => app.active?.toggleChatSidebar(chromeSessionId)}
         >
@@ -244,20 +232,20 @@
       {#if win && app.settings.windowChrome}
         <button
           class="chrome-btn"
-          title="Minimize"
+          {@attach tip("Minimize")}
           aria-label="Minimize"
           onclick={() => win.minimize()}><Icon name="minus" size={12} /></button
         >
         <button
           class="chrome-btn"
-          title="Maximize"
+          {@attach tip("Maximize")}
           aria-label="Maximize"
           onclick={() => win.toggleMaximize()}
           ><Icon name="square" size={11} /></button
         >
         <button
           class="chrome-btn window-close"
-          title="Close"
+          {@attach tip("Close")}
           aria-label="Close"
           onclick={() => win.close()}><Icon name="xmark" size={13} /></button
         >
@@ -298,6 +286,8 @@
 <SettingsPanel />
 <CommandPalette />
 <Toasts />
+<TooltipHost />
+<QuietRoom />
 
 <style>
   .shell {

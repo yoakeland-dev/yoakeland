@@ -15,6 +15,7 @@
 </script>
 
 <script lang="ts">
+  import { tip } from "../../tooltip.svelte";
   // One changed file: a row that expands into its diff (against HEAD, or a snapshot's copy),
   // refetched while open whenever the project's files change.
   import { app } from "../../state.svelte";
@@ -91,7 +92,7 @@
     { label: "Copy relative path", icon: "copy", onSelect: () => void navigator.clipboard?.writeText(path) },
   ]}
 >
-  <button type="button" class="row" title={basePath ? `${basePath} → ${path}` : path} onclick={() => (expanded = !expanded)}>
+  <button type="button" class="row" {@attach tip(basePath ? `${basePath} → ${path}` : path)} onclick={() => (expanded = !expanded)}>
     <Icon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
     <img class="ficon" src={fileIconUrl(name)} alt="" />
     <span class="name">{name}</span>

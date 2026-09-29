@@ -10,18 +10,19 @@
     if (t.busy) return { icon: "loader-2", tone: "info", spin: true, text: t.command ? `running ${t.command}` : "running" } as const;
     if (t.lastExit) return { icon: "circle-x", tone: "danger", text: `last command failed (${t.lastExit})` } as const;
     if (t.lastExit === 0) return { icon: "circle-check", tone: "success", text: "idle" } as const;
-    return { icon: "terminal-2", tone: "dim", text: "idle" } as const;
+    return t.agent ? ({ icon: "robot", tone: "dim", text: "idle, started by the agent" } as const) : ({ icon: "terminal-2", tone: "dim", text: "idle" } as const);
   }
 </script>
 
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import Icon from "./Icon.svelte";
 
   let { tab, size = 13 }: { tab: TerminalTab; size?: number } = $props();
   const st = $derived(terminalState(tab));
 </script>
 
-<span class="tsi {st.tone}" class:spin={"spin" in st && st.spin} title={st.text} aria-label={st.text}>
+<span class="tsi {st.tone}" class:spin={"spin" in st && st.spin} {@attach tip(st.text)} aria-label={st.text}>
   <Icon name={st.icon} {size} />
 </span>
 

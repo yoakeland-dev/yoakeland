@@ -223,7 +223,56 @@
   ];
   msgs[3].text += " Renamed — one more place in the hint text below.";
   msgs[3].toolCalls[2].textOffset = msgs[3].text.length;
-  local.messagesBySession = { s1: msgs, s2: [], s3: [], s4: [] };
+  // s2 (?chat=s2): an API-provider turn using the new tools: two subagents working in parallel
+  // (one still going, one reported back), a dev server in an agent terminal, and a browser check.
+  const call = (toolCallId: string, name: string, args: Record<string, unknown>, extra: Partial<ChatMessage["toolCalls"][number]> = {}) =>
+    ({ toolCallId, name, args, status: "done" as const, output: "", textOffset: 48, ...extra });
+  const s2: ChatMessage[] = [
+    { id: "a1", role: "user", text: "The terminal flickers on resize. Find out why, and check the demo page still renders.", toolCalls: [], streaming: false, createdAt: now - 300_000 },
+    {
+      id: "a2",
+      role: "assistant",
+      text: "I'll split the investigation and start the demo.",
+      streaming: true,
+      createdAt: now - 290_000,
+      toolCalls: [
+        call("sa1", "subagent", { description: "Trace the resize path", prompt: "Follow a window resize from ResizeObserver to xterm's fit addon in src/lib/components/TerminalView.svelte. Report every place that forces a reflow, with file:line." }, {
+          status: "running",
+          subagent: {
+            text: "",
+            calls: [
+              call("sa1-1", "file_read", { path: "src/lib/components/TerminalView.svelte" }, { output: "…" }),
+              call("sa1-2", "file_read", { path: "src/lib/terminalBus.ts" }, { output: "…" }),
+              call("sa1-3", "bash", { command: "rg -n fit( src" }, { status: "requested" }),
+            ],
+          },
+        }),
+        call("sa2", "subagent", { description: "Check xterm addon versions", prompt: "Compare @xterm/addon-fit and @xterm/xterm versions in package.json against their changelogs for resize fixes." }, {
+          output: "**@xterm/addon-fit 0.11.0** debounces nothing itself; the flicker fix landed in **xterm 6.0.1** (`refresh` no longer clears the viewport on resize).\n\n- package.json pins `^6.0.0`, lockfile has 6.0.0\n- Upgrading to 6.0.1 is a patch bump, no API changes",
+          subagent: { text: "", calls: [call("sa2-1", "file_read", { path: "package.json" }, { output: "…" }), call("sa2-2", "web_fetch", { url: "https://github.com/xtermjs/xterm.js/releases" }, { output: "…" })] },
+        }),
+        call("tt1", "terminal_start", { command: "npm run dev", name: "dev server", wait_ms: 5000 }, { output: "terminal agent-1 (dev server): command still running\n  VITE v8.0.16  ready in 412 ms\n  ➜  Local:   http://127.0.0.1:1420/" }),
+        call("br1", "browser", { action: "navigate", url: "http://localhost:1420/demo" }, { output: "URL: http://localhost:1420/demo\nTitle: Demo" }),
+      ],
+    },
+  ];
+  local.messagesBySession = { s1: msgs, s2, s3: [], s4: [] };
+  local.terminalById.t5 = { ...term("t5", "s2", "bash", "running", "/home/aveline/Projects/yoake/yoake-gui"), name: "dev server", agent: true, busy: true, command: "npm run dev" };
+  local.terminalsBySession.s2 = ["t2", "t5"];
+  if (new URLSearchParams(location.search).get("chat") === "s2") {
+    local.currentSessionId = "s2";
+    local.projectBySession.s2 = local.currentProjectPath!;
+    local.chatSidebarOpenBySession.s2 = true;
+    local.chatSidebarPanelBySession.s2 = "subagents";
+    local.terminalOpenBySession.s2 = true;
+    // &ask: the running subagent is waiting on approval for its bash call.
+    if (new URLSearchParams(location.search).has("ask")) {
+      s2[1].toolCalls[0].subagent!.calls[2].status = "awaiting_permission";
+      local.pendingAsks = [
+        { kind: "permission", sessionId: "s2", projectPath: local.currentProjectPath!, turnId: "turn-9.sa1", toolCallId: "sa1-3", toolName: "bash", description: "bash on rg", requiresAsk: true, cacheKey: "" },
+      ];
+    }
+  }
   app.activeConnectionId = "local";
 
   // ?flat: flat main area. ?open=model|mode: open that composer picker.

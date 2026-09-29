@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Color hashed from serverId, not name, so renaming a server keeps its color
   // and two same-named servers still look different. Rounded square avoids
   // reading as a person's avatar.
@@ -24,7 +25,7 @@
 <span
   class="server-avatar"
   style="--hue: {hue}; width: {size}px; height: {size}px; font-size: {Math.round(size * (initials.length > 1 ? 0.45 : 0.56))}px"
-  title={name}
+  {@attach tip(name)}
   aria-hidden="true">{initials}</span
 >
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // §3.2 notification: dismissing here dismisses for every device on that
   // server (echoes notification_dismissed to all its peers).
   import { Popover } from "bits-ui";
@@ -53,7 +54,7 @@
 {/snippet}
 
 <Popover.Root bind:open={app.notificationsOpen}>
-  <Popover.Trigger class="sb-trigger" title="Notifications" aria-label="Notifications">
+  <Popover.Trigger class="sb-trigger" {@attach tip("Notifications", "notifications.open")} aria-label="Notifications">
     <Icon name={items.length || asks.length ? "bell-filled" : "bell"} size={13} />
     {#if unseen || asks.length}<span class="badge" class:ask={asks.length > 0}>{unseen + asks.length}</span>{/if}
   </Popover.Trigger>
@@ -82,7 +83,7 @@
               </span>
               <span class="time">{when(n.createdAt)}</span>
             </button>
-            <button type="button" class="x" title="Dismiss" onclick={() => dismissNotification(n.cid, n.id)}>
+            <button type="button" class="x" {@attach tip("Dismiss")} onclick={() => dismissNotification(n.cid, n.id)}>
               <Icon name="xmark" size={12} />
             </button>
           </li>

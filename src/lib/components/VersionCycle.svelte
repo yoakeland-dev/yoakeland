@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { app } from "../state.svelte";
   import { switchBranch } from "../ipc";
   import type { ChatMessage } from "../types";
@@ -27,7 +28,7 @@
 
 {#if message.alternateIds?.length}
   <span class="cycle">
-    <button class="step" disabled={index <= 0} onclick={() => go(-1)} title="Previous version" aria-label="Previous version">
+    <button class="step" disabled={index <= 0} onclick={() => go(-1)} {@attach tip("Previous version")} aria-label="Previous version">
       <Icon name="chevron-left" size={12} />
     </button>
     <span class="pos">{index + 1} / {versions.length}</span>
@@ -35,7 +36,7 @@
       class="step"
       disabled={index >= versions.length - 1}
       onclick={() => go(1)}
-      title="Next version"
+      {@attach tip("Next version")}
       aria-label="Next version"
     >
       <Icon name="chevron-right" size={12} />

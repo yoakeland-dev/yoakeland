@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // The terminal taskbar: every terminal on every server (terminal_index, §3.2), including ones
   // started from other devices, grouped by the chat that owns it. Picking one opens that chat
   // with its drawer on that terminal, since a terminal only makes sense next to its chat.
@@ -69,7 +70,7 @@
   <Popover.Root bind:open>
     <Popover.Trigger
       class="sb-trigger"
-      title={busy ? `${busy} running, ${all.length} terminals` : `${all.length} terminals`}
+      {@attach tip(busy ? `${busy} running, ${all.length} terminals` : `${all.length} terminals`)}
       aria-label="Terminals"
     >
       {#if busy}
@@ -78,14 +79,14 @@
         <Icon name="terminal-2" size={12} />
       {/if}
       <span>{all.length}</span>
-      {#if failed}<span class="failed" title="{failed} with a failed command or error">{failed}</span>{/if}
+      {#if failed}<span class="failed" {@attach tip(`${failed} with a failed command or error`)}>{failed}</span>{/if}
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content class="sb-panel terminals-panel" side="top" align="end" sideOffset={8}>
         <div class="groups">
           {#each groups as g (g.key)}
             <section class="group">
-              <button type="button" class="group-head" title="Open this chat" onclick={() => show(g, g.terms.find((t) => t.terminalId === g.srv.activeTerminalBySession[g.sessionId]) ?? g.terms[0])}>
+              <button type="button" class="group-head" {@attach tip("Open this chat")} onclick={() => show(g, g.terms.find((t) => t.terminalId === g.srv.activeTerminalBySession[g.sessionId]) ?? g.terms[0])}>
                 <Icon name="message-circle" size={12} />
                 <span class="chat">{g.chat}</span>
                 {#if g.project}<span class="project">{g.project}</span>{/if}
@@ -94,7 +95,7 @@
               <ul class="sb-list">
                 {#each g.terms as t (t.terminalId)}
                   <li class="sb-row" class:current={isShown(g, t)}>
-                    <button type="button" class="sb-row-main" onclick={() => show(g, t)} title={t.cwd}>
+                    <button type="button" class="sb-row-main" onclick={() => show(g, t)} {@attach tip(t.cwd)}>
                       <TerminalStatusIcon tab={t} />
                       <span class="sb-row-text">
                         <span class="sb-row-name">{terminalTitle(t)}</span>
@@ -104,7 +105,7 @@
                         </span>
                       </span>
                     </button>
-                    <button type="button" class="sb-row-action danger" title="Kill terminal" aria-label="Kill terminal" onclick={() => terminalClose(g.cid, g.sessionId, t.terminalId)}>
+                    <button type="button" class="sb-row-action danger" {@attach tip("Kill terminal")} aria-label="Kill terminal" onclick={() => terminalClose(g.cid, g.sessionId, t.terminalId)}>
                       <Icon name="xmark" size={12} />
                     </button>
                   </li>

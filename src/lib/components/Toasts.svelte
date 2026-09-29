@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Live notifications pop up bottom-right for a few seconds (see
   // AppState.toast for which ones); the bell in the status bar keeps them.
   import { fly } from "svelte/transition";
@@ -36,7 +37,7 @@
           }}>{t.action.label}</button
         >
       {/if}
-      <button type="button" class="x" title="Close" onclick={() => app.dropToast(t.id)}>
+      <button type="button" class="x" {@attach tip("Close")} onclick={() => app.dropToast(t.id)}>
         <Icon name="xmark" size={12} />
       </button>
     </div>
@@ -62,7 +63,7 @@
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   }
   .body {

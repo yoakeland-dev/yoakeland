@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { app } from "../state.svelte";
   import { setMode } from "../ipc";
   import Icon from "./Icon.svelte";
@@ -23,7 +24,7 @@
   <aside class="plan-panel">
     <div class="plan-header">
       <span class="plan-title"><Icon name="clipboard-list" size={14} /> Plan</span>
-      <button type="button" class="icon-chip" title="Close" onclick={close}>
+      <button type="button" class="icon-chip" {@attach tip("Close")} onclick={close}>
         <Icon name="xmark" size={14} />
       </button>
     </div>

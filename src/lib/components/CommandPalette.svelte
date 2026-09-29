@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Ctrl+K command palette. Pages form a back-stack: Backspace on an empty
   // search pops one, Escape pops one too if possible, else closes.
   import { Command, Dialog, DropdownMenu } from "bits-ui";
@@ -22,6 +23,8 @@
   import { relTime, sessionTitle } from "../format";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
+  import Kbd from "./Kbd.svelte";
+  import { ACTION_BY_ID } from "../keybinds.svelte";
 
   type Page =
     | { kind: "root" }
@@ -193,6 +196,8 @@
     detail?: string;
     /** Opens another page of the palette, gets a trailing chevron. */
     submenu?: boolean;
+    /** keybinds.svelte.ts action whose shortcut is shown at the end of the row. */
+    keys?: string;
     run: () => void;
   }
 
@@ -200,6 +205,7 @@
     ["profile", "Profile", "user"],
     ["appearance", "Appearance", "palette"],
     ["terminal", "Terminal", "terminal-2"],
+    ["keyboard", "Keyboard shortcuts", "keyboard"],
     ["servers", "Servers", "server"],
     ["general", "General", "settings"],
     ["providers", "Providers", "brain"],
@@ -216,25 +222,36 @@
         id: "chat:model",
         label: "Change model",
         icon: "brain",
+        keys: "chat.model",
         run: () => run(() => (app.modelPickerRequest = { sessionId: sid, at: Date.now() })),
       },
       {
         id: "chat:terminal",
         label: s.terminalOpenBySession[sid] ? "Hide terminal" : "Show terminal",
         icon: "terminal-2",
+        keys: "terminal.toggle",
         run: () => run(() => s.toggleTerminal(sid)),
       },
       {
         id: "chat:new-terminal",
         label: "New terminal",
         icon: "plus",
+        keys: "terminal.new",
         run: () => run(() => s.newTerminal(sid)),
       },
       {
         id: "chat:sidebar",
         label: s.chatSidebarOpenBySession[sid] ? "Hide chat side panel" : "Show chat side panel",
         icon: "sidebar-right-expand",
+        keys: "panel.toggle",
         run: () => run(() => s.toggleChatSidebar(sid)),
+      },
+      {
+        id: "chat:mode",
+        label: "Cycle mode",
+        icon: "arrows-exchange",
+        keys: "chat.mode",
+        run: () => run(() => ACTION_BY_ID.get("chat.mode")?.run?.()),
       },
     ];
   });
@@ -244,7 +261,7 @@
     const list: Action[] = [];
     if (c && server?.currentProjectPath) {
       const p = server.currentProjectPath;
-      list.push({ id: "start:new-here", label: `New in ${server.projectLabel(p)}`, icon: "message-circle-plus", run: () => run(() => void newChat(c, p)) });
+      list.push({ id: "start:new-here", label: `New in ${server.projectLabel(p)}`, icon: "message-circle-plus", keys: "chat.new", run: () => run(() => void newChat(c, p)) });
     }
     if (c) {
       list.push({ id: "start:new-in", label: "New session in…", icon: "folder", submenu: true, run: () => push({ kind: "projects" }) });
@@ -263,9 +280,11 @@
         id: "view:sidebar",
         label: app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar",
         icon: "sidebar-left-expand",
+        keys: "sidebar.toggle",
         run: () => run(() => app.toggleSidebar()),
       },
-      { id: "view:notifications", label: "Show notifications", icon: "bell", run: () => run(() => (app.notificationsOpen = true)) },
+      { id: "view:notifications", label: "Show notifications", icon: "bell", keys: "notifications.open", run: () => run(() => (app.notificationsOpen = true)) },
+      { id: "view:usage", label: app.showUsage ? "Hide usage" : "Show usage", icon: "chart-bar", keys: "usage.toggle", run: () => run(() => (app.showUsage = !app.showUsage)) },
     ];
     if (c && server?.notifications.length) {
       list.push({ id: "view:clear-notifications", label: "Clear all notifications", icon: "trash", run: () => run(() => dismissNotification(c)) });
@@ -279,6 +298,7 @@
       label,
       detail: "Settings",
       icon,
+      keys: tab === "keyboard" ? "keybinds.open" : undefined,
       run: () =>
         run(() => {
           app.settingsTab = tab;
@@ -308,7 +328,12 @@
   );
   const allProjects = $derived(
     Object.entries(app.servers).flatMap(([scid, srv]) =>
-      srv.recentProjects.map((path) => ({ cid: scid, path, label: srv.projectLabel(path) })),
+      srv.recentProjects.map((path) => ({
+        cid: scid,
+        path,
+        label: srv.projectName(path),
+        icon: srv.connectionMode === "local" ? ("folder" as const) : ("cloud" as const),
+      })),
     ),
   );
 
@@ -392,6 +417,7 @@
     <Icon name={a.icon} size={14} />
     <span class="label">{a.label}</span>
     {#if a.detail}<span class="detail">{a.detail}</span>{/if}
+    {#if a.keys}<span class="keys"><Kbd id={a.keys} /></span>{/if}
     {#if a.submenu}<span class="chevron"><Icon name="chevron-right" size={13} /></span>{/if}
   </Command.Item>
 {/snippet}
@@ -427,13 +453,13 @@
       <Command.Root bind:value={highlighted} loop class="palette" label="Command palette">
         <div class="input-row">
           {#if stack.length > 1}
-            <button type="button" class="crumb" onclick={back} title="Back (Backspace)">
+            <button type="button" class="crumb" onclick={back} {@attach tip("Back", "Backspace")}>
               <Icon name="chevron-left" size={13} />
             </button>
           {/if}
           {#if page.kind === "browse" && browsingServer && browsableServers.length > 1}
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger class="crumb server-switch" title={`Browsing ${browsingServer.label} — switch server`}>
+              <DropdownMenu.Trigger class="crumb server-switch" {@attach tip(`Browsing ${browsingServer.label} — switch server`)}>
                 <ServerAvatar name={browsingServer.label} seed={browsingServer.serverId} size={14} />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
@@ -450,7 +476,7 @@
             </DropdownMenu.Root>
           {/if}
           {#if page.kind === "browse"}
-            <span class="crumb-label" title={listing?.path}><bdi>{listing?.path ?? "…"}</bdi></span>
+            <span class="crumb-label" {@attach tip(listing?.path)}><bdi>{listing?.path ?? "…"}</bdi></span>
           {:else if page.kind === "projects"}
             <span class="crumb-label"><bdi>New session in</bdi></span>
           {:else if page.kind === "servers"}
@@ -467,7 +493,7 @@
               class="select-btn"
               disabled={!canPick}
               onclick={() => listing && pickDir(listing.path)}
-              title="Use the open folder"
+              {@attach tip("Use the open folder")}
             >
               Select <kbd>Ctrl</kbd><kbd>↵</kbd>
             </button>
@@ -527,7 +553,7 @@
                             })}
                           class="palette-item"
                         >
-                          <Icon name="folder" size={14} />
+                          <Icon name={p.icon} size={14} />
                           <span class="label">{p.label}</span>
                           <span class="detail">{p.path}</span>
                         </Command.Item>
@@ -546,7 +572,7 @@
                   onSelect={() => run(() => void newChat(p.cid, p.path))}
                   class="palette-item"
                 >
-                  <Icon name="folder" size={14} />
+                  <Icon name={p.icon} size={14} />
                   <span class="label">{p.label}</span>
                   <span class="detail">{p.path}</span>
                 </Command.Item>
@@ -572,7 +598,7 @@
                 >
                   <ServerAvatar name={r.label} seed={r.seed} size={16} />
                   <span class="label">{r.label}</span>
-                  <span class="status-dot {r.status}" title={STATUS_LABEL[r.status]}></span>
+                  <span class="status-dot {r.status}" {@attach tip(STATUS_LABEL[r.status])}></span>
                   <span class="detail">{r.address}</span>
                   <span class="chevron"><Icon name="chevron-right" size={13} /></span>
                 </Command.Item>
@@ -648,7 +674,7 @@
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
     z-index: var(--z-overlay-content);
     overflow: hidden;
@@ -811,6 +837,13 @@
     margin-left: auto;
     display: inline-flex;
   }
+  :global(.palette-item) .keys {
+    margin-left: auto;
+    display: inline-flex;
+  }
+  :global(.palette-item) .detail + .keys {
+    margin-left: 0;
+  }
   :global(.palette-item) .detail + .chevron {
     margin-left: 0;
   }
@@ -841,6 +874,6 @@
     padding: 0 0.29rem;
     margin-right: 0.14rem;
     border: 1px solid var(--panel-border);
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
   }
 </style>

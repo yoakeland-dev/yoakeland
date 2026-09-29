@@ -35,11 +35,15 @@
      the whole UI recolors, not just the accent swatch. */
   --accent: #7c9bff;
   --accent-dim: color-mix(in srgb, var(--accent) 15%, transparent);
-  --danger: #ff6b6b;
+  --danger-base: #ff6b6b;
+  --danger: var(--danger-base);
   --danger-dim: rgba(255, 107, 107, 0.15);
-  --success: #58d68d;
-  --warning: #f0b429;
-  --info: #5b9bff;
+  --success-base: #58d68d;
+  --success: var(--success-base);
+  --warning-base: #f0b429;
+  --warning: var(--warning-base);
+  --info-base: #5b9bff;
+  --info: var(--info-base);
 
   --bubble-user-bg: #232838;
   --bubble-border: rgba(255, 255, 255, 0.08);
@@ -47,17 +51,22 @@
   --statusbar-bg: #10141c;
   --statusbar-fg: #9498a8;
 
-  /* Two radii, full stop: --radius-sm for every non-pill surface (inputs,
-     buttons, cards, modals alike — a card isn't a "bigger" input, so it
-     doesn't get a bigger radius), --radius-pill for true binary toggles/tags
-     (999px, always a stadium regardless of height). The old -md/-lg/-xl
-     names stay as aliases so existing rules don't need touching, but they
-     all resolve to the same value now — don't give them a distinct size
-     again, that's exactly the drift this collapses. */
+  /* Radii follow the inset rule: a child's radius is its container's radius
+     minus the gap between their edges (padding + border), so the curves stay
+     concentric. Three steps, picked by nesting depth rather than by "size":
+       --radius-lg  containers that hold controls (menus, popovers, cards,
+                    modals): 12px, which leaves 7px for a control at a 5px
+                    inset (4px padding + 1px border)
+       --radius-sm  controls (inputs, buttons, menu items): 7px
+       --radius-xs  anything inside a control (chips, kbd, badges): 4px, 7px
+                    minus the ~3px inset such things sit at
+     --radius-pill (999px) is for true binary toggles/tags. -md and -xl are
+     legacy aliases; new rules should pick lg/sm/xs by depth. */
+  --radius-lg: 12px;
   --radius-sm: 7px;
+  --radius-xs: 4px;
   --radius-md: var(--radius-sm);
-  --radius-lg: var(--radius-sm);
-  --radius-xl: var(--radius-sm);
+  --radius-xl: var(--radius-lg);
   --radius-pill: 999px;
 
   /* Spacing scale, 8px grid (halved once for tight in-row gaps). rem-based
@@ -177,6 +186,8 @@
      always above every portaled surface, since losing them behind a dialog
      would trap the window (no way to move or close it). */
   --z-window-chrome: 120;
+  /* Informational only (pointer-events: none), so it may sit over everything. */
+  --z-tooltip: 130;
 
   --ui-font-family: "Questrial", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --logo-font-family: "Departure Mono", ui-monospace, monospace;
@@ -237,16 +248,20 @@
    dialogIn/Out: the centered modal card itself (assumes the
    `translate(-50%, -50%)` centering transform every dialog in this app
    already rests at). scrimIn/Out: a dialog's backdrop. */
+/* Panels that open downward slide in from above (bits-ui sets data-side). */
+[data-side="bottom"] {
+  --float-shift: -0.29rem;
+}
 @keyframes floatIn {
   from {
     opacity: 0;
-    transform: translateY(0.29rem) scale(0.98);
+    transform: translateY(var(--float-shift, 0.29rem)) scale(0.98);
   }
 }
 @keyframes floatOut {
   to {
     opacity: 0;
-    transform: translateY(0.29rem) scale(0.98);
+    transform: translateY(var(--float-shift, 0.29rem)) scale(0.98);
   }
 }
 @keyframes dialogIn {
@@ -309,7 +324,7 @@
   backdrop-filter: var(--float-blur);
   border: 1px solid var(--float-border);
   border-block-color: var(--float-border-top) var(--float-border-bottom);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
 }
 
 /* Buttons inside a chrome surface are flat until hovered: the surface's own
@@ -330,7 +345,7 @@
   height: var(--header-line);
   background: transparent;
   border: none;
-  border-radius: calc(var(--radius-sm) - 2px);
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   cursor: pointer;
   transition:
@@ -584,7 +599,7 @@ pre {
   backdrop-filter: var(--float-blur);
   border: 1px solid var(--float-border);
   border-block-color: var(--float-border-top) var(--float-border-bottom);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
   z-index: var(--z-popover);
   animation: floatIn var(--float-enter-duration) ease-out;
@@ -602,14 +617,14 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 0.29rem;
-  padding: 0.5rem;
+  padding: var(--space-half);
   overflow-y: auto;
 }
 .sb-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: 0.43rem;
-  padding: 0.5rem;
+  padding: var(--space-half);
   overflow-y: auto;
 }
 .sb-foot {
@@ -674,7 +689,6 @@ button.sb-card:hover {
 .sb-card.selected,
 button.sb-card.selected:hover {
   background: var(--sidebar-active);
-  box-shadow: inset 0 0 0 1px var(--panel-border);
 }
 .sb-card-head {
   display: flex;
@@ -876,7 +890,7 @@ button.sb-row-main {
   padding: 0.29rem;
   background: linear-gradient(var(--sidebar-hover), var(--sidebar-hover)), var(--panel-bg);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   color: var(--text-dim);
   cursor: pointer;
   opacity: 0;
@@ -928,4 +942,152 @@ button.sb-row-main {
 [data-dialog-overlay],
 :is([role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"], [role="tooltip"]) {
   -webkit-app-region: no-drag;
+}
+
+/* Mini cards inside rich tooltips (TooltipHost.svelte): a title line, then a
+   grid of label/value rows in an inset box. */
+.tip-title {
+  font-size: var(--text-body-size);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tip-sub {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.tip-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.21rem 0.86rem;
+  margin: 0.43rem 0 0;
+}
+.tip-rows dt {
+  color: var(--text-dim);
+}
+.tip-rows dd {
+  display: flex;
+  align-items: center;
+  gap: 0.43rem;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tip-meter {
+  flex-shrink: 0;
+  width: 3.5rem;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+.tip-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.tip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.36rem;
+  margin: 0.36rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tip-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.43rem;
+  min-width: 0;
+}
+.tip-list .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Fixed-width icon column so every row's text lines up. */
+.tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+/* A tiny donut for "how full", sized like the other row icons. */
+.tip-ring {
+  width: 0.79rem;
+  height: 0.79rem;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--pct) * 1%), color-mix(in srgb, var(--text) 15%, transparent) 0);
+  mask: radial-gradient(circle, transparent 42%, #000 44%);
+}
+.tip-dim {
+  color: var(--text-dim);
+}
+.tip-foot {
+  margin-top: 0.36rem;
+}
+
+/* The quiet room (quietRoom.ts): at max effort the page dims and cools. Typed so the
+   change can fade. The composer and the ask card on it keep the
+   theme's own colors and glow with lamplight instead. */
+@property --bg { syntax: "<color>"; inherits: true; initial-value: #0b0c11; }
+@property --panel-bg { syntax: "<color>"; inherits: true; initial-value: #16181f; }
+@property --statusbar-bg { syntax: "<color>"; inherits: true; initial-value: #10141c; }
+@property --bubble-user-bg { syntax: "<color>"; inherits: true; initial-value: #232838; }
+@property --code-bg { syntax: "<color>"; inherits: true; initial-value: #0b0c11; }
+@property --accent { syntax: "<color>"; inherits: true; initial-value: #7c9bff; }
+@property --success { syntax: "<color>"; inherits: true; initial-value: #58d68d; }
+@property --warning { syntax: "<color>"; inherits: true; initial-value: #f0b429; }
+@property --danger { syntax: "<color>"; inherits: true; initial-value: #ff6b6b; }
+@property --info { syntax: "<color>"; inherits: true; initial-value: #5b9bff; }
+
+:root {
+  --quiet-light: 255 196 140;
+}
+:root[data-effort="max"] {
+  --success: oklch(from var(--success-base) l calc(c * 0.6) h);
+  --warning: oklch(from var(--warning-base) l calc(c * 0.6) h);
+  --danger: oklch(from var(--danger-base) l calc(c * 0.6) h);
+  --info: oklch(from var(--info-base) l calc(c * 0.6) h);
+}
+:is(form.box, .ask) {
+  --bg: var(--orig-bg);
+  --panel-bg: var(--orig-panel-bg);
+  --bubble-user-bg: var(--orig-bubble-user-bg);
+  --code-bg: var(--orig-code-bg);
+  --accent: var(--orig-accent);
+  --success: var(--success-base);
+  --warning: var(--warning-base);
+  --danger: var(--danger-base);
+  --info: var(--info-base);
+  --float-bg: var(--panel-bg);
+}
+:root[data-surface="frosted"] :is(form.box, .ask) {
+  --float-bg: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+}
+/* Specificity sits between the composer's base and its focus/editing/drag states, so those still win. */
+:where(:root[data-effort="max"]) form.box.box {
+  border-color: rgb(var(--quiet-light) / 0.18);
+  box-shadow: 0 0 60px -10px rgb(var(--quiet-light) / 0.14);
+}
+form.box::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 110%, rgb(var(--quiet-light) / 0.12), transparent 70%);
+  opacity: 0;
+  transition: opacity var(--room-fade, 0s) ease-in-out;
+}
+:root[data-effort="max"] form.box::after {
+  opacity: 1;
 }

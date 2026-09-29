@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Escape clears a non-empty field instead of bubbling (e.g. closing the dialog it's in).
   import Icon from "./Icon.svelte";
 
@@ -17,7 +18,7 @@
   <Icon name="search" size={13} />
   <input type="text" {placeholder} bind:value {onkeydown} />
   {#if value}
-    <button class="search-clear" onclick={() => (value = "")} title="Clear search" aria-label="Clear search">
+    <button class="search-clear" onclick={() => (value = "")} {@attach tip("Clear search")} aria-label="Clear search">
       <Icon name="xmark" size={12} />
     </button>
   {/if}
@@ -62,7 +63,7 @@
     background: none;
     border: none;
     color: var(--sidebar-fg-dim);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .search-clear:hover {

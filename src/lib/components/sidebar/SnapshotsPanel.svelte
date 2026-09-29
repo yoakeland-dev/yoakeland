@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../../tooltip.svelte";
   // Snapshots (§3.1 list_snapshots/restore_snapshot): one per agent turn that edited files.
   // Each file's diff is "what restoring would revert": that turn's copy against the file now.
   import { onDestroy } from "svelte";
@@ -63,7 +64,7 @@
           <button type="button" class="snap-main" onclick={() => (open = open === snap.snapshotId ? null : snap.snapshotId)}>
             <Icon name={open === snap.snapshotId ? "chevron-down" : "chevron-right"} size={12} />
             <span class="info">
-              <span class="desc" title={snap.description}>{snap.description || "Turn"}</span>
+              <span class="desc" {@attach tip(snap.description)}>{snap.description || "Turn"}</span>
               <span class="meta">{time(snap.createdAt)}{files.length ? ` · ${files.length} ${files.length === 1 ? "file" : "files"}` : ""}</span>
             </span>
           </button>
@@ -71,7 +72,7 @@
             type="button"
             class="restore"
             disabled={restoringId !== null}
-            title="Restore the project to right before this snapshot"
+            {@attach tip("Restore the project to right before this snapshot")}
             onclick={() => restore(snap.snapshotId, time(snap.createdAt))}
           >
             <Icon name="corner-up-left" size={13} />

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // One row per device (matched by deviceId, §3.2 peer_list) even if it's on several servers.
   import { Popover } from "bits-ui";
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
@@ -77,7 +78,7 @@
 
 {#if devices.length}
   <Popover.Root bind:open>
-    <Popover.Trigger class="sb-trigger" title={devices.map((d) => d.p.name).join("\n")} aria-label="Your other devices">
+    <Popover.Trigger class="sb-trigger" {@attach tip(devices.map((d) => d.p.name).join("\n"))} aria-label="Your other devices">
       <!-- Photos stack; type icons would just clip each other, so no photos means one icon. -->
       {#if pictured.length}
         <span class="stack">
@@ -97,7 +98,7 @@
                 type="button"
                 class="sb-row-main"
                 disabled={!d.at}
-                title={d.at ? "Open the same chat here" : `${d.p.deviceType}${d.p.ip ? ` · ${d.p.ip}` : ""}`}
+                {@attach tip(d.at ? "Open the same chat here" : `${d.p.deviceType}${d.p.ip ? ` · ${d.p.ip}` : ""}`)}
                 onclick={() => follow(d)}
               >
                 {@render avatar(d.p, 24)}
@@ -119,7 +120,7 @@
                   </span>
                 {/if}
               </button>
-              <button type="button" class="sb-row-action danger" title="Disconnect" aria-label="Disconnect" onclick={() => kick(d)}>
+              <button type="button" class="sb-row-action danger" {@attach tip("Disconnect")} aria-label="Disconnect" onclick={() => kick(d)}>
                 <Icon name="unlink" size={12} />
               </button>
             </li>
