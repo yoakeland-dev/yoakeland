@@ -265,6 +265,7 @@
     </span>
     <span class="trigger-label"
       ><SlideText
+        still
         text={currentEntry
           ? titleFor(currentEntry)
           : currentProvider

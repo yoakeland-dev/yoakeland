@@ -80,7 +80,6 @@
 
   const index = $derived(restIndex);
   const shown = $derived(levels?.[index]);
-  const isMax = $derived(!!levels && levels.length > 1 && index === levels.length - 1);
   const stops = $derived((levels ?? []).map((l) => ({ key: l, short: effortShort(l), name: effortLabel(l), warm: l === "ultracode" })));
   // Max and beyond: the slider's lamp fill.
   const lamp = $derived(restLevel === "max" || restLevel === "ultracode");
@@ -118,14 +117,14 @@
 {#if levels}
   <Popover.Root bind:open>
     <Popover.Trigger
-      class={`picker-trigger${open ? " open" : ""}`}
+      class={`picker-trigger${open ? " open" : ""}${restLevel === "ultracode" ? " ultra" : ""}`}
       {@attach tip("How hard the model thinks: more effort is slower and costs more")}
     >
       <span class="trigger-icon">
         <span class="crossfade a"><Icon name={fastSupported && fast ? "bolt" : "brain"} size={13} /></span>
         <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
       </span>
-      <span class="trigger-label" class:ultra={restLevel === "ultracode"}><SlideText text={restLevel ? effortLabel(restLevel) : ""} dir={restDir} /></span>
+      <span class="trigger-label"><SlideText text={restLevel ? effortLabel(restLevel) : ""} dir={restDir} /></span>
     </Popover.Trigger>
 
     <Popover.Portal>
@@ -207,7 +206,9 @@
     cursor: default;
   }
   /* Ultracode is a workflow, not a deeper level of thinking: it gets the lamp colour. */
-  .trigger-label.ultra {
+  :global(.picker-trigger.ultra),
+  :global(.picker-trigger.ultra:hover),
+  :global(.picker-trigger.ultra.open) {
     color: rgb(var(--quiet-light, 255 196 140));
   }
   .line {
