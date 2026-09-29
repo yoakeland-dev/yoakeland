@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { fade as fadeTransition } from "svelte/transition";
   import { isPhotoAvatar } from "../avatar";
   import { app } from "../state.svelte";
@@ -87,7 +88,7 @@
     {#if message.attachments?.length}
       <ul class="attachments">
         {#each message.attachments as path (path)}
-          <li title={path}><Icon name="file" size={12} /> {basename(path)}</li>
+          <li {@attach tip(path)}><Icon name="file" size={12} /> {basename(path)}</li>
         {/each}
       </ul>
     {/if}
@@ -98,7 +99,7 @@
           class="action"
           disabled={withdrawing}
           onclick={() => app.activeConnectionId && message.turnId && withdrawPrompt(app.activeConnectionId, sessionId, message.turnId)}
-          title="Take it back into the composer"
+          {@attach tip("Take it back into the composer")}
         >
           <Icon name="arrow-back-up" size={12} />
           {withdrawing ? "Undoing…" : "Undo"}
@@ -108,7 +109,7 @@
         <button
           class="action"
           onclick={edit}
-          title="Edit — regenerates from here; doesn't undo any file changes the discarded reply made"
+          {@attach tip("Edit — regenerates from here; doesn't undo any file changes the discarded reply made")}
         >
           <Icon name="pencil" size={12} />
           Edit

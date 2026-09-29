@@ -131,7 +131,7 @@
       transform calc(0.15s * var(--anim-speed, 1)) ease;
   }
   .status-icon.spin :global(svg) {
-    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
+    animation: spin calc(1s * var(--icon-slow, 1)) linear infinite;
   }
   @keyframes spin {
     to {

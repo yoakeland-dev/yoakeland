@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { untrack } from "svelte";
   import { app, CHAT_SIDEBAR_MIN_WIDTH, chatSidebarMinCss } from "../state.svelte";
   import ChatHeader from "./ChatHeader.svelte";
@@ -9,6 +10,7 @@
   import ChatSidebar from "./ChatSidebar.svelte";
   import Icon from "./Icon.svelte";
   import FindBar from "./FindBar.svelte";
+  import { matches } from "../keybinds.svelte";
   import { wallpaperGL } from "../wallpaperGL";
 
   // `panelEl` lets +page.svelte measure this panel: the corner handle where
@@ -101,7 +103,7 @@
     scrollToChatMatch();
   }
   function onChatKeydown(e: KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+    if (matches(e, "chat.find")) {
       e.preventDefault();
       openChatFind();
     }
@@ -144,7 +146,7 @@
         <button
           class="chrome-btn"
           class:active={server?.terminalOpenBySession[sessionId]}
-          title={server?.terminalOpenBySession[sessionId] ? "Hide terminal" : "Show terminal"}
+          {@attach tip(server?.terminalOpenBySession[sessionId] ? "Hide terminal" : "Show terminal", "terminal.toggle")}
           onclick={() => server?.toggleTerminal(sessionId)}
         >
           <Icon name="terminal-2" size={14} />
@@ -152,7 +154,7 @@
         <button
           class="chrome-btn"
           class:active={server?.chatSidebarOpenBySession[sessionId]}
-          title={server?.chatSidebarOpenBySession[sessionId] ? "Hide sidebar" : "Show sidebar"}
+          {@attach tip(server?.chatSidebarOpenBySession[sessionId] ? "Hide side panel" : "Show side panel", "panel.toggle")}
           onclick={() => server?.toggleChatSidebar(sessionId)}
         >
           <Icon
@@ -335,7 +337,7 @@
     border-radius: 50%;
     border: 2px solid var(--sidebar-fg-dim);
     border-top-color: var(--accent);
-    animation: spin calc(0.7s * var(--anim-speed, 1)) linear infinite;
+    animation: spin calc(0.7s * var(--icon-slow, 1)) linear infinite;
   }
   @keyframes spin {
     to {

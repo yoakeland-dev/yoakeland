@@ -1,16 +1,21 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Shared row shape for every sidebar list (Needs you, Running, Pinned,
   // project lists, search results, split pairs); `variant` only changes the
   // meta line and tint.
   import { tick, type Snippet } from "svelte";
   import { app, type ConnectionId } from "../state.svelte";
   import { setSessionArchived, setSessionTitle, deleteSession, openInSidePanel, openChatSession } from "../ipc";
-  import { relTime, sessionTitle } from "../format";
-  import { activityFor } from "../toolMeta";
+  import { relTime, sessionTitle, shortNum } from "../format";
+  import { titleFor, vendorMetaFor } from "../modelVendor";
+  import LobeIcon from "./LobeIcon.svelte";
+  import { callActivity } from "../activity.svelte";
+  import { IN_FLIGHT } from "../subagents";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
+  import { matches } from "../keybinds.svelte";
 
   let {
     connectionId,
@@ -59,29 +64,39 @@
     const ask = server?.pendingAsks.find((a) => a.sessionId === s.sessionId);
     if (ask) return ask.kind === "question" ? ask.question : ask.description || "Needs your approval";
     const last = messages.findLast((m) => m.role === "assistant");
-    const lastTool = last?.toolCalls[last.toolCalls.length - 1];
-    return lastTool && lastTool.status !== "done" ? activityFor(lastTool) : lastTool ? "Writing…" : "Thinking…";
+    // Any call still going, not just the last: parallel subagents outlast the calls after them.
+    const going = last?.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));
+    // Held under Running after the reply landed: show how it ended, to answer from the sidebar.
+    if (!server?.activeTurnBySession[s.sessionId]) return last?.text.replace(/[#*`>_\[\]]/g, "").trim().split("\n")[0] || "Done";
+    return going ? callActivity(going) : last?.toolCalls.length ? "Writing…" : "Thinking…";
   });
+  const live = $derived(variant === "running" || variant === "attention");
   // Unknown if the turn started on another device before this client saw the chat.
   const startedAt = $derived(
     variant === "running" || variant === "attention" ? messages.findLast((m) => m.role === "user")?.createdAt : undefined,
   );
 
-  const metaLine = $derived(
-    snippet ?? (variant === "running" || variant === "attention" ? activity : undefined),
-  );
+  const metaLine = $derived(snippet ?? (live ? activity : undefined));
   const trailing = $derived(
     startedAt && server?.activeTurnBySession[s.sessionId] ? relTime(startedAt, app.now) : relTime(s.updatedAt, app.now),
   );
 
-  const preview = $derived.by(() => {
-    const last = messages.findLast((m) => m.text.trim());
-    const line = last?.text.trim().split("\n")[0].slice(0, 140);
-    const model = server?.modelBySession[s.sessionId] ?? messages.findLast((m) => m.model)?.model;
-    return [sessionTitle(s), line, model && `Model: ${model}`, syncing && "Syncing with the server…"]
-      .filter(Boolean)
-      .join("\n");
+  // Hover card details; $derived is lazy, so these only compute while the card is shown.
+  const projectPath = $derived(
+    server?.projectBySession[s.sessionId] ??
+      Object.entries(server?.sessionsByProject ?? {}).find(([, list]) => list.some((x) => x.sessionId === s.sessionId))?.[0],
+  );
+  const model = $derived.by(() => {
+    const m = messages.findLast((x) => x.role === "assistant" && x.model);
+    const providerName = m?.provider ?? server?.providerBySession[s.sessionId];
+    const modelId = m?.model ?? server?.modelBySession[s.sessionId];
+    if (!modelId) return undefined;
+    const provider = server?.providers.find((p) => p.name === providerName);
+    if (!provider) return { title: modelId, icon: undefined };
+    const entry = { provider, model: server?.modelsByProvider[provider.name]?.find((x) => x.id === modelId) ?? { id: modelId } };
+    return { title: titleFor(entry), icon: vendorMetaFor(entry).icon };
   });
+  const context = $derived(messages.findLast((m) => m.role === "assistant" && m.finish?.context)?.finish?.context);
 
   function parts(text: string): { t: string; hit: boolean }[] {
     const q = query?.trim().toLowerCase();
@@ -153,15 +168,37 @@
       const rows = [...document.querySelectorAll<HTMLElement>("[data-chat-row]")];
       const i = rows.indexOf(e.currentTarget as HTMLElement);
       rows[i + (e.key === "ArrowDown" ? 1 : -1)]?.focus();
-    } else if (e.key === "F2") {
+    } else if (matches(e, "chat.rename")) {
       e.preventDefault();
       void startRename();
-    } else if (e.key === "Delete" && !archived && connected) {
+    } else if (matches(e, "chat.archive") && !archived && connected) {
       e.preventDefault();
       archive();
     }
   }
 </script>
+
+{#snippet sessionCard()}
+  <div class="tip-title">{sessionTitle(s)}</div>
+  <ul class="tip-list">
+    {#if projectPath}<li><span class="tip-icon"><Icon name="folder" size={13} /></span><span class="grow">{server?.projectLabel(projectPath)}</span></li>{/if}
+    {#if server}<li><span class="tip-icon"><ServerAvatar name={server.label} seed={server.serverId} size={13} /></span><span class="grow">{server.label}</span></li>{/if}
+    {#if model}
+      <li>
+        <span class="tip-icon">{#if model.icon}<LobeIcon name={model.icon} variant="mono" fallback="openrouter" size={13} />{:else}<Icon name="brain" size={13} />{/if}</span>
+        <span class="grow">{model.title}</span>
+      </li>
+    {/if}
+    {#if context?.maxTokens}
+      {@const pct = Math.min(100, Math.round((context.estimatedTokens / context.maxTokens) * 100))}
+      <li>
+        <span class="tip-icon"><span class="tip-ring" style="--pct: {pct}"></span></span>
+        <span class="grow">{pct}% context <span class="tip-dim">· {shortNum(context.estimatedTokens)} / {shortNum(context.maxTokens)}</span></span>
+      </li>
+    {/if}
+  </ul>
+  {#if syncing}<div class="tip-dim tip-foot">Syncing with the server…</div>{/if}
+{/snippet}
 
 <div
   class="row variant-{variant}"
@@ -193,7 +230,7 @@
         class:syncing
         aria-disabled={syncing}
         aria-label={`${sessionTitle(s)}, ${syncing ? "syncing" : status}${unread ? ", unread" : ""}`}
-        title={preview}
+        {@attach tip(sessionCard, { side: "right", outside: ".sidebar" })}
         ondblclick={startRename}
         onclick={() => !syncing && openChatSession(connectionId, s.sessionId)}
         onkeydown={onKeydown}
@@ -210,10 +247,16 @@
             <span class="label">
               {#each parts(sessionTitle(s)) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
             </span>
-            {#if hasDraft}<span class="badge" title="Unsent draft"><Icon name="pencil" size={11} /></span>{/if}
-            {#if pinned}<span class="badge" title="Pinned"><Icon name="pinned" size={11} /></span>{/if}
-            {#if showServer && server}<ServerAvatar name={server.label} seed={server.serverId} size={13} />{/if}
+            {#if hasDraft}<span class="badge" {@attach tip("Unsent draft")}><Icon name="pencil" size={11} /></span>{/if}
+            {#if pinned}<span class="badge" {@attach tip("Pinned")}><Icon name="pinned" size={11} /></span>{/if}
+            {#if showServer && server && !live}<ServerAvatar name={server.label} seed={server.serverId} size={13} />{/if}
           </span>
+          {#if live && projectPath}
+            <span class="project-line">
+              {#if showServer && server}<ServerAvatar name={server.label} seed={server.serverId} size={11} />{:else}<Icon name="folder" size={11} />{/if}
+              {server?.projectName(projectPath)}
+            </span>
+          {/if}
           {#if metaLine}
             <span class="meta-line">
               {#each parts(metaLine) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
@@ -226,24 +269,24 @@
 
   <span class="trail">
     <span class="rest">
-      {#if unread}<span class="unread" title="New since you last looked"></span>{/if}
+      {#if unread}<span class="unread" {@attach tip("New since you last looked")}></span>{/if}
       <span class="time">{trailing}</span>
     </span>
     <span class="hover-actions">
       {#if actions}{@render actions()}{/if}
       {#if !compact}
         {#if !archived && !isCurrent && server?.canSplitCurrent}
-          <button class="act" title="Open in side panel" aria-label="Open in side panel" onclick={() => openInSidePanel(connectionId, s.sessionId)}>
+          <button class="act" {@attach tip("Open in side panel")} aria-label="Open in side panel" onclick={() => openInSidePanel(connectionId, s.sessionId)}>
             <Icon name="layout-columns" size={13} />
           </button>
         {/if}
         {#if archived}
-          <button class="act danger" title="Delete" aria-label="Delete" onclick={remove}><Icon name="trash" size={13} /></button>
-          <button class="act" title="Unarchive" aria-label="Unarchive" onclick={() => setSessionArchived(connectionId, s.sessionId, false)}>
+          <button class="act danger" {@attach tip("Delete")} aria-label="Delete" onclick={remove}><Icon name="trash" size={13} /></button>
+          <button class="act" {@attach tip("Unarchive")} aria-label="Unarchive" onclick={() => setSessionArchived(connectionId, s.sessionId, false)}>
             <Icon name="restore" size={13} />
           </button>
         {:else if connected}
-          <button class="act" title="Archive (Delete)" aria-label="Archive" onclick={archive}><Icon name="archive" size={13} /></button>
+          <button class="act" {@attach tip("Archive", "chat.archive")} aria-label="Archive" onclick={archive}><Icon name="archive" size={13} /></button>
         {/if}
       {/if}
     </span>
@@ -266,23 +309,6 @@
   }
   .row.active {
     background: var(--sidebar-active);
-  }
-  .row.variant-running {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-  .row.variant-running:hover {
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
-  }
-  .row.variant-attention {
-    background: color-mix(in srgb, var(--warning) 10%, transparent);
-    border-color: color-mix(in srgb, var(--warning) 30%, transparent);
-  }
-  .row.variant-attention:hover {
-    background: color-mix(in srgb, var(--warning) 16%, transparent);
-  }
-  .row.variant-running.active,
-  .row.variant-attention.active {
-    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   }
   .row.offline .main {
     opacity: 0.55;
@@ -308,10 +334,38 @@
   .row.has-meta .status-icon {
     margin-top: 0.1rem;
   }
+  /* The card's own padding already insets these rows; keeps the time column in line. */
+  .row.variant-running,
+  .row.variant-attention {
+    padding-right: 0;
+  }
+  /* Multi-line rows: time sits on the title line, not the row's middle. */
+  .row.has-meta .trail {
+    align-self: flex-start;
+    margin-top: 0.2rem;
+  }
   .row.active .main,
   .row.variant-running .main,
   .row.variant-attention .main {
     color: var(--text);
+  }
+  /* Styled after the hover card: bold title, dim detail lines. */
+  .row.variant-running .label,
+  .row.variant-attention .label {
+    font-weight: 600;
+  }
+  .project-line {
+    display: flex;
+    align-items: center;
+    gap: 0.29rem;
+    min-width: 0;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .project-line > :global(*) {
+    flex-shrink: 0;
   }
   .main.syncing {
     cursor: progress;
@@ -347,6 +401,9 @@
     white-space: nowrap;
   }
   .variant-running .meta-line {
+    color: var(--text-dim);
+  }
+  .status-working ~ .text .meta-line {
     color: color-mix(in srgb, var(--accent) 80%, var(--text-dim));
   }
   .variant-attention .meta-line {
@@ -380,7 +437,7 @@
     color: var(--info);
   }
   .status-icon.status-working :global(svg) {
-    animation: spin-global calc(1s * var(--anim-speed, 1)) linear infinite;
+    animation: spin-global calc(1s * var(--icon-slow, 1)) linear infinite;
   }
   .rename-form {
     flex: 1;
@@ -429,7 +486,12 @@
   .row:focus-within .rest {
     opacity: 0;
   }
+  /* Centered in the same 1.5rem column as the project rows' counts. */
   .time {
+    display: flex;
+    justify-content: center;
+    width: 1.5rem;
+    white-space: nowrap;
     font-size: 0.68rem;
     color: var(--sidebar-fg-dim);
     font-variant-numeric: tabular-nums;
@@ -449,7 +511,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     color: var(--sidebar-fg-dim);
     cursor: pointer;
   }

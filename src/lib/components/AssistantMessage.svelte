@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import type { AssistantStep, ChatMessage, ToolCallEntry } from "../types";
   import { app } from "../state.svelte";
   import { retryMessage } from "../ipc";
@@ -8,6 +9,8 @@
   import { fade } from "svelte/transition";
   import ToolCallGroup from "./ToolCallGroup.svelte";
   import WorkGroup from "./WorkGroup.svelte";
+  import SubagentCard from "./SubagentCard.svelte";
+  import { isSubagentCall } from "../subagents";
   import ThinkingBlock from "./ThinkingBlock.svelte";
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
@@ -27,7 +30,8 @@
     | { key: string; kind: "text"; text: string }
     | { key: string; kind: "thinking"; text: string }
     | { key: string; kind: "toolgroup"; calls: ToolCallEntry[] }
-    | { key: string; kind: "workgroup"; steps: AssistantStep[] };
+    | { key: string; kind: "workgroup"; steps: AssistantStep[] }
+    | { key: string; kind: "subagent"; call: ToolCallEntry };
 
   // Rebuilds each run (span between answer text) into steps; a run with no
   // thought renders as a plain ToolCallGroup, one with a thought as a
@@ -108,7 +112,11 @@
         });
         thinkCursor = thinkOffset;
       }
-      pendingCluster.push(call);
+      // A subagent gets its own card in the flow, never folded into a "ran N tools" group.
+      if (isSubagentCall(call)) {
+        flushRun();
+        segs.push({ key: `sub-${call.toolCallId}`, kind: "subagent", call });
+      } else pendingCluster.push(call);
     }
     // Trailing reasoning joins whatever run is still open, matching the
     // think-then-write order a live stream actually happened in.
@@ -178,6 +186,8 @@
       <ToolCallGroup calls={seg.calls} />
     {:else if seg.kind === "workgroup"}
       <WorkGroup steps={seg.steps} {live} />
+    {:else if seg.kind === "subagent"}
+      <SubagentCard call={seg.call} />
     {:else if seg.kind === "thinking"}
       <ThinkingBlock text={seg.text} />
     {:else if seg.text}
@@ -185,6 +195,20 @@
         <Markdown text={seg.text} {live} mentions />
       </div>
     {/if}
+  {/each}
+
+  {#each message.compactions ?? [] as c, i (i)}
+    <div
+      class="compacted"
+      {@attach tip(
+        c.kind === "summary"
+          ? "Everything before this point was summarized for the model to stay within its context budget"
+          : "Older tool results were cleared from what the model sees; it can run those tools again",
+      )}
+    >
+      <Icon name="arrows-minimize" size={12} />
+      Context compacted · {shortNum(c.tokensBefore)} → {shortNum(c.tokensAfter)} tokens
+    </div>
   {/each}
 
   {#if message.streaming || modelMeta || message.finish || usage || durationS !== null}
@@ -197,7 +221,7 @@
     >
       {#if modelMeta || message.streaming}
         <!-- While streaming the model's icon gives way to the spinner; hovering brings it back. -->
-        <span class="model-chip" class:live={message.streaming} title={modelTitle || undefined}>
+        <span class="model-chip" class:live={message.streaming} {@attach tip(modelTitle || undefined)}>
           <span class="icon-slot">
             {#if modelMeta}
               <span class="model-icon"><LobeIcon name={modelMeta.icon} fallback="openrouter" size={13} /></span>
@@ -230,13 +254,13 @@
           {#if modelMeta}<span class="dot">·</span>{/if}
           <span
             class="stat"
-            title="Tokens in — the full conversation sent with this reply"
+            {@attach tip("Tokens in — the full conversation sent with this reply")}
           >
             <Icon name="arrow-narrow-down" size={12} />{shortNum(
               usage.inputTokens ?? 0,
             )}
           </span>
-          <span class="stat" title="Tokens out — this reply only">
+          <span class="stat" {@attach tip("Tokens out — this reply only")}>
             <Icon name="arrow-narrow-up" size={12} />{shortNum(
               usage.outputTokens ?? 0,
             )}
@@ -266,7 +290,7 @@
 
       {#if !message.streaming}
         <span class="dot">·</span>
-        <span class="stat" title={new Date(message.createdAt).toLocaleString()}
+        <span class="stat" {@attach tip(new Date(message.createdAt).toLocaleString())}
           >{relTime(message.createdAt)}</span
         >
         <span class="dot">·</span>
@@ -274,9 +298,9 @@
         <button
           class="action"
           onclick={retry}
-          title={message.toolCalls.length
+          {@attach tip(message.toolCalls.length
             ? "Retry — regenerates from here; doesn't undo the file changes this reply's tool calls made"
-            : "Retry — regenerates a fresh reply from here"}
+            : "Retry — regenerates a fresh reply from here")}
         >
           <Icon name="refresh" size={12} />
           Retry
@@ -296,6 +320,22 @@
   }
   .text :global(.markdown) {
     line-height: 1.55;
+  }
+
+  /* A quiet rule across the turn, not a bubble: it's about the context, not the reply. */
+  .compacted {
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    margin: 0.43rem 0;
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+  }
+  .compacted::before,
+  .compacted::after {
+    content: "";
+    flex: 1;
+    border-top: 1px dashed var(--panel-border);
   }
 
   .finish {

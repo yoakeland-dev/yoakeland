@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { fade } from "svelte/transition";
   import type { ToolCallEntry } from "../types";
   import { metaFor, summaryFor } from "../toolMeta";
@@ -64,7 +65,7 @@
         {#if call.locations?.length}
           <div class="locations">
             {#each call.locations as loc (loc)}
-              <span class="chip selectable" title={loc}>{loc.split("/").pop()}</span>
+              <span class="chip selectable" {@attach tip(loc)}>{loc.split("/").pop()}</span>
             {/each}
           </div>
         {/if}
@@ -102,7 +103,7 @@
   .card {
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     background: rgba(255, 255, 255, 0.03);
     margin: 0.43rem 0;
     overflow: hidden;
@@ -152,7 +153,7 @@
     color: var(--text-dim);
   }
   .spin-icon :global(svg) {
-    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
+    animation: spin calc(1s * var(--icon-slow, 1)) linear infinite;
   }
   @keyframes spin {
     to {
