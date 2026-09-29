@@ -45,6 +45,7 @@
 </script>
 
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { Popover, Switch } from "bits-ui";
   import { app } from "../state.svelte";
   import { setMode, setWebToolsEnabled } from "../ipc";
@@ -90,7 +91,7 @@
   <Popover.Trigger
     class={`picker-trigger${open ? " open" : ""}${currentModeMeta.tint ? " tinted" : ""}`}
     style={`--mode-tint: ${currentModeMeta.tint ?? "var(--text)"}`}
-    title={currentModeMeta.hint}
+    {@attach tip(currentModeMeta.hint, "chat.mode")}
   >
     <span class="trigger-icon">
       <span class="crossfade a"><Icon name={currentModeMeta.icon} size={13} /></span>
@@ -100,7 +101,7 @@
   </Popover.Trigger>
 
   <Popover.Portal>
-    <Popover.Content class="mode-panel" side="top" align="start" sideOffset={8}>
+    <Popover.Content class="mode-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
       <div class="panel-heading">Mode</div>
       <div class="mode-list" role="radiogroup" aria-label="Mode">
         {#each MODES as mode (mode.id)}
@@ -239,7 +240,7 @@
     justify-content: center;
     width: 1.86rem;
     height: 1.86rem;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     background: rgba(255, 255, 255, 0.05);
     color: var(--text-dim);
     transition:

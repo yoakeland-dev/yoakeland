@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app, modelKey } from "../state.svelte";
   import { setProvider, listModels, setFavoriteModels } from "../ipc";
@@ -243,7 +244,7 @@
 <Popover.Root bind:open>
   <Popover.Trigger
     class={`picker-trigger${open ? " open" : ""}`}
-    title="Model / provider"
+    {@attach tip("Model / provider", "chat.model")}
   >
     <span class="trigger-icon">
       <span class="crossfade a">
@@ -273,9 +274,10 @@
   <Popover.Portal>
     <Popover.Content
       class="picker-panel"
-      side="top"
+      side="bottom"
       align="start"
       sideOffset={8}
+      collisionPadding={8}
     >
       {#if (server?.providers.length ?? 0) === 0}
         <div class="empty">
@@ -297,7 +299,7 @@
               type="button"
               class="tab"
               class:active={activeTab === "favorites"}
-              title="Favorites"
+              {@attach tip("Favorites")}
               onclick={() => (activeTab = "favorites")}
             >
               <Icon name="star" size={15} />
@@ -310,7 +312,7 @@
                   type="button"
                   class="tab"
                   class:active={activeTab === `cli:${p.name}`}
-                  title={`${meta.title} (${p.name})`}
+                  {@attach tip(`${meta.title} (${p.name})`)}
                   onclick={() => (activeTab = `cli:${p.name}`)}
                 >
                   <LobeIcon name={meta.icon} fallback="openrouter" size={16} />
@@ -324,7 +326,7 @@
                 type="button"
                 class="tab"
                 class:active={activeTab === `vendor:${v}`}
-                title={VENDOR_META[v].label}
+                {@attach tip(VENDOR_META[v].label)}
                 onclick={() => (activeTab = `vendor:${v}`)}
               >
                 <LobeIcon
@@ -340,7 +342,7 @@
                 type="button"
                 class="tab"
                 class:active={activeTab === "openrouter"}
-                title="OpenRouter"
+                {@attach tip("OpenRouter")}
                 onclick={() => (activeTab = "openrouter")}
               >
                 <LobeIcon name="openrouter" size={16} />
@@ -350,7 +352,7 @@
             <button
               type="button"
               class="tab settings"
-              title="Manage providers"
+              {@attach tip("Manage providers")}
               onclick={manageProviders}
             >
               <Icon name="settings" size={15} />
@@ -373,7 +375,7 @@
                   type="button"
                   class="search-clear"
                   onclick={() => (search = "")}
-                  title="Clear search"
+                  {@attach tip("Clear search")}
                   aria-label="Clear search"
                 >
                   <Icon name="xmark" size={11} />
@@ -463,9 +465,9 @@
                       type="button"
                       class="star-btn"
                       class:active={favorite}
-                      title={favorite
+                      {@attach tip(favorite
                         ? "Remove from favorites"
-                        : "Add to favorites"}
+                        : "Add to favorites")}
                       onclick={(e) => {
                         e.stopPropagation();
                         toggleFavorite(entry);
@@ -495,7 +497,8 @@
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: var(--radius-lg);
+    /* Outer = inner control radius + padding (0.57rem) + border. */
+    border-radius: calc(var(--radius-sm) + 0.57rem + 1px);
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
     padding: 0.57rem;
     z-index: var(--z-popover);
@@ -529,7 +532,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     color: var(--text-dim);
     cursor: pointer;
     transition:
@@ -599,7 +602,7 @@
     background: none;
     border: none;
     color: var(--sidebar-fg-dim);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   .search-clear:hover {
@@ -636,7 +639,7 @@
     align-items: center;
     gap: 0.57rem;
     padding: 0.5rem 0.57rem;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition: background calc(0.12s * var(--anim-speed, 1)) ease;
   }

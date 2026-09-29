@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Shared "pick one of these" control on top of bits-ui's Select; owns
   // layout/chrome/search, item content is up to the caller via `item`.
   import { Select } from "bits-ui";
@@ -64,7 +65,7 @@
 <Select.Root type="single" bind:value {items} {onOpenChange}>
   <Select.Trigger
     class={`dropdown-trigger ${triggerClass}`}
-    title={triggerTitle}
+    {@attach tip(triggerTitle)}
   >
     {#if triggerLead || triggerIcon}
       <!-- Icon and chevron crossfade in one slot instead of sitting side by side. -->
@@ -103,7 +104,7 @@
               type="button"
               class="dropdown-search-clear"
               onclick={() => (search = "")}
-              title="Clear search"
+              {@attach tip("Clear search")}
               aria-label="Clear search"
             >
               <Icon name="xmark" size={11} />
@@ -230,7 +231,7 @@
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-lg);
     padding: var(--space-half);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     z-index: var(--z-dropdown);
@@ -275,7 +276,7 @@
     background: none;
     border: none;
     color: var(--sidebar-fg-dim);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-xs);
     cursor: pointer;
   }
   :global(.dropdown-search-clear:hover) {

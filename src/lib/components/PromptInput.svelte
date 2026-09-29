@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   import { fly, scale, slide } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
   import { untrack } from "svelte";
@@ -24,6 +25,7 @@
   import DotMatrix from "./DotMatrix.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ModePicker from "./ModePicker.svelte";
+  import EffortPicker from "./EffortPicker.svelte";
   import Dropdown from "./Dropdown.svelte";
 
   // `scrolledUp`: the transcript is well above its tail (MessageList), so the composer goes
@@ -612,7 +614,7 @@
             <span class="activity-time">{activity.elapsed}</span>
           </span>
         {/if}
-        <button type="button" class="jump" class:solo={!turnId} onclick={() => onJump?.()} title="Jump to latest">
+        <button type="button" class="jump" class:solo={!turnId} onclick={() => onJump?.()} {@attach tip("Jump to latest")}>
           {#if !turnId}Jump to latest{/if}
           <Icon name="arrow-narrow-down" size={14} />
         </button>
@@ -637,7 +639,7 @@
             <Icon name="pencil" size={12} />
             <span class="editing-label">Editing</span>
             <span class="editing-quote">{editingText}</span>
-            <button type="button" class="editing-cancel" title="Cancel editing (Esc)" onclick={cancelEdit}>
+            <button type="button" class="editing-cancel" {@attach tip("Cancel editing", "Escape")} onclick={cancelEdit}>
               <kbd>Esc</kbd><Icon name="xmark" size={12} />
             </button>
           </div>
@@ -648,7 +650,7 @@
             {#each attachments as a (a.key)}
               <li
                 class:error={!!a.error}
-                title={a.error ?? a.path ?? `Uploading ${a.name}…`}
+                {@attach tip(a.error ?? a.path ?? `Uploading ${a.name}…`)}
                 in:scale={{ start: 0.9, duration: 140, easing: cubicOut }}
               >
                 {#if a.error}
@@ -664,7 +666,7 @@
                   <img class="ficon" src={fileIconUrl(a.name)} alt="" />
                 {/if}
                 <span class="name">{a.name}</span>
-                <button type="button" title="Remove" onclick={() => removeAttachment(a.key)}>
+                <button type="button" {@attach tip("Remove")} onclick={() => removeAttachment(a.key)}>
                   <Icon name="xmark" size={11} />
                 </button>
               </li>
@@ -711,31 +713,12 @@
           </span>
         </div>
 
-        {#if mentionMatches.length > 0}
-          <ul
-            class="mentions"
-            in:fly={{ y: 8, duration: 160, easing: cubicOut }}
-            out:fly={{ y: 6, duration: 120, easing: cubicIn }}
-          >
-            {#each mentionMatches as file, i (file)}
-              {@const cut = file.lastIndexOf("/") + 1}
-              <li>
-                <button type="button" class:active={i === mentionIndex} onclick={() => pickMention(file)}>
-                  <img class="ficon" src={fileIconUrl(file.slice(cut))} alt="" />
-                  <span class="m-name">{#each marked(file, cut, file.length) as run}{#if run.hit}<mark>{run.t}</mark>{:else}{run.t}{/if}{/each}</span>
-                  <span class="m-dir">{#each marked(file, 0, Math.max(0, cut - 1)) as run}{#if run.hit}<mark>{run.t}</mark>{:else}{run.t}{/if}{/each}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-
         <div class="toolbar-clip" inert={compact}>
           <div class="toolbar">
             <DropdownMenu.Root bind:open={addOpen}>
               <DropdownMenu.Trigger
                 class="add-chip"
-                title="Add context (double-click to attach files)"
+                {@attach tip("Add context (double-click to attach files)")}
                 ondblclick={() => {
                   addOpen = false;
                   void attachFile();
@@ -746,9 +729,10 @@
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
                   class="context-menu"
-                  side="top"
+                  side="bottom"
                   align="start"
                   sideOffset={6}
+                  collisionPadding={8}
                   onCloseAutoFocus={(e) => {
                     e.preventDefault();
                     textarea?.focus();
@@ -790,6 +774,7 @@
             />
             <div class="pickers">
               <ModelPicker {sessionId} />
+              <EffortPicker {sessionId} />
               <ModePicker {sessionId} />
             </div>
           </div>
@@ -801,7 +786,7 @@
           class="primary {role}"
           class:ready={role === "stop" || canSubmit}
           disabled={role !== "stop" && !canSubmit}
-          title={primaryTitle}
+          {@attach tip(primaryTitle)}
           aria-label={primaryTitle}
           onclick={role === "stop" ? stop : undefined}
         >
@@ -814,6 +799,27 @@
           <span class="glyph" class:on={role === "confirm"}><Icon name="check" size={16} /></span>
         </button>
       </form>
+
+      <!-- Sibling of the form, not a child: the form's own backdrop-filter is a backdrop root, so a
+           blur inside it would have nothing to sample. -->
+      {#if mentionMatches.length > 0}
+        <ul
+          class="mentions"
+          in:fly={{ y: 8, duration: 160, easing: cubicOut }}
+          out:fly={{ y: 6, duration: 120, easing: cubicIn }}
+        >
+          {#each mentionMatches as file, i (file)}
+            {@const cut = file.lastIndexOf("/") + 1}
+            <li>
+              <button type="button" class:active={i === mentionIndex} onclick={() => pickMention(file)}>
+                <img class="ficon" src={fileIconUrl(file.slice(cut))} alt="" />
+                <span class="m-name">{#each marked(file, cut, file.length) as run}{#if run.hit}<mark>{run.t}</mark>{:else}{run.t}{/if}{/each}</span>
+                <span class="m-dir">{#each marked(file, 0, Math.max(0, cut - 1)) as run}{#if run.hit}<mark>{run.t}</mark>{:else}{run.t}{/if}{/each}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
 
     <div
@@ -845,7 +851,7 @@
         <button
           type="button"
           class="fc-pill"
-          title="Servers"
+          {@attach tip("Servers")}
           onclick={() => app.openPalette("servers")}
         >
           <Icon
@@ -1053,10 +1059,10 @@
     border-radius: 22px;
     padding: 0.71rem var(--space-1) var(--space-1);
     transition:
-      border-color calc(0.15s * var(--anim-speed, 1)) ease,
+      border-color var(--room-fade, calc(0.15s * var(--anim-speed, 1))) ease,
       padding var(--morph) ease,
       transform calc(0.15s * var(--anim-speed, 1)) ease,
-      box-shadow calc(0.15s * var(--anim-speed, 1)) ease;
+      box-shadow var(--room-fade, calc(0.15s * var(--anim-speed, 1))) ease;
   }
   .box:focus-within {
     border-color: color-mix(in srgb, var(--text) 24%, transparent);
@@ -1331,7 +1337,7 @@
   .thumb {
     width: 1.29rem;
     height: 1.29rem;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     object-fit: cover;
     transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
   }
@@ -1369,7 +1375,7 @@
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: 16px;
+    border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     z-index: 5;
   }
@@ -1383,7 +1389,7 @@
     border: none;
     color: var(--text);
     padding: 0.36rem var(--space-1);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     font-size: var(--text-label-size);
     cursor: pointer;
     white-space: nowrap;

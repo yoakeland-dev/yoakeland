@@ -62,21 +62,20 @@ export function wallpaperGL(
   gl.uniform1f(uLevels, 5.0);
   gl.uniform1f(uStyle, STYLE_MAP[style] ?? 0.0);
 
-  // Theme tokens aren't always hex (--panel-bg is an hsl() string), so resolve
-  // through a probe element's computed `color` instead of hand-parsing CSS color syntax.
-  const colorProbe = document.createElement("div");
-  colorProbe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;";
-  document.body.appendChild(colorProbe);
+  // Theme tokens aren't always hex or rgb() (the quiet room's are oklab()), so resolve them
+  // through a 1px 2d canvas, which parses any CSS color and hands back plain rgb.
+  const probe = document.createElement("canvas");
+  probe.width = probe.height = 1;
+  const probeCtx = probe.getContext("2d", { willReadFrequently: true })!;
 
   function setThemeUniform(loc: WebGLUniformLocation | null, cssVar: string, fallback: number) {
     const value = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
-    colorProbe.style.color = value;
-    const m = getComputedStyle(colorProbe).color.match(/[\d.]+/g);
-    if (m && m.length >= 3) {
-      gl.uniform3f(loc, Number(m[0]) / 255, Number(m[1]) / 255, Number(m[2]) / 255);
-    } else {
-      gl.uniform3f(loc, ((fallback >> 16) & 255) / 255, ((fallback >> 8) & 255) / 255, (fallback & 255) / 255);
-    }
+    probeCtx.clearRect(0, 0, 1, 1);
+    probeCtx.fillStyle = `#${fallback.toString(16).padStart(6, "0")}`;
+    probeCtx.fillStyle = value;
+    probeCtx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = probeCtx.getImageData(0, 0, 1, 1).data;
+    gl.uniform3f(loc, r / 255, g / 255, b / 255);
   }
 
   function setThemeUniforms() {
@@ -136,9 +135,16 @@ export function wallpaperGL(
   // <html>, which doesn't otherwise touch the canvas — watch for it so
   // u_accent/u_panelBg don't go stale on a theme switch.
   // Resolving the colours forces style recalcs, so it happens here and at load, not per draw.
-  const themeObserver = new MutationObserver(() => {
+  // The quiet room fades its colours over a CSS transition (quietRoom.ts) that never touches
+  // the style attribute mid-way, so while it runs the colours are re-read every frame.
+  let fading = 0;
+  function followFade() {
     setThemeUniforms();
     draw();
+    fading = document.documentElement.style.transition ? requestAnimationFrame(followFade) : 0;
+  }
+  const themeObserver = new MutationObserver(() => {
+    if (!fading) followFade();
   });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
 
@@ -167,7 +173,7 @@ export function wallpaperGL(
     destroy() {
       resizeObserver.disconnect();
       themeObserver.disconnect();
-      colorProbe.remove();
+      cancelAnimationFrame(fading);
       gl.deleteTexture(texture);
       gl.deleteProgram(program);
       gl.deleteShader(vertShader);
