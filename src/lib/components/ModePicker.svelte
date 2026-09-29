@@ -57,6 +57,18 @@
   function togglePlan() {
     if (cid && server) chooseMode(server, cid, sessionId, inPlan ? rung : "plan");
   }
+  // Press or drag on the track to pick the nearest stop.
+  let track = $state<HTMLElement>();
+  let dragging = false;
+  function follow(e: PointerEvent) {
+    if (!dragging || !track || rungs.length < 2) return;
+    const r = track.getBoundingClientRect();
+    const edge = 3 + 0.475 * 16; // the track's inset plus half the ball
+    const f = (e.clientX - r.left - edge) / (r.width - 2 * edge);
+    const j = Math.min(rungs.length - 1, Math.max(0, Math.round(f * (rungs.length - 1))));
+    hovered = rungs[j].id;
+    if (rungs[j].id !== rung) pick(rungs[j].id);
+  }
   const index = $derived(Math.max(0, rungs.findIndex((m) => m.id === rung)));
   function onKey(e: KeyboardEvent) {
     const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
@@ -68,6 +80,8 @@
     if (cid && projectPath) setWebToolsEnabled(cid, projectPath, !webToolsEnabled);
   }
 </script>
+
+<svelte:window onpointerup={() => (dragging = false)} onpointercancel={() => (dragging = false)} />
 
 <Popover.Root bind:open>
   <Popover.Trigger
@@ -114,7 +128,17 @@
         onkeydown={onKey}
         onpointerleave={() => (hovered = null)}
       >
-        <div class="track" aria-hidden="true">
+        <!-- svelte-ignore a11y_no_static_element_interactions (the labelled stops below are the accessible control) -->
+        <div
+          class="track"
+          aria-hidden="true"
+          bind:this={track}
+          onpointerdown={(e) => {
+            dragging = true;
+            follow(e);
+          }}
+          onpointermove={follow}
+        >
           {#each rungs as m, j (m.id)}<span class="tick" style:--j={j}></span>{/each}
           <div class="fill"><span class="ball"></span></div>
         </div>
@@ -231,6 +255,8 @@
     border-radius: var(--radius-pill);
     background: var(--sidebar-active);
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    touch-action: none;
   }
   .tick {
     position: absolute;
