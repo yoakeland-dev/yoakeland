@@ -48,7 +48,7 @@
 
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
-  import { Popover } from "bits-ui";
+  import { Popover, Switch } from "bits-ui";
   import { app } from "../state.svelte";
   import { setModelOptions } from "../ipc";
   import Icon from "./Icon.svelte";
@@ -81,7 +81,17 @@
   const index = $derived(restIndex);
   const shown = $derived(levels?.[index]);
   const isMax = $derived(!!levels && levels.length > 1 && index === levels.length - 1);
-  const stops = $derived((levels ?? []).map((l) => ({ key: l, short: effortShort(l), name: effortLabel(l) })));
+  const stops = $derived((levels ?? []).map((l) => ({ key: l, short: effortShort(l), name: effortLabel(l), warm: l === "ultracode" })));
+  // Max and beyond: the slider's lamp fill.
+  const lamp = $derived(restLevel === "max" || restLevel === "ultracode");
+  const fastSupported = $derived(!!model?.capabilities?.fastMode);
+  const fast = $derived(!!server?.modelOptionsBySession[sessionId]?.fastMode);
+  function toggleFast() {
+    if (!cid || !server) return;
+    const opts = { ...(server.modelOptionsBySession[sessionId] ?? {}), fastMode: !fast };
+    server.modelOptionsBySession = { ...server.modelOptionsBySession, [sessionId]: opts };
+    setModelOptions(cid, sessionId, { fastMode: !fast });
+  }
 
   // Which way the trigger label rolls: up when the level rose, down when it fell. Worked out
   // before the DOM updates, since the transition reads it as the new text arrives.
@@ -112,10 +122,10 @@
       {@attach tip("How hard the model thinks: more effort is slower and costs more")}
     >
       <span class="trigger-icon">
-        <span class="crossfade a"><Icon name="brain" size={13} /></span>
+        <span class="crossfade a"><Icon name={fastSupported && fast ? "bolt" : "brain"} size={13} /></span>
         <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
       </span>
-      <span class="trigger-label"><SlideText text={restLevel ? effortLabel(restLevel) : ""} dir={restDir} /></span>
+      <span class="trigger-label" class:ultra={restLevel === "ultracode"}><SlideText text={restLevel ? effortLabel(restLevel) : ""} dir={restDir} /></span>
     </Popover.Trigger>
 
     <Popover.Portal>
@@ -133,7 +143,15 @@
             <Icon name="arrow-back-up" size={14} />
           </button>
         </div>
-        <StopSlider {stops} {index} {defaultIndex} hot={isMax} label="Effort" onchange={commit} />
+        <StopSlider {stops} {index} {defaultIndex} hot={lamp} label="Effort" onchange={commit} />
+        {#if fastSupported}
+          <label class="line">
+            <span>Fast <em>quicker output, costs more</em></span>
+            <Switch.Root class="switch-root" checked={fast} onCheckedChange={toggleFast}>
+              <Switch.Thumb class="switch-thumb" />
+            </Switch.Root>
+          </label>
+        {/if}
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>
@@ -187,5 +205,24 @@
   .recommended:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+  /* Ultracode is a workflow, not a deeper level of thinking: it gets the lamp colour. */
+  .trigger-label.ultra {
+    color: rgb(var(--quiet-light, 255 196 140));
+  }
+  .line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.29rem 0.57rem 0.36rem;
+    font-size: 0.74rem;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .line em {
+    font-style: normal;
+    font-size: 0.66rem;
+    color: var(--text-dim);
+    margin-left: 0.3rem;
   }
 </style>

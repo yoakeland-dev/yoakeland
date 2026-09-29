@@ -614,8 +614,8 @@ function reassertSessionSettings(connectionId: ConnectionId, sessionId: string) 
   if (!server) return;
   const providerName = server.providerBySession[sessionId];
   if (providerName) setProvider(connectionId, sessionId, providerName, server.modelBySession[sessionId]);
-  const effort = server.modelOptionsBySession[sessionId]?.reasoningEffort;
-  if (providerName && effort) setModelOptions(connectionId, sessionId, { reasoningEffort: effort });
+  const { reasoningEffort: effort, fastMode } = server.modelOptionsBySession[sessionId] ?? {};
+  if (providerName && (effort || fastMode)) setModelOptions(connectionId, sessionId, { reasoningEffort: effort, fastMode });
 }
 
 /** Opens `sessionId` as the main chat and refreshes it from the server so a
@@ -932,7 +932,7 @@ export function setProvider(connectionId: ConnectionId, sessionId: string, provi
 export function setModelOptions(
   connectionId: ConnectionId,
   sessionId: string,
-  options: { reasoningEffort?: string; thinkingBudget?: number; contextWindow?: number },
+  options: { reasoningEffort?: string; thinkingBudget?: number; contextWindow?: number; fastMode?: boolean },
 ) {
   // projectPath for the same reason setProvider sends it, see there.
   const projectPath = app.servers[connectionId]?.projectBySession[sessionId];

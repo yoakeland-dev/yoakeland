@@ -1813,6 +1813,7 @@ export class ServerState {
         } else if (data.reasoningEffort) merged.reasoningEffort = data.reasoningEffort;
         if (data.thinkingBudget) merged.thinkingBudget = data.thinkingBudget;
         if (data.contextWindow) merged.contextWindow = data.contextWindow;
+        if (data.fastMode !== undefined) merged.fastMode = data.fastMode;
         this.modelOptionsBySession = { ...this.modelOptionsBySession, [data.sessionId]: merged };
         break;
       }

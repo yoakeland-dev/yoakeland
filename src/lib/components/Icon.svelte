@@ -74,6 +74,7 @@
   import fileText from "@tabler/icons/outline/file-text.svg?raw";
   import filePlus from "@tabler/icons/outline/file-plus.svg?raw";
   import brain from "@tabler/icons/outline/brain.svg?raw";
+  import bolt from "@tabler/icons/outline/bolt.svg?raw";
   import tool from "@tabler/icons/outline/tool.svg?raw";
   import world from "@tabler/icons/outline/world.svg?raw";
   import arrowNarrowUp from "@tabler/icons/outline/arrow-narrow-up.svg?raw";
@@ -189,6 +190,7 @@
     "file-text": fileText,
     "file-plus": filePlus,
     brain,
+    bolt,
     tool,
     world,
     "arrow-narrow-up": arrowNarrowUp,

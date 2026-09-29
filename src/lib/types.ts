@@ -140,6 +140,7 @@ export interface ModelRole {
 
 export interface ModelOptions {
   reasoningEffort?: string;
+  fastMode?: boolean;
   thinkingBudget?: number;
   contextWindow?: number;
 }

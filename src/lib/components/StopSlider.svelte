@@ -16,7 +16,7 @@
     onhover,
   }: {
     /** One per stop: the short name shown under it, and the full one for screen readers. */
-    stops: { key: string; short: string; name: string }[];
+    stops: { key: string; short: string; name: string; warm?: boolean }[];
     index: number;
     /** A stop drawn as a short line instead of a dot, the value that means "no override". */
     defaultIndex?: number;
@@ -128,6 +128,7 @@
         aria-label={s.name}
         class="stop"
         class:on={j === index}
+        class:warm={s.warm}
         style:--j={j}
         tabindex={j === index ? 0 : -1}
         onclick={() => onchange(j)}
@@ -230,6 +231,14 @@
   .stop:hover,
   .stop.on {
     color: var(--text);
+  }
+  /* A stop that isn't a step further along the scale but a different thing: lamp-coloured. */
+  .stop.warm {
+    color: rgb(var(--lamp) / 0.75);
+  }
+  .stop.warm:hover,
+  .stop.warm.on {
+    color: rgb(var(--lamp));
   }
   .stop:focus-visible {
     outline: 2px solid var(--text);

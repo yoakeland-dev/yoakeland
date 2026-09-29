@@ -32,7 +32,7 @@
     id,
     displayName,
     ...extra,
-    capabilities: { permissionModes: modes },
+    capabilities: { ...extra.capabilities, permissionModes: modes },
   });
 
   function seed(cid: string, mode: "local" | "remote", identity: string, projects: Record<string, SessionSummary[]>) {
@@ -56,7 +56,10 @@
     s.cliAvailability = { cli_claude: true, cli_codex: false, cli_kimi: true };
     s.modelsByProvider = {
       "claude-subscription": [
-        withModes("claude-opus-5-5", "Claude Opus 5.5", claudeModes, { isFavorite: true }),
+        withModes("claude-opus-5-5", "Claude Opus 5.5", claudeModes, {
+          isFavorite: true,
+          capabilities: { reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultracode"], fastMode: true },
+        }),
         withModes("claude-sonnet-5", "Claude Sonnet 5", claudeModes),
         withModes("claude-haiku-4-5", "Claude Haiku 4.5", claudeModes),
       ],
@@ -320,7 +323,7 @@
     if (!open) return;
     setTimeout(() => {
       const triggers = document.querySelectorAll<HTMLElement>(".toolbar .picker-trigger");
-      const t = triggers[open === "mode" ? triggers.length - 1 : 0];
+      const t = triggers[open === "mode" ? triggers.length - 1 : open === "effort" ? triggers.length - 2 : 0];
       for (const type of ["pointerdown", "pointerup"]) t?.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0 }));
       t?.click();
       const q = params.get("q");
