@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // App-wide, not per-server: multiple servers/chats run at once, so this only shows what
   // spans all of them. Per-chat numbers (context, session cost) live in the chat header instead.
   import { app, type ConnectionId } from "../state.svelte";
@@ -22,7 +23,8 @@
   const running = $derived(
     servers.flatMap((s) =>
       Object.entries(s.activeTurnBySession)
-        .filter(([, turn]) => !!turn)
+        // A chat waiting on you is blocked, not running; it's counted under waiting only.
+        .filter(([id, turn]) => !!turn && !s.pendingAsks.some((a) => a.sessionId === id))
         .map(([sessionId]) => ({ cid: s.connectionId, sessionId })),
     ),
   );
@@ -55,6 +57,19 @@
   }
 </script>
 
+{#snippet chatList(heading: string, list: Ref[])}
+  <div class="tip-title">{heading}</div>
+  <ul class="tip-list">
+    {#each list.slice(0, 8) as r (r.cid + r.sessionId)}
+      <li><span class="grow">{titleOf(r)}</span><span class="tip-dim">{app.servers[r.cid]?.label}</span></li>
+    {/each}
+    {#if list.length > 8}<li class="tip-dim">and {list.length - 8} more</li>{/if}
+  </ul>
+  <div class="tip-dim tip-foot">Click to cycle through them</div>
+{/snippet}
+{#snippet waitingCard()}{@render chatList("Waiting on you", waiting)}{/snippet}
+{#snippet runningCard()}{@render chatList("Running", running)}{/snippet}
+
 <footer class="statusbar">
   <div class="left">
     <ServerHealthWidget />
@@ -66,19 +81,19 @@
     {#if waiting.length}
       <button
         class="item attention"
-        title={"Waiting on you:\n" + waiting.map(titleOf).join("\n")}
+        {@attach tip(waitingCard)}
         onclick={() => jump(waiting)}
       >
         <Icon name="alert-circle" size={12} /> {waiting.length} waiting
       </button>
     {/if}
     {#if running.length}
-      <button class="item busy" title={"Running:\n" + running.map(titleOf).join("\n")} onclick={() => jump(running)}>
+      <button class="item busy" {@attach tip(runningCard)} onclick={() => jump(running)}>
         <span class="spin"><Icon name="loader-2" size={12} /></span> {running.length} running
       </button>
     {/if}
     {#if queued > 0}
-      <span class="item" title="Turns waiting for their chat's current turn to finish">
+      <span class="item" {@attach tip("Turns waiting for their chat's current turn to finish")}>
         <Icon name="clock" size={12} /> {queued} queued
       </span>
     {/if}
@@ -86,10 +101,10 @@
     {#if spend.today > 0 || spend.month}
       <span
         class="item"
-        title={reporting.length
+        {@attach tip(reporting.length
           ? `Spent across ${reporting.length === 1 ? reporting[0].label : `${reporting.length} servers`} (server-local day/month)` +
             (spend.month != null ? `\nThis month: $${spend.month.toFixed(2)}` : "")
-          : "Spent today across every server (turns this app has seen)"}
+          : "Spent today across every server (turns this app has seen)")}
         >${spend.today.toFixed(2)} today{#if spend.month != null}<span class="dim">&nbsp;· ${spend.month.toFixed(2)} mo</span>{/if}</span
       >
     {/if}
@@ -154,7 +169,7 @@
   }
   .spin {
     display: inline-flex;
-    animation: spin calc(1s * var(--anim-speed, 1)) linear infinite;
+    animation: spin calc(1s * var(--icon-slow, 1)) linear infinite;
   }
   @keyframes spin {
     to {

@@ -1,106 +1,32 @@
 <script lang="ts">
+  import { tip } from "../tooltip.svelte";
   // Subscription usage (SPEC.md §2a status.rateLimits). Clicking a card pins it to the collapsed
   // view (settings.usageFocus); with nothing pinned, the most-used one shows.
   import { Popover } from "bits-ui";
-  import { app, type ConnectionId, type ServerState } from "../state.svelte";
-  import { relTime } from "../format";
-  import { CLI_AGENTS } from "../modelVendor";
-  import type { CliKind, ProviderRateLimits, RateWindow } from "../types";
+  import { app } from "../state.svelte";
+  import { level, limitCards, resetText, resetTitle, updated, type Card } from "../rateLimits";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
 
-  interface Win {
-    label: string;
-    short: string;
-    pct: number;
-    resetsAt?: string;
-  }
-  interface Card {
-    id: string;
-    cid: ConnectionId;
-    srv: ServerState;
-    title: string;
-    icon: string;
-    plan?: string;
-    updatedAt?: string;
-    windows: Win[];
-    peak?: Win;
-  }
-
   let open = $state(false);
 
-  function span(mins: number | undefined): { label: string; short: string } {
-    if (!mins) return { label: "Limit", short: "" };
-    if (mins === 7 * 1440) return { label: "Weekly", short: "7d" };
-    if (mins % 1440 === 0) return { label: `${mins / 1440}-day`, short: `${mins / 1440}d` };
-    if (mins % 60 === 0) return { label: `${mins / 60}-hour`, short: `${mins / 60}h` };
-    return { label: `${mins}-min`, short: `${mins}m` };
-  }
-  function toWin(w: RateWindow, mins: number | undefined): Win {
-    const s = span(mins);
-    return {
-      label: w.label ? `${s.label} · ${w.label}` : s.label,
-      short: w.label ? `${w.label} ${s.short}` : s.short,
-      pct: Math.round(w.usedPct),
-      resetsAt: w.resetsAt || undefined,
-    };
-  }
-  function windows(rl: ProviderRateLimits): Win[] {
-    return [
-      ...(rl.fiveHour ? [toWin(rl.fiveHour, 300)] : []),
-      ...(rl.sevenDay ? [toWin(rl.sevenDay, 7 * 1440)] : []),
-      ...(rl.other ?? []).map((w) => toWin(w, w.windowMins)),
-    ];
-  }
-
-  const multiServer = $derived(Object.keys(app.servers).length > 1);
+  // One login shared by several remotes reports identical numbers; show it once with every
+  // remote stacked. ponytail: no account id on the wire, so matching usage is the proxy.
   const cards = $derived.by(() => {
-    const out: Card[] = [];
-    for (const srv of Object.values(app.servers)) {
-      for (const [name, rl] of Object.entries(srv.serverStatus?.rateLimits ?? {})) {
-        const agent = CLI_AGENTS[rl.kind as CliKind];
-        // Older servers don't send `kind`; fall back to one card per name.
-        const id = `${srv.serverId ?? srv.connectionId}:${rl.kind ?? name}`;
-        if (out.some((c) => c.id === id)) continue;
-        const ws = windows(rl);
-        out.push({
-          id,
-          cid: srv.connectionId,
-          srv,
-          title: agent?.title ?? name,
-          icon: agent?.icon ?? "",
-          plan: rl.plan,
-          updatedAt: rl.updatedAt,
-          windows: ws,
-          peak: ws.reduce<Win | undefined>((a, w) => (!a || w.pct > a.pct ? w : a), undefined),
-        });
-      }
+    const out: (Card & { ids: string[]; srvs: Card["srv"][] })[] = [];
+    for (const c of limitCards(Object.values(app.servers))) {
+      const sig = (x: Card) => JSON.stringify([x.title, x.plan, x.windows]);
+      const same = c.windows.length ? out.find((o) => sig(o) === sig(c)) : undefined;
+      if (same) same.ids.push(c.id), same.srvs.push(c.srv);
+      else out.push({ ...c, ids: [c.id], srvs: [c.srv] });
     }
     return out;
   });
   const focused = $derived(
-    cards.find((c) => c.id === app.settings.usageFocus) ??
+    cards.find((c) => c.ids.includes(app.settings.usageFocus)) ??
       [...cards].sort((a, b) => (b.peak?.pct ?? -1) - (a.peak?.pct ?? -1))[0],
   );
-
-  const level = (pct: number) => (pct >= 100 ? "full" : pct >= 80 ? "hot" : "");
-
-  // Short enough to share a line with the window's name: "in 2h 14m", "in 3d 4h".
-  function resetText(iso: string, now: number): string {
-    const t = Date.parse(iso);
-    if (!Number.isFinite(t)) return "";
-    const mins = Math.round((t - now) / 60000);
-    if (mins <= 0) return "resetting";
-    if (mins < 60) return `in ${mins}m`;
-    if (mins < 24 * 60) return `in ${Math.floor(mins / 60)}h ${mins % 60}m`;
-    return `in ${Math.floor(mins / 1440)}d ${Math.floor((mins % 1440) / 60)}h`;
-  }
-  const resetTitle = (iso: string) => `Resets ${new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
-  function updated(iso: string, now: number): string {
-    const r = relTime(iso, now);
-    return r === "now" ? "just now" : `${r} ago`;
-  }
 
   function focus(c: Card) {
     app.settings.usageFocus = c.id;
@@ -113,7 +39,7 @@
   <Popover.Root bind:open>
     <Popover.Trigger
       class="sb-trigger"
-      title={`${focused.title} usage${focused.peak ? ` — ${focused.peak.label} ${focused.peak.pct}%` : ""}`}
+      {@attach tip(`${focused.title} usage${focused.peak ? ` — ${focused.peak.label} ${focused.peak.pct}%` : ""}`)}
       aria-label="Subscription usage"
     >
       {#if focused.icon}<LobeIcon name={focused.icon} size={12} />{/if}
@@ -133,26 +59,32 @@
               class="sb-card"
               class:selected={c.id === focused.id}
               aria-pressed={c.id === focused.id}
-              title={c.id === focused.id ? "Shown in the status bar" : "Show in the status bar"}
+              {@attach tip(c.id === focused.id ? "Shown in the status bar" : "Show in the status bar")}
               onclick={() => focus(c)}
             >
               <span class="sb-card-head">
-                <span class="sb-mark">{#if c.icon}<LobeIcon name={c.icon} size={18} />{/if}</span>
-                <span class="sb-who">
+                <span class="sb-mark">{#if c.icon}<LobeIcon name={c.icon} size={14} />{/if}</span>
+                <span class="title-row">
                   <span class="sb-card-title">{c.title}</span>
-                  <span class="sb-card-sub">
-                    {#if c.plan}<span class="plan">{c.plan}</span>{/if}
-                    {#if c.updatedAt}<span>{updated(c.updatedAt, app.now)}</span>{/if}
-                  </span>
+                  {#if c.plan}<span class="plan">{c.plan}</span>{/if}
                 </span>
-                {#if multiServer}<ServerAvatar name={c.srv.label} seed={c.srv.serverId} size={14} />{/if}
+                {#if c.updatedAt}
+                  <span class="age" {@attach tip(`Updated ${updated(c.updatedAt, app.now)}`)}>
+                    <Icon name="clock" size={11} />{updated(c.updatedAt, app.now)}
+                  </span>
+                {/if}
+                <span class="stack" {@attach tip(c.srvs.map((s) => s.label).join(", "))}>
+                  {#each c.srvs as s (s.connectionId)}
+                    <span class="srv"><ServerAvatar name={s.label} seed={s.serverId} size={14} /></span>
+                  {/each}
+                </span>
               </span>
               <span class="wins">
                 {#each c.windows as w (w.label)}
                   <span class="wname">{w.label}</span>
                   <span class="sb-bar"><span class="sb-fill {level(w.pct)}" style="width: {Math.min(w.pct, 100)}%"></span></span>
                   <span class="sb-value {level(w.pct)}">{w.pct}%</span>
-                  <span class="reset" title={w.resetsAt ? resetTitle(w.resetsAt) : undefined}>{w.resetsAt ? resetText(w.resetsAt, app.now) : ""}</span>
+                  <span class="reset" {@attach tip(w.resetsAt ? resetTitle(w.resetsAt) : undefined)}>{w.resetsAt ? resetText(w.resetsAt, app.now) : ""}</span>
                 {:else}
                   <span class="sb-meter-note none">No plan limits on this login</span>
                 {/each}
@@ -213,9 +145,37 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
-  .plan + span::before {
-    content: "·";
-    margin-right: 0.36rem;
+  .title-row {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 0.43rem;
+    min-width: 0;
+  }
+  .plan {
+    flex-shrink: 0;
+    font-size: 0.6rem;
     color: var(--text-dim);
+  }
+  .age {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.21rem;
+    flex-shrink: 0;
+    font-size: 0.64rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .stack {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .srv {
+    display: inline-flex;
+    border-radius: 28%;
+    box-shadow: 0 0 0 1.5px var(--float-bg);
+  }
+  .srv + .srv {
+    margin-left: -4px;
   }
 </style>
