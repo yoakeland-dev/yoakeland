@@ -12,7 +12,11 @@ export type ToolIconName =
   | "tool"
   | "trash"
   | "arrows-exchange"
-  | "brain";
+  | "brain"
+  | "robot"
+  | "world-www"
+  | "player-stop"
+  | "message-question";
 
 export const toolMeta: Record<string, { icon: ToolIconName; label: string }> = {
   file_read: { icon: "file-text", label: "Read" },
@@ -21,6 +25,13 @@ export const toolMeta: Record<string, { icon: ToolIconName; label: string }> = {
   bash: { icon: "terminal-2", label: "Bash" },
   web_search: { icon: "search", label: "Web Search" },
   web_fetch: { icon: "world", label: "Web Fetch" },
+  terminal_start: { icon: "terminal-2", label: "Terminal" },
+  terminal_output: { icon: "terminal-2", label: "Terminal" },
+  terminal_stop: { icon: "player-stop", label: "Stop terminal" },
+  browser: { icon: "world-www", label: "Browser" },
+  subagent: { icon: "robot", label: "Subagent" },
+  ask_user_question: { icon: "message-question", label: "Question" },
+  write_plan: { icon: "file-text", label: "Plan" },
 };
 
 // CLI agents use their own tool names (`Bash`, `commandExecution`, …), so a native call is identified by its ACP `kind`.
@@ -41,6 +52,8 @@ type CallLike = { name: string; args?: Record<string, unknown> } & NativeToolFie
 /** Icon/label for any call: yoakeland's own tools by name, a native one by
  * its kind. */
 export function metaFor(call: CallLike): { icon: ToolIconName; label: string } {
+  // A CLI agent's own subagent (Claude Code's Task) reads the same as ours.
+  if (call.native && (call.name === "Task" || call.name === "Agent")) return toolMeta.subagent;
   if (call.native) {
     // The kind's label, not the agent's tool name: `commandExecution` and `Bash` should read the same.
     const k = KIND_META[call.kind ?? "other"] ?? KIND_META.other;
@@ -70,6 +83,14 @@ export function summaryFor(call: { args?: Record<string, unknown> } & NativeTool
     if (call.locations?.length) return call.locations[0];
   }
   const args = call.args ?? {};
+  if (typeof args.description === "string" && args.prompt !== undefined) return args.description; // subagent
+  if (typeof args.action === "string") {
+    // browser: "navigate localhost:3000", "click 12"
+    const target = [args.url, args.ref && `#${args.ref}`, args.key, args.text].find((v) => typeof v === "string" && v);
+    return target ? `${args.action} ${String(target).replace(/^https?:\/\//, "")}` : args.action;
+  }
+  if (typeof args.name === "string" && typeof args.command === "string") return `${args.name}: ${args.command}`; // terminal_start
+  if (typeof args.id === "string") return typeof args.input === "string" && args.input ? `${args.id} ← ${JSON.stringify(args.input)}` : args.id; // terminal_output/stop
   if (typeof args.path === "string") {
     const { startLine, endLine } = args;
     if (typeof startLine === "number" || typeof endLine === "number") {
@@ -91,13 +112,19 @@ const VERB: Record<string, (n: number) => string> = {
   bash: (n) => `ran ${n} command${n === 1 ? "" : "s"}`,
   web_search: (n) => (n === 1 ? "searched the web" : `searched the web ${n} times`),
   web_fetch: (n) => (n === 1 ? "fetched a page" : `fetched ${n} pages`),
+  terminal_start: (n) => `started ${n} terminal${n === 1 ? "" : "s"}`,
+  terminal_output: (n) => (n === 1 ? "checked a terminal" : `checked terminals ${n} times`),
+  terminal_stop: (n) => `stopped ${n} terminal${n === 1 ? "" : "s"}`,
+  browser: (n) => (n === 1 ? "used the browser" : `used the browser ${n} times`),
+  subagent: (n) => `ran ${n} subagent${n === 1 ? "" : "s"}`,
 };
 
 /** Natural-language brief for a closed run of calls, grouped by tool name ("3 edits + 1 read").
  * `capitalize: false` lets WorkGroup prefix its own "Thought, then " as one sentence. */
 export function briefFor(calls: CallLike[], opts: { capitalize?: boolean } = {}): string {
   // Native calls group by kind: agents disagree on tool names but not kinds.
-  const keyOf = (c: CallLike) => (c.native ? `kind:${c.kind ?? "other"}` : c.name);
+  const keyOf = (c: CallLike) =>
+    c.native && (c.name === "Task" || c.name === "Agent") ? "subagent" : c.native ? `kind:${c.kind ?? "other"}` : c.name;
   const counts = new Map<string, number>();
   for (const c of calls) counts.set(keyOf(c), (counts.get(keyOf(c)) ?? 0) + 1);
   const text = [...counts.entries()]

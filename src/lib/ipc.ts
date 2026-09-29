@@ -1,4 +1,4 @@
-import type { ChatMode, Envelope, FileContent, FileDiff, GitChange, ServerStatus, TreeEntry } from "./types";
+import type { ChatMode, Envelope, FileContent, FileDiff, GitChange, ModelRole, ServerStatus, TreeEntry } from "./types";
 import {
   app,
   ServerState,
@@ -10,7 +10,9 @@ import {
 } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
 import { isDesktop, invoke, listen, pickFiles } from "./platform";
-import { bytesToBase64 } from "./base64";
+import { bytesToBase64, base64ToBytes } from "./base64";
+import { handleBrowserRequest } from "./browserAgent.svelte";
+import type { UsageReport } from "./usage";
 
 let wired = false;
 
@@ -152,6 +154,10 @@ export function wireEvents() {
       uploadWaiters.get(data.uploadId)?.resolve(data);
       return;
     }
+    if (env.type === "browser_request") {
+      void handleBrowserRequest(connectionId, env.data as never, (data) => void send(connectionId, { type: "browser_response", data: data as Record<string, unknown> }));
+      return;
+    }
     const requestId = (env.data as { requestId?: string } | undefined)?.requestId;
     if (requestId && rpcWaiters.has(requestId)) {
       rpcWaiters.get(requestId)!(env.data!);
@@ -244,6 +250,8 @@ function afterConnect(connectionId: ConnectionId) {
   void listSessionsForProjects(connectionId, server.recentProjects);
   if (server.currentProjectPath) listFiles(connectionId, server.currentProjectPath);
   if (server.connectionMode === "local") listTokens(connectionId);
+  // Only the desktop app has a browser panel the agent can drive (§3.2 browser_host).
+  if (isDesktop) void send(connectionId, { type: "browser_host", data: { enabled: true } });
   // Reconcile the session restored from the local cache against server history.
   if (server.currentSessionId) {
     getSessionHistory(connectionId, server.currentSessionId);
@@ -599,6 +607,8 @@ function reassertSessionSettings(connectionId: ConnectionId, sessionId: string) 
   if (!server) return;
   const providerName = server.providerBySession[sessionId];
   if (providerName) setProvider(connectionId, sessionId, providerName, server.modelBySession[sessionId]);
+  const effort = server.modelOptionsBySession[sessionId]?.reasoningEffort;
+  if (providerName && effort) setModelOptions(connectionId, sessionId, { reasoningEffort: effort });
 }
 
 /** Opens `sessionId` as the main chat and refreshes it from the server so a
@@ -983,6 +993,11 @@ export function setRemoteAccess(connectionId: ConnectionId, enabled: boolean) {
 }
 
 /** Server-wide default for a first `user_prompt` that omits its own `autoGenerateTitle` (§3.1). */
+/** Replaces the server-wide model role table (SPEC.md §4f); a role left out runs on each chat's own model. */
+export function setModelRoles(connectionId: ConnectionId, roles: Record<string, ModelRole>) {
+  void send(connectionId, { type: "set_model_roles", data: { roles } });
+}
+
 export function setAutoGenerateTitle(connectionId: ConnectionId, enabled: boolean) {
   void send(connectionId, { type: "set_auto_generate_title", data: { enabled } });
 }
@@ -1181,6 +1196,27 @@ export const listTree = (cid: ConnectionId, projectPath: string, path: string) =
 export const readFile = (cid: ConnectionId, projectPath: string, path: string) =>
   rpc<FileContent>(cid, "read_file", { projectPath, path });
 
+/** Fetches a previewable file's bytes in chunks (server-side caps: 25MB images/fonts, 200MB
+ * video/audio/PDF) and hands back an object URL good until `URL.revokeObjectURL` is called on it. */
+export async function readMedia(
+  cid: ConnectionId,
+  projectPath: string,
+  path: string,
+): Promise<{ url: string; mime: string; size: number } | { error: string }> {
+  const info = await rpc<Reply<{ size: number; mime: string }>>(cid, "read_media", { projectPath, path });
+  if (info.error) return { error: info.error };
+  const chunks: Uint8Array[] = [];
+  for (let offset = 0; ; ) {
+    const r = await rpc<Reply<{ data: string; offset: number; last: boolean }>>(cid, "read_media_chunk", { projectPath, path, offset });
+    if (r.error) return { error: r.error };
+    const bytes = base64ToBytes(r.data);
+    chunks.push(bytes);
+    offset += bytes.length;
+    if (r.last) break;
+  }
+  return { url: URL.createObjectURL(new Blob(chunks as BlobPart[], { type: info.mime })), mime: info.mime, size: info.size };
+}
+
 /** `baseVersion` is the read_file version the edit started from; a reply with `conflict` means it changed since. */
 export const writeFile = (cid: ConnectionId, projectPath: string, path: string, content: string, baseVersion: string, force = false) =>
   rpc<Reply<{ version?: string; conflict?: boolean }>>(cid, "write_file", { projectPath, path, content, baseVersion, force });
@@ -1192,6 +1228,9 @@ export const fsOp = (
   path: string,
   newPath?: string,
 ) => rpc<Reply>(cid, "fs_op", { projectPath, op, path, newPath });
+
+/** Every recorded round-trip on this server, hourly, plus the CLIs' own transcripts there (SPEC.md §3.1 get_usage). */
+export const getUsage = (cid: ConnectionId) => rpc<Reply<UsageReport>>(cid, "get_usage", { external: true });
 
 export const listGitChanges = (cid: ConnectionId, projectPath: string) =>
   rpc<Reply<{ files: GitChange[]; truncated?: boolean }>>(cid, "list_git_changes", { projectPath });

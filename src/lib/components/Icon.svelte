@@ -84,6 +84,7 @@
   import file from "@tabler/icons/outline/file.svg?raw";
   import cpu from "@tabler/icons/outline/cpu.svg?raw";
   import command from "@tabler/icons/outline/command.svg?raw";
+  import keyboard from "@tabler/icons/outline/keyboard.svg?raw";
   import arrowsExchange from "@tabler/icons/outline/arrows-exchange.svg?raw";
   import pin from "@tabler/icons/outline/pin.svg?raw";
   import pinned from "@tabler/icons/outline/pinned.svg?raw";
@@ -99,6 +100,7 @@
   import arrowsMinimize from "@tabler/icons/outline/arrows-minimize.svg?raw";
   import circleX from "@tabler/icons/outline/circle-x.svg?raw";
   import playerStop from "@tabler/icons/outline/player-stop.svg?raw";
+  import playerPlay from "@tabler/icons/outline/player-play.svg?raw";
   import folderCode from "@tabler/icons/outline/folder-code.svg?raw";
   import folderCheck from "@tabler/icons/outline/folder-check.svg?raw";
   import folderBolt from "@tabler/icons/outline/folder-bolt.svg?raw";
@@ -197,6 +199,7 @@
     file,
     cpu,
     command,
+    keyboard,
     "arrows-exchange": arrowsExchange,
     pin,
     pinned,
@@ -212,6 +215,7 @@
     "arrows-minimize": arrowsMinimize,
     "circle-x": circleX,
     "player-stop": playerStop,
+    "player-play": playerPlay,
     "folder-code": folderCode,
     "folder-check": folderCheck,
     "folder-bolt": folderBolt,

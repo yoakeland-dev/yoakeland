@@ -1,3 +1,4 @@
+import { applyQuietTokens } from "./quietRoom";
 import type {
   AskUserQuestionData,
   ChatMessage,
@@ -13,6 +14,8 @@ import type {
   PeerInfo,
   ModelInfo,
   ModelOptions,
+  ModelRole,
+  Compaction,
   PendingAsk,
   PermissionRequestData,
   ProviderInfo,
@@ -29,7 +32,9 @@ import type {
   TurnCompletedData,
   TerminalSummary,
   QueuedPrompt,
+  SubagentRun,
 } from "./types";
+import { findCall, findCallInMessages } from "./subagents";
 
 /** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
 type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
@@ -361,6 +366,8 @@ export interface AppSettings {
   terminalMarginY: number;
   /** Which provider the status bar's usage widget shows collapsed, as "<serverId>:<kind>". "" = most-used. */
   usageFocus: string;
+  /** Per-action overrides of keybinds.svelte.ts's defaults; absent means the default. */
+  keybinds: Record<string, string[]>;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -391,6 +398,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   terminalMarginX: 10,
   terminalMarginY: 5,
   usageFocus: "",
+  keybinds: {},
 };
 
 function loadSettings(): AppSettings {
@@ -400,6 +408,7 @@ function loadSettings(): AppSettings {
     // Older settings may have neither field as an object; guard against `map[key] = ...` throwing on undefined.
     if (!loaded.trustedCaByHostPort) loaded.trustedCaByHostPort = {};
     if (!loaded.trustedCaByServer) loaded.trustedCaByServer = {};
+    if (!loaded.keybinds) loaded.keybinds = {};
     return loaded;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -461,6 +470,8 @@ export class ServerState {
 
   // Same push-only pattern as remoteAccessEnabled.
   autoGenerateTitleEnabled = $state<boolean | null>(null);
+  /** Server-wide model roles (SPEC.md §4f), from model_roles_set. */
+  modelRoles = $state<Record<string, ModelRole>>({});
   // `justRegisteredToken` holds the one-time raw token so Settings can show a "copy this now" reveal.
   tokens = $state<TokenInfo[]>([]);
   justRegisteredToken = $state<{ name: string; token: string; caPem?: string } | null>(null);
@@ -1060,7 +1071,8 @@ export class ServerState {
     messages: {
       id?: string;
       alternateIds?: string[];
-      role: "user" | "assistant" | "tool";
+      role: "user" | "assistant" | "tool" | "compaction";
+      compaction?: Compaction;
       content: string;
       author?: string;
       authorAvatar?: string;
@@ -1068,6 +1080,7 @@ export class ServerState {
       reasoning?: string;
       toolCalls?: HistoryToolCall[];
       toolCallId?: string;
+      parentToolCallId?: string;
       diffs?: FileDiff[];
       error?: string;
       provider?: string;
@@ -1083,11 +1096,46 @@ export class ServerState {
       if (m.role === "tool" && m.toolCallId) toolResults.set(m.toolCallId, { content: m.content, diffs: m.diffs, error: m.error });
     }
 
+    const toEntry = (tc: HistoryToolCall, text: string, thinking: string | undefined): ToolCallEntry => {
+      const result = toolResults.get(tc.id);
+      return {
+        toolCallId: tc.id,
+        name: tc.name,
+        args: tc.args ?? {},
+        native: tc.native,
+        title: tc.title,
+        kind: tc.kind,
+        locations: tc.locations,
+        diffs: result?.diffs,
+        status: result?.error ? (result.error.includes("permission denied") ? "denied" : "error") : "done",
+        output: result?.content ?? "",
+        error: result?.error || undefined,
+        textOffset: text.length,
+        thinkingOffset: thinking?.length ?? 0,
+      };
+    };
+    // What ran inside each subagent call, attached to that call once every message is placed.
+    const runs = new Map<string, SubagentRun>();
+    const runFor = (id: string) => {
+      let r = runs.get(id);
+      if (!r) runs.set(id, (r = { calls: [], text: "" }));
+      return r;
+    };
+
     const base = Date.now();
     let turnIndex = 0;
     const out: ChatMessage[] = [];
     for (const m of messages) {
       if (m.role === "tool") continue;
+      // A fallback subagent's transcript (§3.2): its own text and calls, not the chat's.
+      if (m.parentToolCallId) {
+        if (m.role !== "assistant") continue;
+        const r = runFor(m.parentToolCallId);
+        r.text += m.content ?? "";
+        if (m.reasoning) r.thinking = (r.thinking ?? "") + m.reasoning;
+        for (const tc of m.toolCalls ?? []) r.calls.push(toEntry(tc, r.text, r.thinking));
+        continue;
+      }
       turnIndex++;
       // Server's own createdAt (§3.2) is authoritative; fall back to a synthetic timestamp for older messages.
       const stored = m.createdAt ? Date.parse(m.createdAt) : NaN;
@@ -1128,6 +1176,12 @@ export class ServerState {
           };
           out.push(cur);
         }
+        // A compaction (§4g) is a note on the turn, not model output: its content is the
+        // summary the model saw, not something to show as the reply.
+        if (m.role === "compaction") {
+          if (m.compaction) cur.compactions = [...(cur.compactions ?? []), m.compaction];
+          continue;
+        }
         // "Retry" on a merged bubble targets its *last* round-trip's id, matching alternateIds.
         cur.id = m.id || cur.id;
         cur.alternateIds = m.alternateIds ?? cur.alternateIds;
@@ -1141,22 +1195,11 @@ export class ServerState {
         for (const tc of m.toolCalls ?? []) {
           if (seen.has(tc.id)) continue;
           seen.add(tc.id);
-          const result = toolResults.get(tc.id);
-          cur.toolCalls.push({
-            toolCallId: tc.id,
-            name: tc.name,
-            args: tc.args ?? {},
-            native: tc.native,
-            title: tc.title,
-            kind: tc.kind,
-            locations: tc.locations,
-            diffs: result?.diffs,
-            status: result?.error ? (result.error.includes("permission denied") ? "denied" : "error") : "done",
-            output: result?.content ?? "",
-            error: result?.error || undefined,
-            textOffset: cur.text.length,
-            thinkingOffset: cur.thinking?.length ?? 0,
-          });
+          // A CLI agent's call from inside its own Task belongs to that Task.
+          if (tc.parentToolCallId) {
+            const r = runFor(tc.parentToolCallId);
+            r.calls.push(toEntry(tc, r.text, r.thinking));
+          } else cur.toolCalls.push(toEntry(tc, cur.text, cur.thinking));
         }
         // Provider/model/usage are per round-trip; the merged bubble's footer shows totals.
         cur.provider = m.provider || cur.provider;
@@ -1171,8 +1214,91 @@ export class ServerState {
         }
       }
     }
+    const attach = (calls: ToolCallEntry[]) => {
+      for (const c of calls) {
+        const r = runs.get(c.toolCallId);
+        if (!r) continue;
+        runs.delete(c.toolCallId); // a malformed cycle can't recurse forever
+        c.subagent = r;
+        attach(r.calls);
+      }
+    };
+    for (const m of out) attach(m.toolCalls);
     this.messagesBySession[sessionId] = out;
     this.saveChatHistory();
+  }
+
+  /** Applies an event a subagent sent (§3.2 `parentToolCallId`) to the call it runs inside. */
+  private handleSubagentEvent(sessionId: string, env: Envelope) {
+    const parent = findCallInMessages(this.messagesBySession[sessionId], env.parentToolCallId!);
+    if (!parent) return;
+    const run = (parent.subagent ??= { calls: [], text: "" });
+    if (parent.status === "requested") parent.status = "running";
+    const call = env.toolCallId ? findCall(run.calls, env.toolCallId) : undefined;
+    switch (env.type) {
+      case "model_delta": {
+        const data = env.data as { content?: string; reasoning?: string };
+        if (data?.reasoning) run.thinking = (run.thinking ?? "") + data.reasoning;
+        else run.text += String(data?.content ?? "");
+        break;
+      }
+      case "tool_call_requested": {
+        const data = env.data as unknown as ToolCallRequestedData;
+        if (!env.toolCallId || call) break;
+        run.calls.push({
+          toolCallId: env.toolCallId,
+          name: data.name,
+          args: data.args ?? {},
+          native: data.native,
+          title: data.title,
+          kind: data.kind,
+          locations: data.locations,
+          status: "requested",
+          textOffset: run.text.length,
+          thinkingOffset: run.thinking?.length ?? 0,
+        });
+        break;
+      }
+      case "permission_request":
+      case "ask_user_question_requested": {
+        const permission = env.type === "permission_request";
+        const data = env.data as unknown as PermissionRequestData & AskUserQuestionData;
+        if (call) {
+          call.status = permission ? "awaiting_permission" : "awaiting_answer";
+          if (permission) {
+            call.permission = data;
+            call.diff = data.diff;
+          } else call.question = data;
+        }
+        if (env.toolCallId && env.turnId) {
+          this.addAsk({
+            ...data,
+            kind: permission ? "permission" : "question",
+            sessionId,
+            projectPath: this.projectBySession[sessionId],
+            turnId: env.turnId,
+            toolCallId: env.toolCallId,
+            createdAt: new Date().toISOString(),
+          } as PendingAsk);
+        }
+        break;
+      }
+      case "tool_result": {
+        const data = env.data as unknown as ToolResultData;
+        if (call) {
+          call.status = data.error ? (data.error.includes("permission denied") ? "denied" : "error") : "done";
+          call.output = data.output;
+          call.error = data.error;
+          if (data.diffs?.length) call.diffs = data.diffs;
+        }
+        if (env.toolCallId) this.removeAsk(env.toolCallId);
+        this.bumpFs(this.projectBySession[sessionId]);
+        break;
+      }
+      case "turn_completed":
+        run.finish = env.data as unknown as TurnCompletedData;
+        break;
+    }
   }
 
   /** A session with no server-confirmed messages yet, bound to `projectPath` once its first prompt goes out (§4b). */
@@ -1428,7 +1554,8 @@ export class ServerState {
         status: t.status,
         label: t.label,
         title: existing?.title,
-        name: existing?.name,
+        name: existing?.name ?? t.name,
+        agent: t.agent,
         busy: t.status === "running" ? existing?.busy : false,
         command: existing?.command,
         lastExit: existing?.lastExit,
@@ -1461,6 +1588,7 @@ export class ServerState {
       return;
     }
     if (sessionId) this.ensureSession(sessionId);
+    if (env.parentToolCallId) return this.handleSubagentEvent(sessionId, env);
 
     switch (env.type) {
       case "model_delta": {
@@ -1503,7 +1631,7 @@ export class ServerState {
         const data = env.data as unknown as PermissionRequestData;
         const msg = this.findAssistantMessage(sessionId, env.turnId);
         if (msg && env.toolCallId) {
-          const entry = msg.toolCalls.find((t) => t.toolCallId === env.toolCallId);
+          const entry = findCall(msg.toolCalls, env.toolCallId);
           if (entry) {
             entry.status = "awaiting_permission";
             entry.permission = data;
@@ -1527,7 +1655,7 @@ export class ServerState {
         const data = env.data as unknown as AskUserQuestionData;
         const msg = this.findAssistantMessage(sessionId, env.turnId);
         if (msg && env.toolCallId) {
-          const entry = msg.toolCalls.find((t) => t.toolCallId === env.toolCallId);
+          const entry = findCall(msg.toolCalls, env.toolCallId);
           if (entry) {
             entry.status = "awaiting_answer";
             entry.question = data;
@@ -1550,7 +1678,7 @@ export class ServerState {
         const data = env.data as unknown as ToolResultData;
         const msg = this.findAssistantMessage(sessionId, env.turnId);
         if (msg && env.toolCallId) {
-          const entry = msg.toolCalls.find((t) => t.toolCallId === env.toolCallId);
+          const entry = findCall(msg.toolCalls, env.toolCallId);
           if (entry) {
             entry.status = data.error ? (data.error.includes("permission denied") ? "denied" : "error") : "done";
             entry.output = data.output;
@@ -1646,6 +1774,12 @@ export class ServerState {
       }
       case "provider_set": {
         const data = env.data as { sessionId: string; providerName: string; model?: string };
+        // A new model starts at its own default effort server-side (the
+        // levels differ per model anyway).
+        if (this.providerBySession[data.sessionId] !== data.providerName || this.modelBySession[data.sessionId] !== data.model) {
+          const { reasoningEffort: _, ...rest } = this.modelOptionsBySession[data.sessionId] ?? {};
+          this.modelOptionsBySession = { ...this.modelOptionsBySession, [data.sessionId]: rest };
+        }
         this.providerBySession[data.sessionId] = data.providerName;
         this.modelBySession[data.sessionId] = data.model;
         delete this.providerBlockedBySession[data.sessionId];
@@ -1661,7 +1795,10 @@ export class ServerState {
         const data = env.data as unknown as { sessionId: string } & ModelOptions;
         const current = this.modelOptionsBySession[data.sessionId] ?? {};
         const merged: ModelOptions = { ...current };
-        if (data.reasoningEffort) merged.reasoningEffort = data.reasoningEffort;
+        if (data.reasoningEffort === "default") {
+          delete merged.reasoningEffort;
+          delete merged.thinkingBudget;
+        } else if (data.reasoningEffort) merged.reasoningEffort = data.reasoningEffort;
         if (data.thinkingBudget) merged.thinkingBudget = data.thinkingBudget;
         if (data.contextWindow) merged.contextWindow = data.contextWindow;
         this.modelOptionsBySession = { ...this.modelOptionsBySession, [data.sessionId]: merged };
@@ -1852,6 +1989,10 @@ export class ServerState {
         this.remoteAccessEnabled = data.enabled;
         break;
       }
+      case "model_roles_set": {
+        this.modelRoles = (env.data as { roles?: Record<string, ModelRole> }).roles ?? {};
+        break;
+      }
       case "auto_generate_title": {
         const data = env.data as { enabled: boolean };
         this.autoGenerateTitleEnabled = data.enabled;
@@ -1864,7 +2005,8 @@ export class ServerState {
           messages: {
             id?: string;
             alternateIds?: string[];
-            role: "user" | "assistant" | "tool";
+            role: "user" | "assistant" | "tool" | "compaction";
+            compaction?: Compaction;
             content: string;
             author?: string;
             authorAvatar?: string;
@@ -1906,6 +2048,12 @@ export class ServerState {
       case "web_tools_enabled_set": {
         const data = env.data as { projectPath: string; enabled: boolean };
         this.webToolsEnabledByProject = { ...this.webToolsEnabledByProject, [data.projectPath]: data.enabled };
+        break;
+      }
+      case "context_compacted": {
+        const msg = this.findAssistantMessage(sessionId, env.turnId);
+        const data = env.data as unknown as Compaction;
+        if (msg) msg.compactions = [...(msg.compactions ?? []), { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter }];
         break;
       }
       case "plan_written": {
@@ -2288,8 +2436,8 @@ class AppState {
     const resolved = this.resolvedTheme;
     root.style.colorScheme = resolved;
     const tokens = deriveTheme(this.settings.accent, resolved);
-    root.style.setProperty("--bg", tokens.bg);
-    root.style.setProperty("--panel-bg", tokens.panelBg);
+    root.style.setProperty("--orig-bg", tokens.bg);
+    root.style.setProperty("--orig-panel-bg", tokens.panelBg);
     root.style.setProperty("--panel-border", tokens.panelBorder);
     root.style.setProperty("--panel-border-top", tokens.panelBorderTop);
     root.style.setProperty("--panel-border-bottom", tokens.panelBorderBottom);
@@ -2299,10 +2447,10 @@ class AppState {
     root.style.setProperty("--sidebar-active", tokens.sidebarActive);
     root.style.setProperty("--text", tokens.text);
     root.style.setProperty("--text-dim", tokens.textDim);
-    root.style.setProperty("--accent", tokens.accent);
-    root.style.setProperty("--bubble-user-bg", tokens.bubbleUserBg);
+    root.style.setProperty("--orig-accent", tokens.accent);
+    root.style.setProperty("--orig-bubble-user-bg", tokens.bubbleUserBg);
     root.style.setProperty("--bubble-border", tokens.bubbleBorder);
-    root.style.setProperty("--statusbar-bg", tokens.statusbarBg);
+    root.style.setProperty("--orig-statusbar-bg", tokens.statusbarBg);
     root.style.setProperty("--statusbar-fg", tokens.statusbarFg);
     root.style.setProperty("--ui-font-size", `${this.settings.uiFontSize}px`);
     root.style.setProperty("--code-font-size", `${this.settings.codeFontSize}px`);
@@ -2315,7 +2463,8 @@ class AppState {
     const code =
       (!this.settings.codeUseAppTheme && TERMINAL_THEME_PRESETS.find((p) => p.id === this.settings.codeColorTheme)?.colors) ||
       deriveTerminalTheme(this.settings.accent, resolved);
-    root.style.setProperty("--code-bg", code.background);
+    root.style.setProperty("--orig-code-bg", code.background);
+    applyQuietTokens();
     root.style.setProperty("--code-fg", code.foreground);
     root.style.setProperty("--syn-comment", code.brightBlack);
     root.style.setProperty("--syn-keyword", code.magenta);

@@ -5,6 +5,8 @@ export interface Envelope<T = Record<string, unknown>> {
   sessionId?: string;
   turnId?: string;
   toolCallId?: string;
+  /** Set on everything a subagent does: the tool call it runs inside of (§3.2). */
+  parentToolCallId?: string;
   data?: T;
 }
 
@@ -45,6 +47,8 @@ export interface NativeToolFields {
   title?: string;
   kind?: NativeToolKind;
   locations?: string[];
+  /** A CLI agent's call made inside its own subagent (Claude Code's Task): that call's id. */
+  parentToolCallId?: string;
 }
 
 export interface ToolCallRequestedData extends NativeToolFields {
@@ -122,6 +126,13 @@ export interface ModelInfo {
   isFavorite?: boolean;
   isLegacy?: boolean;
   capabilities?: ModelCapabilities;
+}
+
+/** One model role's assignment (SPEC.md §4f). */
+export interface ModelRole {
+  providerName: string;
+  model?: string;
+  reasoningEffort?: string;
 }
 
 export interface ModelOptions {
@@ -286,6 +297,10 @@ export interface TerminalSummary {
   status: TerminalStatus;
   label: string;
   exitCode?: number;
+  /** What the agent named a terminal it started (terminal_start). */
+  name?: string;
+  /** Started by the agent rather than a person. */
+  agent?: boolean;
   /** terminal_index only. */
   sessionId?: string;
   projectPath?: string;
@@ -303,8 +318,10 @@ export interface TerminalTab {
   label: string;
   /** The shell's own OSC 0/2 "set title" sequence (scanShellEvents). */
   title?: string;
-  /** User rename; wins over `title` and `label`. Client-side only. */
+  /** User rename, or the agent's name for a tab it started; wins over `title` and `label`. */
   name?: string;
+  /** Started by the agent (terminal_start). */
+  agent?: boolean;
   /** A command is running (shell integration C seen, D not yet). */
   busy?: boolean;
   /** The running (or last) command line; zsh only, bash doesn't report it. */
@@ -347,6 +364,17 @@ export interface ToolCallEntry extends NativeToolFields {
   /** `message.thinking?.length` at the same moment, so AssistantMessage can slice `thinking` back
    * into the reasoning chunk between two calls (mirrors `textOffset` for answer text). */
   thinkingOffset?: number;
+  /** What ran inside this call if it started a subagent (`subagent`, or a CLI agent's Task). */
+  subagent?: SubagentRun;
+}
+
+/** A subagent's own work, built from events tagged with its call's id (§3.2 `parentToolCallId`). */
+export interface SubagentRun {
+  calls: ToolCallEntry[];
+  text: string;
+  thinking?: string;
+  /** Its own turn_completed arrived (fallback subagents only; a CLI's Task ends with its result). */
+  finish?: TurnCompletedData;
 }
 
 /** One step between two spans of answer text: a reasoning chunk or a burst of tool calls.
@@ -382,6 +410,14 @@ export interface ChatMessage {
   /** This round-trip's own token/cost accounting (§3.2 `usage`), not the whole turn's.
    * `inputTokens` is the full resent conversation, so it's cumulative; `outputTokens` is just this reply. */
   usage?: { inputTokens: number; outputTokens: number; costUsd: number };
+  /** Context compactions during this turn (§4g): "clear" stubbed old tool results, "summary" summarized everything before. */
+  compactions?: Compaction[];
+}
+
+export interface Compaction {
+  kind: "clear" | "summary";
+  tokensBefore: number;
+  tokensAfter: number;
 }
 
 /** A prompt sent while its chat was mid-turn: waits server-side until that turn ends (§3.1). */

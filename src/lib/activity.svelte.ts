@@ -1,6 +1,7 @@
 import { untrack } from "svelte";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, ToolCallEntry } from "./types";
 import { activityFor, dotModeFor } from "./toolMeta";
+import { subagentTitle } from "./subagents";
 
 type Activity = { mode: ReturnType<typeof dotModeFor>; label: string };
 
@@ -15,9 +16,17 @@ function current(m: ChatMessage | undefined): Activity {
   const call = m.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));
   if (call?.status === "awaiting_permission") return { mode: dotModeFor(call), label: "Waiting for your approval" };
   if (call?.status === "awaiting_answer") return { mode: "thinking", label: "Waiting for your answer" };
-  if (call) return { mode: dotModeFor(call), label: activityFor(call) };
+  const inner = call?.subagent?.calls.findLast((c) => IN_FLIGHT.has(c.status));
+  if (inner?.status === "awaiting_permission") return { mode: dotModeFor(inner), label: "Waiting for your approval" };
+  if (call) return { mode: dotModeFor(inner ?? call), label: callActivity(call) };
   const lastOffset = m.toolCalls.reduce((n, c) => Math.max(n, c.textOffset ?? 0), 0);
   return { mode: "thinking", label: m.text.length > lastOffset ? "Writing" : "Thinking" };
+}
+
+/** What an unfinished call is doing: inside a subagent, the step it's on right now. */
+export function callActivity(call: ToolCallEntry): string {
+  const inner = call.subagent?.calls.findLast((c) => IN_FLIGHT.has(c.status));
+  return inner ? `${subagentTitle(call)}: ${activityFor(inner)}` : activityFor(call);
 }
 
 export function formatElapsed(ms: number): string {
