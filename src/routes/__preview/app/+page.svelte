@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import Main from "../../+page.svelte";
   import { app, ServerState } from "$lib/state.svelte";
-  import type { ChatMessage, SessionSummary } from "$lib/types";
+  import type { ChatMessage, ModeSpec, ModelInfo, SessionSummary } from "$lib/types";
 
   const now = Date.now();
   const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
@@ -13,6 +13,26 @@
     updatedAt: iso(minsAgo),
     messageCount: 4,
     ...extra,
+  });
+
+  // What each kind of provider reports for permissionModes (SPEC.md §4c), for the mode picker.
+  const P = (read: string, edit: string, run: string, network: string) => ({ read, edit, run, network }) as ModeSpec["policy"];
+  const ladder = (by: (m: string) => ModeSpec["enforcedBy"], native: Record<string, string>, plan: ModeSpec["plan"], sandbox: boolean): ModeSpec[] => [
+    { mode: "read_only", policy: P("allow", "deny", "deny", "deny"), enforcedBy: by("read_only"), native: native.read_only },
+    { mode: "read_write", policy: P("allow", "ask", "ask", "ask"), enforcedBy: by("read_write"), native: native.read_write },
+    { mode: "accept_edits", policy: P("allow", "allow", "ask", "ask"), enforcedBy: by("accept_edits"), native: native.accept_edits },
+    { mode: "autonomous", policy: P("allow", "allow", "allow", "allow"), enforcedBy: by("autonomous"), native: native.autonomous, sandbox },
+    { mode: "plan", policy: P("allow", "deny", "deny", "deny"), enforcedBy: by("plan"), native: native.plan, plan },
+  ];
+  const claudeModes = ladder(() => "agent", { read_only: "plan", read_write: "default", accept_edits: "acceptEdits", autonomous: "bypassPermissions", plan: "plan" }, "native", true);
+  const apiModes = ladder(() => "yoakeland", {}, "yoakeland", true);
+  // An ACP agent with only build and plan: everything else is yoakeland's bridge alone.
+  const acpModes = ladder((m) => (m === "read_only" || m === "read_write" || m === "plan" ? "agent" : "yoakeland"), { read_only: "plan", read_write: "build", plan: "plan" }, "native", false);
+  const withModes = (id: string, displayName: string, modes: ModeSpec[], extra: Partial<ModelInfo> = {}): ModelInfo => ({
+    id,
+    displayName,
+    ...extra,
+    capabilities: { permissionModes: modes },
   });
 
   function seed(cid: string, mode: "local" | "remote", identity: string, projects: Record<string, SessionSummary[]>) {
@@ -28,18 +48,20 @@
     s.serverIdentity = identity;
     s.recentProjects = Object.keys(projects);
     s.sessionsByProject = projects;
-    s.providers = [{ name: "claude-subscription", kind: "cli_claude" }, { name: "my-openrouter", kind: "api_key", httpProvider: "openrouter" }];
+    s.providers = [
+      { name: "claude-subscription", kind: "cli_claude" },
+      { name: "my-openrouter", kind: "api_key", httpProvider: "openrouter" },
+      { name: "opencode", kind: "cli_opencode" },
+    ];
     s.cliAvailability = { cli_claude: true, cli_codex: false, cli_kimi: true };
     s.modelsByProvider = {
       "claude-subscription": [
-        { id: "claude-opus-5-5", displayName: "Claude Opus 5.5", isFavorite: true },
-        { id: "claude-sonnet-5", displayName: "Claude Sonnet 5" },
-        { id: "claude-haiku-4-5", displayName: "Claude Haiku 4.5" },
+        withModes("claude-opus-5-5", "Claude Opus 5.5", claudeModes, { isFavorite: true }),
+        withModes("claude-sonnet-5", "Claude Sonnet 5", claudeModes),
+        withModes("claude-haiku-4-5", "Claude Haiku 4.5", claudeModes),
       ],
-      "my-openrouter": [
-        { id: "openai/gpt-5", displayName: "GPT-5" },
-        { id: "google/gemini-3-pro", displayName: "Gemini 3 Pro" },
-      ],
+      "my-openrouter": [withModes("openai/gpt-5", "GPT-5", apiModes), withModes("google/gemini-3-pro", "Gemini 3 Pro", apiModes)],
+      opencode: [withModes("opencode/big-pickle", "Big Pickle", acpModes)],
     };
     s.serverStatus = {
       uptimeSec: 3 * 86400 + 4 * 3600,
@@ -186,6 +208,19 @@
   local.currentSessionId = "s1";
   local.projectBySession = { s1: local.currentProjectPath };
   local.providerBySession = { s1: "claude-subscription" };
+  // ?plan: s1 has a plan waiting for approval.
+  if (new URLSearchParams(location.search).has("plan")) {
+    local.modeBySession = { ...local.modeBySession, s1: "plan" };
+    local.tierBeforePlan = { s1: "read_write" };
+    local.planBySession = {
+      s1: {
+        path: "/state/plans/s1.md",
+        updatedAt: Date.now(),
+        content: "# Row toggle style\n\n1. Add a `Switch` row to `SettingsPanel.svelte`.\n2. Move the label and hint into one recipe.\n3. Check it at phone width.\n",
+      },
+    };
+    local.openPlanSessionId = "s1";
+  }
   local.modelBySession = { s1: "claude-opus-5-5" };
   const msgs: ChatMessage[] = [
     { id: "m1", role: "user", text: "Can you tighten up the settings layout?", toolCalls: [], streaming: false, createdAt: now - 200_000 },
@@ -285,7 +320,7 @@
     if (!open) return;
     setTimeout(() => {
       const triggers = document.querySelectorAll<HTMLElement>(".toolbar .picker-trigger");
-      const t = triggers[open === "mode" ? 1 : 0];
+      const t = triggers[open === "mode" ? triggers.length - 1 : 0];
       for (const type of ["pointerdown", "pointerup"]) t?.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0 }));
       t?.click();
       const q = params.get("q");

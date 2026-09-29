@@ -86,7 +86,7 @@ function looksLikePath(p: unknown): p is string {
 /** A pre-upgrade install may have "ask"/"auto" persisted here; treated as invalid rather than
  * migrated, since ensureSession's "read_write" fallback is a cosmetic default, not data loss. */
 function isChatMode(m: unknown): m is ChatMode {
-  return m === "read_only" || m === "read_write" || m === "autonomous" || m === "plan";
+  return m === "read_only" || m === "read_write" || m === "accept_edits" || m === "autonomous" || m === "plan";
 }
 
 interface ChatHistory {
@@ -556,6 +556,10 @@ export class ServerState {
   lastUsedModel = $state<string | null>(null);
   lastUsedMode = $state<ChatMode | null>(null);
   modeBySession = $state<Record<string, ChatMode>>({});
+  /** The tier a chat was in before Plan, which approving the plan defaults back to. */
+  tierBeforePlan = $state<Record<string, ChatMode>>({});
+  /** Chats on Run for one turn only, and the mode they go back to when it ends (modes.ts). */
+  runOnce = $state<Record<string, ChatMode>>({});
   webToolsEnabledByProject = $state<Record<string, boolean>>({});
   // write_plan's output (§4c), keyed by session so a re-write lands in place rather than stacking.
   planBySession = $state<Record<string, { path: string; content: string; updatedAt: number }>>({});
@@ -654,8 +658,14 @@ export class ServerState {
     return !!seen && Date.parse(s.updatedAt) > Date.parse(seen);
   }
 
+  /** What waits on the user as a card. A plan approval isn't one: it lives in the plan panel. */
   asksFor(sessionId: string): PendingAsk[] {
-    return this.pendingAsks.filter((a) => a.sessionId === sessionId);
+    return this.pendingAsks.filter((a) => a.sessionId === sessionId && !(a.kind === "permission" && a.plan));
+  }
+
+  /** A CLI agent's turn waiting on the plan being approved, if any. */
+  planAskFor(sessionId: string): PendingAsk | undefined {
+    return this.pendingAsks.find((a) => a.sessionId === sessionId && a.kind === "permission" && a.plan);
   }
 
   removeAsk(toolCallId: string) {
@@ -827,7 +837,7 @@ export class ServerState {
     }
   }
 
-  /** Persists the last mode picked, so the next new chat starts there instead of defaulting to Read-Write. */
+  /** Persists the last mode picked, so the next new chat starts there instead of defaulting to Ask. */
   setLastUsedMode(mode: ChatMode) {
     this.lastUsedMode = mode;
     if (this.serverId) saveServerString(this.serverId, "lastUsedMode", mode);
@@ -1335,6 +1345,8 @@ export class ServerState {
     delete this.editingMessageId[sessionId];
     delete this.modelOptionsBySession[sessionId];
     delete this.modeBySession[sessionId];
+    delete this.tierBeforePlan[sessionId];
+    delete this.runOnce[sessionId];
     delete this.planBySession[sessionId];
     delete this.syncingSessions[sessionId];
     delete this.composerDraftBySession[sessionId];

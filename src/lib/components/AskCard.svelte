@@ -8,6 +8,7 @@
   import { cubicOut } from "svelte/easing";
   import { app } from "../state.svelte";
   import { respondPermission, askUserAnswer } from "../ipc";
+  import { chooseMode, sessionModes } from "../modes";
   import { metaFor, summaryFor } from "../toolMeta";
   import { findCallInMessages, subagentOwning, subagentTitle } from "../subagents";
   import { fileIconUrl } from "../fileIcons";
@@ -47,9 +48,16 @@
   });
   const target = $derived(diff || command ? "" : call ? summaryFor(call) : "");
 
-  // read_write forces every shell call (bash, the terminal tools) to ask and can't remember it (SPEC.md §4c).
+  // Ask and Edit force every shell call (bash, the terminal tools) to ask and can't remember it (SPEC.md §4c).
   const alwaysUnavailable = $derived(
-    server?.modeBySession[sessionId] === "read_write" && ["bash", "terminal_start", "terminal_output"].includes(permission?.toolName ?? ""),
+    (server?.modeBySession[sessionId] === "read_write" || server?.modeBySession[sessionId] === "accept_edits") &&
+      ["bash", "terminal_start", "terminal_output"].includes(permission?.toolName ?? ""),
+  );
+  // An edit asked about in Ask can move the chat up to Edit, instead of being asked again for the next one.
+  const canAcceptEdits = $derived(
+    server?.modeBySession[sessionId] === "read_write" &&
+      !!diff &&
+      sessionModes(server, sessionId).available.includes("accept_edits"),
   );
 
   const cid = () => app.activeConnectionId;
@@ -61,6 +69,12 @@
     if (!c || !permission) return;
     respondPermission(c, ask.sessionId, ask.turnId, ask.toolCallId, true, remember);
     done();
+  }
+  /** Allows this edit and every later one in this chat. */
+  function allowEdits() {
+    const c = cid();
+    if (c && server) chooseMode(server, c, sessionId, "accept_edits");
+    allow(false);
   }
   function reject() {
     const c = cid();
@@ -190,11 +204,14 @@
           <button type="button" class="btn danger" onclick={reject}>Reject <kbd>Esc</kbd></button>
           <span class="spacer"></span>
           {#if alwaysUnavailable}
-            <span class="note" {@attach tip("Read/Write mode asks for every bash command, so this one can't be remembered.")}>
+            <span class="note" {@attach tip("Ask and Edit modes ask for every command, so this one can't be remembered.")}>
               <Icon name="info-circle" size={13} />
             </span>
           {:else}
             <button type="button" class="btn" onclick={() => allow(true)}>Always allow <kbd>Ctrl ⏎</kbd></button>
+          {/if}
+          {#if canAcceptEdits}
+            <button type="button" class="btn" {@attach tip("Switch this chat to Edit: file edits go through without asking, commands still ask")} onclick={allowEdits}>Allow edits</button>
           {/if}
           <button type="button" class="btn primary" onclick={() => allow(false)}>Allow once <kbd>⏎</kbd></button>
         </div>

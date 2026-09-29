@@ -1,55 +1,11 @@
-<script module lang="ts">
-  import type { ChatMode } from "../types";
-  import type { ComponentProps } from "svelte";
-  import type IconComp from "./Icon.svelte";
-
-  export type ModeMeta = {
-    id: ChatMode;
-    label: string;
-    hint: string;
-    icon: ComponentProps<typeof IconComp>["name"];
-    // Only Autonomous carries one: the mode that bypasses permission checks
-    // outright is the one worth flagging.
-    tint?: string;
-  };
-
-  export const MODES: ModeMeta[] = [
-    {
-      id: "read_only",
-      label: "Read Only",
-      hint: "The model can only read files — no writes, no bash, no web tools",
-      icon: "eye",
-    },
-    {
-      id: "read_write",
-      label: "Read/Write",
-      hint: "Ask before every mutating tool call",
-      icon: "question-mark",
-    },
-    {
-      id: "autonomous",
-      label: "Autonomous",
-      hint: "Every permission check is bypassed — nothing will ask first",
-      icon: "player-track-next",
-      tint: "var(--warning)",
-    },
-    {
-      id: "plan",
-      label: "Plan",
-      hint: "Draft a plan before acting — the model only gets read-only tools",
-      icon: "clipboard-list",
-    },
-  ];
-
-  export const MODE_BY_ID = Object.fromEntries(MODES.map((m) => [m.id, m])) as Record<ChatMode, ModeMeta>;
-</script>
-
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
   import { Popover, Switch } from "bits-ui";
   import { app } from "../state.svelte";
-  import { setMode, setWebToolsEnabled } from "../ipc";
-  import { isCli, cliMeta } from "../modelVendor";
+  import { setWebToolsEnabled } from "../ipc";
+  import { cliMeta } from "../modelVendor";
+  import { LADDER, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable, getRunOnce, setRunOnce } from "../modes";
+  import type { ChatMode, ModeSpec } from "../types";
   import Icon from "./Icon.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
@@ -60,77 +16,151 @@
   let open = $state(false);
 
   const currentMode = $derived(server?.modeBySession[sessionId] ?? "read_write");
-  const currentModeMeta = $derived(MODE_BY_ID[currentMode]);
+  const inPlan = $derived(currentMode === "plan");
+  // In Plan the ladder shows the rung the plan will be carried out on, dimmed.
+  const rung = $derived<ChatMode>(inPlan ? (server?.tierBeforePlan[sessionId] ?? "read_write") : currentMode);
+  const currentMeta = $derived(MODE_BY_ID[currentMode] ?? MODE_BY_ID.read_write);
   const projectPath = $derived(server?.projectBySession[sessionId]);
-  const webToolsEnabled = $derived(
-    projectPath ? (server?.webToolsEnabledByProject[projectPath] ?? true) : true,
-  );
+  const webToolsEnabled = $derived(projectPath ? (server?.webToolsEnabledByProject[projectPath] ?? true) : true);
 
-  // §4c/§6b: a CLI agent brings its own tools, so mode maps onto its own
-  // permission mode and yoakeland's web tools don't apply.
-  const cliProvider = $derived.by(() => {
-    const p = server?.providers.find((x) => x.name === server?.providerBySession[sessionId]);
-    return p && isCli(p) ? p : undefined;
+  // §4c/§6b: a CLI agent brings its own tools, so mode maps onto its own permission mode and
+  // yoakeland's web tools don't apply.
+  const info = $derived(sessionModes(server, sessionId));
+  const cliProvider = $derived(info.cli ? info.provider : undefined);
+  const rungs = $derived(LADDER.filter((m) => info.available.includes(m.id)));
+
+  // A model switch can leave the chat in a mode the new model doesn't have.
+  $effect(() => {
+    if (!server || !cid || !info.specs) return;
+    if (!info.available.includes(currentMode)) chooseMode(server, cid, sessionId, nearestAvailable(currentMode, info.available));
   });
+
+  let runOnce = $state(getRunOnce());
+  const runOnceActive = $derived(!!server?.runOnce[sessionId]);
+  function toggleRunOnce() {
+    runOnce = !runOnce;
+    setRunOnce(runOnce);
+  }
 
   function pick(id: ChatMode) {
     if (!cid || !server) return;
-    // Optimistic; mode_set (state.svelte.ts) confirms/corrects once the round trip lands.
-    server.modeBySession[sessionId] = id;
-    server.setLastUsedMode(id);
-    setMode(cid, sessionId, id);
+    chooseMode(server, cid, sessionId, id);
     open = false;
   }
 
   function toggleWebTools() {
     if (cid && projectPath) setWebToolsEnabled(cid, projectPath, !webToolsEnabled);
   }
+
+  const CELLS = [
+    ["read", "Read"],
+    ["edit", "Edit"],
+    ["run", "Run"],
+    ["network", "Web"],
+  ] as const;
+  const POLICY_WORD = { allow: "without asking", ask: "asks first", deny: "not allowed" };
+  const cellTip = (spec: ModeSpec, cell: (typeof CELLS)[number]) => `${cell[1]}: ${POLICY_WORD[spec.policy[cell[0]]]}`;
+
+  const planHow = (spec?: ModeSpec) =>
+    !cliProvider || !spec?.plan || spec.plan === "yoakeland"
+      ? ""
+      : spec.plan === "native"
+        ? `${cliMeta(cliProvider).title}'s own plan mode`
+        : `${cliMeta(cliProvider).title} is asked to plan`;
 </script>
 
 <Popover.Root bind:open>
   <Popover.Trigger
-    class={`picker-trigger${open ? " open" : ""}${currentModeMeta.tint ? " tinted" : ""}`}
-    style={`--mode-tint: ${currentModeMeta.tint ?? "var(--text)"}`}
-    {@attach tip(currentModeMeta.hint, "chat.mode")}
+    class={`picker-trigger${open ? " open" : ""}${currentMeta.tint ? " tinted" : ""}`}
+    style={`--mode-tint: ${currentMeta.tint ?? "var(--text)"}`}
+    {@attach tip(modeHint(currentMode, info.specs?.[currentMode]), "chat.mode")}
   >
     <span class="trigger-icon">
-      <span class="crossfade a"><Icon name={currentModeMeta.icon} size={13} /></span>
+      <span class="crossfade a"><Icon name={currentMeta.icon as any} size={13} /></span>
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
-    <span class="trigger-label">{currentModeMeta.label}</span>
+    <span class="trigger-label">{currentMeta.label}{runOnceActive ? " · 1 turn" : ""}</span>
   </Popover.Trigger>
 
   <Popover.Portal>
     <Popover.Content class="mode-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
-      <div class="panel-heading">Mode</div>
+      <div class="panel-heading">Without asking</div>
       <div class="mode-list" role="radiogroup" aria-label="Mode">
-        {#each MODES as mode (mode.id)}
+        {#each rungs as mode (mode.id)}
+          {@const spec = info.specs?.[mode.id]}
           <button
             type="button"
             role="radio"
-            aria-checked={mode.id === currentMode}
+            aria-checked={mode.id === rung && !inPlan}
             class="mode-row"
-            class:selected={mode.id === currentMode}
+            class:selected={mode.id === rung && !inPlan}
+            class:resting={mode.id === rung && inPlan}
             style={`--mode-tint: ${mode.tint ?? "var(--accent)"}`}
             onclick={() => pick(mode.id)}
           >
-            <span class="tile"><Icon name={mode.icon} size={14} /></span>
+            <span class="tile"><Icon name={mode.icon as any} size={14} /></span>
             <span class="row-text">
-              <span class="row-label">{mode.label}</span>
-              <span class="row-hint">{mode.hint}</span>
+              <span class="row-label">
+                {mode.label}
+                {#if cliProvider && spec?.enforcedBy === "yoakeland"}
+                  <span class="badge" {@attach tip(`${cliMeta(cliProvider).title} has no matching mode, so yoakeland's own checks enforce this one.`)}>yoakeland</span>
+                {:else if cliProvider && spec?.native}
+                  <span class="native">{spec.native}</span>
+                {/if}
+              </span>
+              <span class="row-hint">{modeHint(mode.id, spec)}</span>
+              {#if spec}
+                <span class="strip" aria-hidden="true">
+                  {#each CELLS as cell (cell[0])}
+                    <span class={`cell ${spec.policy[cell[0]]}`} {@attach tip(cellTip(spec, cell))}><i></i>{cell[1]}</span>
+                  {/each}
+                </span>
+              {/if}
             </span>
             <span class="radio" aria-hidden="true"></span>
           </button>
         {/each}
       </div>
 
+      {#if info.available.includes("plan")}
+        {@const spec = info.specs?.plan}
+        <div class="divider"></div>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={inPlan}
+          class="mode-row"
+          class:selected={inPlan}
+          style="--mode-tint: var(--accent)"
+          onclick={() => pick(inPlan ? rung : "plan")}
+        >
+          <span class="tile"><Icon name={PLAN.icon as any} size={14} /></span>
+          <span class="row-text">
+            <span class="row-label">
+              {PLAN.label}
+              {#if planHow(spec)}<span class="native">{planHow(spec)}</span>{/if}
+            </span>
+            <span class="row-hint">{modeHint("plan")}</span>
+          </span>
+          <span class="radio" aria-hidden="true"></span>
+        </button>
+      {/if}
+
+      {#if rungs.some((m) => m.id === "autonomous")}
+        <label class="tool-row once">
+          <span class="tile" class:on={runOnce}><Icon name="clock" size={14} /></span>
+          <span class="row-text">
+            <span class="row-label">Run for one turn</span>
+            <span class="row-hint">Choosing Run drops back when the turn ends</span>
+          </span>
+          <Switch.Root class="switch-root" checked={runOnce} onCheckedChange={toggleRunOnce}>
+            <Switch.Thumb class="switch-thumb" />
+          </Switch.Root>
+        </label>
+      {/if}
+
       {#if cliProvider}
-        <p class="cli-note">
-          {cliMeta(cliProvider).title} runs its own tools: this maps onto its own permission mode.
-          {#if currentMode === "autonomous"}
-            <strong>Autonomous is the agent's bypass mode, with no sandbox at all.</strong>
-          {/if}
-        </p>
+        <p class="cli-note">{cliMeta(cliProvider).title} runs its own tools; these modes map onto its own permission settings.</p>
       {:else if projectPath}
         <div class="panel-heading tools">Tools <span class="scope">this project</span></div>
         <label class="tool-row">
@@ -161,10 +191,6 @@
     font-size: var(--text-label-size);
     color: var(--text-dim);
     line-height: 1.4;
-  }
-  .cli-note strong {
-    color: var(--warning);
-    font-weight: 500;
   }
   :global(.mode-panel) {
     width: 19rem;
@@ -287,5 +313,61 @@
   .mode-row.selected .radio {
     border-color: var(--mode-tint);
     box-shadow: inset 0 0 0 2.5px var(--float-bg), inset 0 0 0 5px var(--mode-tint);
+  }
+  .row-label {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+  }
+  .native,
+  .badge {
+    font-size: 0.64rem;
+    font-weight: 400;
+    color: var(--text-dim);
+  }
+  .badge {
+    padding: 0 0.32rem;
+    border-radius: var(--radius-xs);
+    background: rgba(255, 255, 255, 0.06);
+  }
+  /* What the mode leaves free (filled), asks about (half) or forbids (empty), read left to right. */
+  .strip {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.22rem;
+  }
+  .cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.64rem;
+    color: var(--text-dim);
+  }
+  .cell i {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    border: 1.5px solid currentColor;
+    box-sizing: border-box;
+  }
+  .cell.allow i {
+    background: currentColor;
+  }
+  .cell.ask i {
+    background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+  }
+  .cell.deny {
+    opacity: 0.45;
+  }
+  .mode-row.resting {
+    background: color-mix(in srgb, var(--sidebar-active) 45%, transparent);
+  }
+  .divider {
+    height: 1px;
+    margin: 0.29rem 0.57rem;
+    background: var(--panel-border);
+  }
+  .tool-row.once {
+    margin-top: 0.07rem;
   }
 </style>

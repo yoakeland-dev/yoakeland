@@ -6,8 +6,8 @@
 // Actions without one belong to a component that checks `matches()` in its own key handler,
 // so they only fire where that component has focus.
 import { app } from "./state.svelte";
-import { navigateSessionHistory, newChat, setMode } from "./ipc";
-import { MODES } from "./components/ModePicker.svelte";
+import { navigateSessionHistory, newChat } from "./ipc";
+import { sessionModes, chooseMode } from "./modes";
 
 export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -45,11 +45,9 @@ function cycleMode(sessionId: string) {
   const server = app.active;
   const cid = app.activeConnectionId;
   if (!server || !cid) return;
+  const { available } = sessionModes(server, sessionId);
   const cur = server.modeBySession[sessionId] ?? "read_write";
-  const next = MODES[(MODES.findIndex((m) => m.id === cur) + 1) % MODES.length].id;
-  server.modeBySession[sessionId] = next;
-  server.setLastUsedMode(next);
-  setMode(cid, sessionId, next);
+  chooseMode(server, cid, sessionId, available[(Math.max(0, available.indexOf(cur)) + 1) % available.length]);
 }
 
 export const ACTIONS: KeyAction[] = [

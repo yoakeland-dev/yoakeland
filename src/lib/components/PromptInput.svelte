@@ -13,6 +13,7 @@
     selectProject,
     uploadFile,
     listFiles,
+    respondPermission,
   } from "../ipc";
   import { isDesktop, invoke, pickFiles, onFileDrop } from "../platform";
   import { basename } from "../format";
@@ -488,15 +489,19 @@
   // One button whose job follows the state: send, queue behind the running turn, stop it when
   // there's nothing to queue, or confirm an edit.
   const hasDraft = $derived(!!text.trim() || attachments.some((a) => a.path));
+  // A plan the agent is waiting on: typing something is telling it what to change.
+  const planAsk = $derived(server?.planAskFor(sessionId));
   const role = $derived<"send" | "queue" | "stop" | "confirm">(
-    asks.length ? "send" : editingId ? "confirm" : turnId && !hasDraft ? "stop" : turnId ? "queue" : "send",
+    asks.length || (planAsk && hasDraft) ? "send" : editingId ? "confirm" : turnId && !hasDraft ? "stop" : turnId ? "queue" : "send",
   );
   const canSubmit = $derived(
     asks.length
       ? connected && !!text.trim()
-      : editingId
-        ? connected && !!text.trim() && !turnId && !!projectPath && hasProvider
-        : connected && hasDraft && !uploading && !!projectPath && hasProvider,
+      : planAsk && hasDraft
+        ? connected && !!text.trim()
+        : editingId
+          ? connected && !!text.trim() && !turnId && !!projectPath && hasProvider
+          : connected && hasDraft && !uploading && !!projectPath && hasProvider,
   );
   const primaryTitle = $derived(
     role === "stop"
@@ -524,7 +529,11 @@
     e?.preventDefault();
     const value = text.trim();
     if (!cid || !canSubmit) return;
-    if (asks.length) {
+    if (planAsk && !asks.length) {
+      // A plan waiting on approval: what's typed is what to change about it.
+      respondPermission(cid, sessionId, planAsk.turnId, planAsk.toolCallId, false, false, value);
+      server?.removeAsk(planAsk.toolCallId);
+    } else if (asks.length) {
       askCard?.dismissAll(value);
     } else if (editingId) {
       editMessage(cid, sessionId, editingId, value);

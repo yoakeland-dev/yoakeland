@@ -170,6 +170,13 @@ export function wireEvents() {
         ? server.queuedBySession[env.sessionId]?.find((q) => q.turnId === env.turnId && q.append && !q.withdrawing)
         : undefined;
     server.handleEvent(env);
+    // Run for one turn only: back to where the chat was once that turn is over.
+    if (env.type === "turn_completed" && env.sessionId && server.runOnce[env.sessionId]) {
+      const back = server.runOnce[env.sessionId];
+      delete server.runOnce[env.sessionId];
+      server.modeBySession[env.sessionId] = back;
+      setMode(connectionId, env.sessionId, back);
+    }
     if (merging?.append && env.sessionId) {
       const started = env.type === "turn_started";
       sendPrompt(
@@ -942,11 +949,22 @@ export function setFavoriteModels(connectionId: ConnectionId, providerName: stri
   void send(connectionId, { type: "set_favorite_models", data: { providerName, models } });
 }
 
-/** Switches a session between the four modes (§3.1/§4c), effective next turn. Server-persisted and broadcast. */
+/** Switches a session between the modes (§3.1/§4c), effective next turn. Server-persisted and broadcast. */
 export function setMode(connectionId: ConnectionId, sessionId: string, mode: ChatMode) {
   // projectPath for the same reason setProvider sends it, see there.
   const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
   void send(connectionId, { type: "set_mode", sessionId, data: { mode, projectPath } });
+}
+
+/** Approves the plan a chat has shown and carries it out in `mode` (§3.1 approve_plan). */
+export function approvePlan(connectionId: ConnectionId, sessionId: string, mode: ChatMode) {
+  const server = app.servers[connectionId];
+  const projectPath = server?.projectBySession[sessionId];
+  const turnId = `turn-${crypto.randomUUID().slice(0, 8)}`;
+  void send(connectionId, { type: "approve_plan", sessionId, turnId, data: { mode, projectPath } });
+  // The server answers with mode_set; the ask itself is gone once it is approved.
+  const ask = server?.planAskFor(sessionId);
+  if (ask) server?.removeAsk(ask.toolCallId);
 }
 
 /** Turns web_search/web_fetch on or off for an entire project (§3.1), scoped by projectPath, not sessionId. */

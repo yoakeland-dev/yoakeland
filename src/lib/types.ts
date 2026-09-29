@@ -35,6 +35,8 @@ export interface PermissionRequestData {
   requiresAsk: boolean;
   cacheKey: string;
   diff?: FileDiff | null;
+  /** A CLI agent asking to leave plan mode with the plan `plan_written` just showed (§3.2): answered with approve_plan. */
+  plan?: boolean;
 }
 
 /** ACP's tool kinds: what a `cli_*` agent's native tool call does (§3.2). */
@@ -117,6 +119,7 @@ export interface ModelCapabilities {
   // Informational only: no field yet actually toggles fastMode for any provider.
   fastMode?: boolean;
   contextWindows?: string[];
+  permissionModes?: ModeSpec[];
   [key: string]: unknown;
 }
 
@@ -337,7 +340,19 @@ export interface TerminalTab {
 
 // ---- Chat-side (frontend-only) message model, built up from the wire events ----
 
-export type ChatMode = "read_only" | "read_write" | "autonomous" | "plan";
+export type ChatMode = "read_only" | "read_write" | "accept_edits" | "autonomous" | "plan";
+
+/** What one mode does on a model's provider (SPEC.md §4c `permissionModes`). */
+export interface ModeSpec {
+  mode: ChatMode;
+  policy: Record<"read" | "edit" | "run" | "network", "allow" | "ask" | "deny">;
+  /** "agent": its own mode or sandbox backs the policy; "yoakeland": only the permission bridge does. */
+  enforcedBy: "agent" | "yoakeland";
+  native?: string;
+  sandbox?: boolean;
+  /** On the plan entry: how the planning is done. */
+  plan?: "native" | "emulated" | "yoakeland";
+}
 
 /** The model called `ask_user_question` (SPEC.md §3.1/§3.2): free-form when
  * `options` is absent, a picker otherwise. Available in every mode. */

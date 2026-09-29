@@ -1,7 +1,9 @@
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
   import { app } from "../state.svelte";
-  import { setMode } from "../ipc";
+  import { approvePlan } from "../ipc";
+  import { MODE_BY_ID, LADDER, sessionModes } from "../modes";
+  import type { ChatMode } from "../types";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
 
@@ -10,13 +12,18 @@
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
   const plan = $derived(server?.planBySession[sessionId]);
+  // Only a chat still in Plan has something to approve; once it is carried out the panel is a record.
+  const planning = $derived(server?.modeBySession[sessionId] === "plan");
+  // Carry it out on any rung but Read, Edit first: the plan already says what to change.
+  const rungs = $derived(LADDER.filter((m) => m.id !== "read_only" && sessionModes(server, sessionId).available.includes(m.id)));
+  const preferred = $derived<ChatMode>(rungs.some((m) => m.id === "accept_edits") ? "accept_edits" : "read_write");
 
   function close() {
     if (server?.openPlanSessionId === sessionId) server.openPlanSessionId = null;
   }
 
-  function approve(mode: "read_write" | "autonomous") {
-    if (cid) setMode(cid, sessionId, mode);
+  function approve(mode: ChatMode) {
+    if (cid) approvePlan(cid, sessionId, mode);
   }
 </script>
 
@@ -31,14 +38,22 @@
     <div class="plan-body">
       <Markdown text={plan.content} />
     </div>
-    <div class="plan-actions">
-      <button type="button" class="approve" onclick={() => approve("read_write")}
-        >Continue in Read/Write</button
-      >
-      <button type="button" class="ghost" onclick={() => approve("autonomous")}
-        >Continue in Autonomous</button
-      >
-    </div>
+    {#if planning}
+      <div class="plan-actions">
+        <span class="lead">Carry it out in</span>
+        {#each rungs as m (m.id)}
+          <button
+            type="button"
+            class={m.id === preferred ? "approve" : "ghost"}
+            {@attach tip(m.id === preferred ? "Approve the plan" : `Approve the plan and run it in ${m.label}`)}
+            onclick={() => approve(m.id)}
+          >
+            <Icon name={MODE_BY_ID[m.id].icon as any} size={13} />{m.label}
+          </button>
+        {/each}
+      </div>
+      <p class="revise">Or say what to change in the message box.</p>
+    {/if}
   </aside>
 {/if}
 
@@ -99,11 +114,27 @@
   }
   .plan-actions {
     display: flex;
+    align-items: center;
     gap: var(--space-1);
-    padding: 0.71rem;
+    padding: 0.71rem 0.71rem 0.36rem;
     border-top: 1px solid var(--panel-border);
   }
+  .lead {
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+    margin-right: 0.15rem;
+  }
+  .revise {
+    margin: 0;
+    padding: 0 0.71rem 0.71rem;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
   .plan-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
     flex: 1;
     border: none;
     border-radius: var(--radius-sm);
