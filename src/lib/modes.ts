@@ -115,10 +115,13 @@ export function chooseMode(
   setMode(cid, sessionId, id);
 }
 
-/** The tier to fall back on when the chat's model offers none of `wanted`'s neighbours: Ask always exists. */
+/** The tier to fall back on when the chat's model doesn't offer `id`: Ask where it exists, else the
+ * first rung there is (an agent that only runs with full access offers Run alone). */
 export function nearestAvailable(
   id: ChatMode,
   available: ChatMode[],
 ): ChatMode {
-  return available.includes(id) ? id : "read_write";
+  if (available.includes(id)) return id;
+  if (available.includes("read_write")) return "read_write";
+  return available.find((m) => m !== "plan") ?? "read_write";
 }

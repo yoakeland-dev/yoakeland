@@ -98,7 +98,10 @@ export type CliKind =
   | "cli_opencode"
   | "cli_gemini"
   | "cli_grok"
-  | "cli_deepseek";
+  | "cli_deepseek"
+  | "cli_amp"
+  | "cli_pi"
+  | "cli_ohmypi";
 export type ProviderKind = "api_key" | CliKind;
 export type HttpProvider = "anthropic" | "openai" | "openrouter";
 

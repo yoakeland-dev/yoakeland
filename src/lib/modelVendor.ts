@@ -11,6 +11,9 @@ export const CLI_AGENTS: Record<CliKind, { title: string; icon: string; cli: str
   cli_gemini: { title: "Gemini", icon: "gemini", cli: "gemini", defaultName: "gemini-cli" },
   cli_grok: { title: "Grok", icon: "grok", cli: "grok", defaultName: "grok-cli" },
   cli_deepseek: { title: "DeepSeek", icon: "deepseek", cli: "dsh", defaultName: "deepseek-cli" },
+  cli_amp: { title: "Amp", icon: "amp", cli: "amp", defaultName: "amp-cli" },
+  cli_pi: { title: "Pi", icon: "pi", cli: "pi", defaultName: "pi-cli" },
+  cli_ohmypi: { title: "Oh My Pi", icon: "pi", cli: "omp", defaultName: "oh-my-pi" },
 };
 
 // A provider is a credential, not a model choice (SPEC.md §6b); the picker's actual unit of
