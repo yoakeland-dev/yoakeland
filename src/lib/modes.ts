@@ -32,22 +32,19 @@ export const MODE_BY_ID = Object.fromEntries(
   MODES.map((m) => [m.id, m]),
 ) as Record<ChatMode, ModeMeta>;
 
-/** What a mode does, in words. Run says whether anything confines it, when the provider says. */
+/** What a mode does, in a few words. Run says whether anything confines it, when the provider says. */
 export function modeHint(id: ChatMode, spec?: ModeSpec): string {
   switch (id) {
     case "read_only":
-      return "Reads and searches. Can't change anything.";
+      return "Looks, changes nothing.";
     case "read_write":
-      return "Reads freely. Asks before editing, running commands or going online.";
+      return "Asks before any change.";
     case "accept_edits":
-      return "Edits project files freely. Asks before running commands or going online.";
+      return "Edits freely, asks to run.";
     case "autonomous":
-      if (!spec) return "Edits and runs commands without asking.";
-      return spec.sandbox
-        ? "Edits and runs commands without asking, inside a sandbox."
-        : "Edits and runs commands without asking. Nothing confines them.";
+      return spec?.sandbox ? "Edits and runs freely, sandboxed." : spec ? "Edits and runs freely, unconfined." : "Edits and runs freely.";
     case "plan":
-      return "Reads, then hands you a plan. Nothing changes until you approve it.";
+      return "Plans first, you approve.";
   }
 }
 

@@ -15,6 +15,7 @@
     titleFor,
     vendorMetaFor,
   } from "../modelVendor";
+  import SlideText from "./SlideText.svelte";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
 
@@ -263,11 +264,13 @@
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
     <span class="trigger-label"
-      >{currentEntry
-        ? titleFor(currentEntry)
-        : currentProvider
-          ? currentModel || (isCli(currentProvider) ? `${cliMeta(currentProvider).title} · default` : currentProvider.name)
-          : "Provider…"}</span
+      ><SlideText
+        text={currentEntry
+          ? titleFor(currentEntry)
+          : currentProvider
+            ? currentModel || (isCli(currentProvider) ? `${cliMeta(currentProvider).title} · default` : currentProvider.name)
+            : "Provider…"}
+      /></span
     >
   </Popover.Trigger>
 

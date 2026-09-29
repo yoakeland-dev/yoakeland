@@ -3,10 +3,12 @@
   import { Popover, Switch } from "bits-ui";
   import { app } from "../state.svelte";
   import { setWebToolsEnabled } from "../ipc";
-  import { LADDER, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable, getRunOnce, setRunOnce } from "../modes";
+  import { LADDER, MODES, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable, getRunOnce, setRunOnce } from "../modes";
   import type { ChatMode } from "../types";
   import Icon from "./Icon.svelte";
   import ModeDetail from "./ModeDetail.svelte";
+  import SlideText from "./SlideText.svelte";
+  import StopSlider from "./StopSlider.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -57,31 +59,20 @@
   function togglePlan() {
     if (cid && server) chooseMode(server, cid, sessionId, inPlan ? rung : "plan");
   }
-  // Press or drag on the track to pick the nearest stop.
-  let track = $state<HTMLElement>();
-  let dragging = false;
-  function follow(e: PointerEvent) {
-    if (!dragging || !track || rungs.length < 2) return;
-    const r = track.getBoundingClientRect();
-    const edge = 3 + 0.475 * 16; // the track's inset plus half the ball
-    const f = (e.clientX - r.left - edge) / (r.width - 2 * edge);
-    const j = Math.min(rungs.length - 1, Math.max(0, Math.round(f * (rungs.length - 1))));
-    hovered = rungs[j].id;
-    if (rungs[j].id !== rung) pick(rungs[j].id);
-  }
   const index = $derived(Math.max(0, rungs.findIndex((m) => m.id === rung)));
-  function onKey(e: KeyboardEvent) {
-    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-    if (!step || !rungs.length) return;
-    e.preventDefault();
-    pick(rungs[Math.min(rungs.length - 1, Math.max(0, index + step))].id);
-  }
+  const stops = $derived(rungs.map((m) => ({ key: m.id, short: m.label, name: m.label })));
+  // Which way the trigger label rolls: up when the mode went further along the scale.
+  let dir = $state(1);
+  let lastPos = -1;
+  $effect.pre(() => {
+    const at = MODES.findIndex((m) => m.id === currentMode);
+    dir = at >= lastPos ? 1 : -1;
+    lastPos = at;
+  });
   function toggleWebTools() {
     if (cid && projectPath) setWebToolsEnabled(cid, projectPath, !webToolsEnabled);
   }
 </script>
-
-<svelte:window onpointerup={() => (dragging = false)} onpointercancel={() => (dragging = false)} />
 
 <Popover.Root bind:open>
   <Popover.Trigger
@@ -93,7 +84,7 @@
       <span class="crossfade a"><Icon name={currentMeta.icon as any} size={13} /></span>
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
-    <span class="trigger-label">{currentMeta.label}{runOnceActive ? " · 1 turn" : ""}</span>
+    <span class="trigger-label"><SlideText text={currentMeta.label + (runOnceActive ? " · 1 turn" : "")} {dir} /></span>
   </Popover.Trigger>
 
   <Popover.Portal>
@@ -115,51 +106,15 @@
         {/if}
       </div>
 
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions (arrow keys move the radio selection) -->
-      <div
-        class="dial"
-        class:planning={inPlan}
-        class:hot={rung === "autonomous"}
-        style:--n={Math.max(1, rungs.length - 1)}
-        style:--i={index}
-        role="radiogroup"
-        aria-label="Mode"
-        tabindex="-1"
-        onkeydown={onKey}
-        onpointerleave={() => (hovered = null)}
-      >
-        <!-- svelte-ignore a11y_no_static_element_interactions (the labelled stops below are the accessible control) -->
-        <div
-          class="track"
-          aria-hidden="true"
-          bind:this={track}
-          onpointerdown={(e) => {
-            dragging = true;
-            follow(e);
-          }}
-          onpointermove={follow}
-        >
-          {#each rungs as m, j (m.id)}<span class="tick" style:--j={j}></span>{/each}
-          <div class="fill"><span class="ball"></span></div>
-        </div>
-        <div class="labels">
-          {#each rungs as m, j (m.id)}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={m.id === rung}
-              class="stop"
-              class:on={m.id === rung}
-              style:--j={j}
-              tabindex={m.id === rung ? 0 : -1}
-              onclick={() => pick(m.id)}
-              onpointerenter={() => (hovered = m.id)}
-            >
-              {m.label}
-            </button>
-          {/each}
-        </div>
-      </div>
+      <StopSlider
+        {stops}
+        {index}
+        hot={rung === "autonomous"}
+        dim={inPlan}
+        label="Mode"
+        onchange={(i) => pick(rungs[i].id)}
+        onhover={(i) => (hovered = i === null ? null : rungs[i].id)}
+      />
 
       <ModeDetail mode={shown} spec={info.specs?.[shown]} cli={cliProvider} />
 
@@ -240,87 +195,6 @@
     background: var(--accent-dim);
     border-color: transparent;
     color: var(--accent);
-  }
-  /* The effort slider's track and ball, with the rungs named under their stops. */
-  .dial {
-    --inset: 3px;
-    --ball: 0.95rem;
-    --edge: calc(var(--inset) + var(--ball) / 2);
-    --at: calc(var(--edge) + (100% - 2 * var(--edge)) * var(--i) / var(--n));
-    padding: 0.14rem 0.57rem 0.29rem;
-  }
-  .track {
-    position: relative;
-    height: calc(var(--ball) + 2 * var(--inset));
-    border-radius: var(--radius-pill);
-    background: var(--sidebar-active);
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
-    cursor: pointer;
-    touch-action: none;
-  }
-  .tick {
-    position: absolute;
-    left: calc(var(--edge) + (100% - 2 * var(--edge)) * var(--j) / var(--n));
-    top: 50%;
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    translate: -50% -50%;
-    background: color-mix(in srgb, var(--text) 35%, transparent);
-  }
-  .fill {
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: calc(var(--at) + var(--edge));
-    border-radius: inherit;
-    background: color-mix(in srgb, var(--text) 18%, transparent);
-    transition:
-      width calc(0.18s * var(--anim-speed, 1)) ease,
-      background calc(0.3s * var(--anim-speed, 1)) ease;
-  }
-  /* Run is where nothing asks any more: the fill warms, like the effort track at max. */
-  .dial.hot .fill {
-    background: color-mix(in srgb, var(--warning) 45%, transparent);
-  }
-  .ball {
-    position: absolute;
-    top: var(--inset);
-    right: var(--inset);
-    width: var(--ball);
-    height: var(--ball);
-    border-radius: 50%;
-    background: linear-gradient(180deg, #ffffff, #dfe1e8);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
-  /* Planning: the dial is only where the plan will land. */
-  .dial.planning .fill {
-    opacity: 0.5;
-  }
-  .labels {
-    position: relative;
-    height: 1.4rem;
-  }
-  .stop {
-    position: absolute;
-    top: 0.2rem;
-    left: calc(var(--edge) + (100% - 2 * var(--edge)) * var(--j) / var(--n));
-    translate: -50% 0;
-    padding: 0.1rem 0.4rem;
-    font-size: 0.72rem;
-    color: var(--text-dim);
-    background: none;
-    border: none;
-    border-radius: var(--radius-pill);
-    cursor: pointer;
-    transition: color 0.15s ease;
-  }
-  .stop:hover,
-  .stop.on {
-    color: var(--text);
-  }
-  .stop:focus-visible {
-    outline: 2px solid var(--text);
-    outline-offset: 1px;
   }
   .line {
     display: flex;
