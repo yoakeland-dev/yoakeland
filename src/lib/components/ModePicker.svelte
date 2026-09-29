@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
   import { Popover, Switch } from "bits-ui";
+  import { slide } from "svelte/transition";
   import { app } from "../state.svelte";
   import { setWebToolsEnabled } from "../ipc";
   import { LADDER, MODES, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable, getRunOnce, setRunOnce } from "../modes";
@@ -119,7 +120,7 @@
       <ModeDetail mode={shown} spec={info.specs?.[shown]} cli={cliProvider} />
 
       {#if shown === "autonomous" || (currentMode === "autonomous" && !hovered)}
-        <label class="line">
+        <label class="line" transition:slide={{ duration: 160 * (app.settings.animationSpeed || 0) }}>
           <span>Just this turn</span>
           <Switch.Root class="switch-root" checked={runOnce} onCheckedChange={toggleRunOnce}>
             <Switch.Thumb class="switch-thumb" />

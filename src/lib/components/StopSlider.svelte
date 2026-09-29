@@ -37,27 +37,32 @@
   const target = $derived(lean === null ? index : index + (lean - index) * PULL);
 
   // The ball eases toward its target by elapsed time, so the pace doesn't depend on the frame
-  // rate, and stretches with the animation speed setting (0 or below: no easing at all).
+  // rate, and stretches with the animation speed setting (0 or below: no easing at all). One
+  // loop runs until it arrives; a new target just changes where it is heading, so a drag's
+  // stream of pointer moves never restarts it. It follows the pointer more tightly mid-drag.
   let pos = $state(untrack(() => index));
+  let goal = untrack(() => index);
   let raf = 0;
-  $effect(() => {
-    const to = target;
+  let prev = 0;
+  function tick(now: number) {
     const speed = app.settings.animationSpeed;
-    cancelAnimationFrame(raf);
-    if (!(speed > 0)) {
-      pos = to;
+    const d = goal - pos;
+    if (!(speed > 0) || Math.abs(d) < 0.002) {
+      pos = goal;
+      raf = 0;
       return;
     }
-    let prev = performance.now();
-    const step = (now: number) => {
-      const d = to - pos;
-      pos = Math.abs(d) < 0.002 ? to : pos + d * (1 - Math.exp(-(now - prev) / (90 * speed)));
-      prev = now;
-      if (pos !== to) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
+    pos += d * (1 - Math.exp(-(now - prev) / ((dragging ? 35 : 60) * speed)));
+    prev = now;
+    raf = requestAnimationFrame(tick);
+  }
+  $effect(() => {
+    goal = target;
+    if (raf) return;
+    prev = performance.now();
+    raf = requestAnimationFrame(tick);
   });
+  $effect(() => () => cancelAnimationFrame(raf));
 
   /** Where along the stops the pointer is, as a fraction of a stop. */
   function along(e: PointerEvent) {
