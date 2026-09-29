@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { tip } from "../../tooltip.svelte";
   // A small browser for previewing pages beside the chat, on Electron's <webview> (see
   // lockDownWebviews in electron/main.js for what a page may and may not do). The viewport can
   // be fit to the panel, forced to a device size (scaled down to fit), or held at an aspect ratio.
   import { isDesktop, openUrl } from "../../platform";
+  import { registerBrowser, type BrowserController } from "../../browserAgent.svelte";
+  import { SNAPSHOT_JS, clickJs, focusJs, locateJs, scrollJs } from "../../browserSnapshot";
   import Icon from "../Icon.svelte";
   import Dropdown, { type DropdownItem } from "../Dropdown.svelte";
   import EmptyState from "./EmptyState.svelte";
@@ -17,6 +20,10 @@
     stop(): void;
     loadURL(url: string): Promise<void>;
     openDevTools(): void;
+    insertCSS(css: string): Promise<string>;
+    executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
+    sendInputEvent(event: { type: string; x?: number; y?: number; button?: string; clickCount?: number; keyCode?: string; modifiers?: string[] }): void;
+    insertText(text: string): Promise<void>;
   }
   interface Tab {
     id: string;
@@ -28,6 +35,9 @@
     canForward: boolean;
     error: string;
   }
+
+  // Which chat this panel belongs to; the agent's browser tool drives it (browserAgent.svelte.ts).
+  let { sessionId = "" }: { sessionId?: string } = $props();
 
   const newTab = (url = "about:blank"): Tab => ({
     id: crypto.randomUUID(),
@@ -112,6 +122,14 @@
       },
       // -3 is an aborted load (a new navigation replaced it), not a failure.
       "did-fail-load": (e) => e.isMainFrame && e.errorCode !== -3 && (tab.error = `${e.errorDescription} (${e.validatedURL})`),
+      // Warnings and errors, for the agent's next snapshot. Numeric levels are Electron's older form.
+      "console-message": (e) => {
+        const level = typeof e.level === "number" ? ["debug", "info", "warning", "error"][e.level] : e.level;
+        if (level !== "warning" && level !== "error") return;
+        const log = consoleByTab.get(tab.id) ?? [];
+        log.push(`[${level}] ${String(e.message).slice(0, 300)}${e.sourceId ? ` (${e.sourceId}:${e.line})` : ""}`);
+        consoleByTab.set(tab.id, log.slice(-30));
+      },
     };
     for (const [k, f] of Object.entries(handlers)) w.addEventListener(k, f);
     return {
@@ -153,6 +171,105 @@
     const [w, h] = viewport === "custom" ? [Math.max(100, customW || 0), Math.max(100, customH || 0)] : viewport.split("x").map(Number);
     return { w, h, scale: Math.min(1, W / w, H / h) };
   });
+
+  // ---- The agent's side (§3.2 browser_request): it works in whichever tab is active. ----
+
+  const consoleByTab = new Map<string, string[]>();
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /** Lets a navigation an action set off start, then waits (bounded) for it to finish. */
+  async function settle(tab: Tab) {
+    await sleep(250);
+    for (let t = 0; tab.loading && t < 15_000; t += 100) await sleep(100);
+  }
+
+  async function snapshot(tab: Tab, w: Webview): Promise<string> {
+    const text = String(await w.executeJavaScript(SNAPSHOT_JS));
+    const log = consoleByTab.get(tab.id) ?? [];
+    consoleByTab.set(tab.id, []);
+    return log.length ? `${text}\n\nConsole since the last snapshot:\n${log.join("\n")}` : text;
+  }
+
+  const KEY_NAMES: Record<string, string> = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", " ": "Space" };
+  const MODIFIERS: Record<string, string> = { ctrl: "control", control: "control", cmd: "meta", meta: "meta", alt: "alt", shift: "shift" };
+
+  /** "Enter", "a", "Control+a": a real key press, down, typed, and up. */
+  function press(w: Webview, combo: string) {
+    const parts = combo.split("+");
+    const key = parts.pop() || "+";
+    const modifiers = parts.map((m) => MODIFIERS[m.toLowerCase()]).filter(Boolean);
+    const keyCode = KEY_NAMES[key] ?? key;
+    w.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+    if (keyCode === "Enter") w.sendInputEvent({ type: "char", keyCode: "\r", modifiers });
+    else if (keyCode.length === 1) w.sendInputEvent({ type: "char", keyCode, modifiers });
+    w.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+  }
+
+  const controller: BrowserController = {
+    async run(action, args) {
+      const tab = active;
+      const w = views.get(tab.id);
+      if (!w) throw new Error("the browser isn't ready yet; try again");
+      const ref = typeof args.ref === "string" ? args.ref : "";
+      switch (action) {
+        case "navigate": {
+          tab.error = "";
+          // A superseded load (a redirect, a client-side router taking over) rejects with
+          // ERR_ABORTED; that isn't a failure. did-fail-load reports real ones on the tab.
+          await w.loadURL(String(args.url)).catch((e: unknown) => {
+            if (!String(e).includes("ERR_ABORTED")) tab.error ||= String(e);
+          });
+          break;
+        }
+        case "snapshot":
+          break;
+        case "click": {
+          const at = (await w.executeJavaScript(locateJs(ref))) as { x: number; y: number; w: number; h: number; visible: boolean };
+          // A real click where the element is when it can be aimed; a synthetic one when the pane
+          // is hidden or the element can't be hit.
+          if (at.visible && at.w > 0 && at.x >= 0 && at.y >= 0 && at.x < at.w && at.y < at.h) {
+            for (const type of ["mouseDown", "mouseUp"]) w.sendInputEvent({ type, x: at.x, y: at.y, button: "left", clickCount: 1 });
+          } else await w.executeJavaScript(clickJs(ref), true);
+          break;
+        }
+        case "type": {
+          await w.executeJavaScript(focusJs(ref), true);
+          await w.insertText(String(args.text ?? ""));
+          if (args.submit) press(w, "Enter");
+          break;
+        }
+        case "press":
+          press(w, String(args.key ?? ""));
+          break;
+        case "scroll":
+          await w.executeJavaScript(scrollJs(ref || undefined, String(args.direction ?? "down")));
+          break;
+        case "evaluate": {
+          const value = await w.executeJavaScript(String(args.expression), true);
+          const json = JSON.stringify(value ?? null, null, 1) ?? "undefined";
+          return json.length > 20_000 ? json.slice(0, 20_000) + "\n[truncated]" : json;
+        }
+        case "back":
+        case "forward":
+          if (action === "back" ? !w.canGoBack() : !w.canGoForward()) throw new Error(`nothing to go ${action} to`);
+          if (action === "back") w.goBack();
+          else w.goForward();
+          break;
+        case "reload":
+          w.reload();
+          break;
+        default:
+          throw new Error(`unknown browser action ${action}`);
+      }
+      await settle(tab);
+      if (tab.error && ["navigate", "back", "forward", "reload"].includes(action)) throw new Error(`couldn't load the page: ${tab.error}`);
+      return snapshot(tab, w);
+    },
+  };
+
+  $effect(() => {
+    if (sessionId && isDesktop) return registerBrowser(sessionId, controller);
+  });
 </script>
 
 {#if !isDesktop}
@@ -163,11 +280,11 @@
       <div class="tabs">
         {#each tabs as tab (tab.id)}
           <div class="tab" class:active={tab.id === activeId}>
-            <button type="button" class="tab-main" title={tab.url} onclick={() => (activeId = tab.id)}>
+            <button type="button" class="tab-main" {@attach tip(tab.url)} onclick={() => (activeId = tab.id)}>
               {#if tab.loading}<Icon name="loader-2" size={12} />{/if}
               <span>{tab.title || tab.url}</span>
             </button>
-            <button type="button" class="tab-x" title="Close tab" onclick={() => closeTab(tab.id)}>
+            <button type="button" class="tab-x" {@attach tip("Close tab")} onclick={() => closeTab(tab.id)}>
               <Icon name="xmark" size={11} />
             </button>
           </div>
@@ -176,16 +293,16 @@
     {/if}
 
     <div class="bar">
-      <button type="button" class="btn" title="Back" disabled={!active.canBack} onclick={() => views.get(active.id)?.goBack()}>
+      <button type="button" class="btn" {@attach tip("Back")} disabled={!active.canBack} onclick={() => views.get(active.id)?.goBack()}>
         <Icon name="arrow-left" size={14} />
       </button>
-      <button type="button" class="btn" title="Forward" disabled={!active.canForward} onclick={() => views.get(active.id)?.goForward()}>
+      <button type="button" class="btn" {@attach tip("Forward")} disabled={!active.canForward} onclick={() => views.get(active.id)?.goForward()}>
         <Icon name="arrow-right" size={14} />
       </button>
       <button
         type="button"
         class="btn"
-        title={active.loading ? "Stop" : "Reload"}
+        {@attach tip(active.loading ? "Stop" : "Reload")}
         onclick={() => (active.loading ? views.get(active.id)?.stop() : views.get(active.id)?.reload())}
       >
         <Icon name={active.loading ? "xmark" : "refresh"} size={14} />
@@ -208,17 +325,17 @@
           }
         }}
       />
-      <button type="button" class="btn" title="New tab" onclick={addTab}><Icon name="plus" size={14} /></button>
+      <button type="button" class="btn" {@attach tip("New tab")} onclick={addTab}><Icon name="plus" size={14} /></button>
       <button
         type="button"
         class="btn"
-        title="Open in your browser"
+        {@attach tip("Open in your browser")}
         disabled={!/^https?:/.test(active.url)}
         onclick={() => void openUrl(active.url)}
       >
         <Icon name="external-link" size={14} />
       </button>
-      <button type="button" class="btn" title="Developer tools" onclick={() => views.get(active.id)?.openDevTools()}>
+      <button type="button" class="btn" {@attach tip("Developer tools")} onclick={() => views.get(active.id)?.openDevTools()}>
         <Icon name="code" size={14} />
       </button>
       <Dropdown
@@ -235,7 +352,7 @@
         <input type="number" min="100" max="7680" bind:value={customW} aria-label="Width" />
         <span>×</span>
         <input type="number" min="100" max="7680" bind:value={customH} aria-label="Height" />
-        <button type="button" class="btn" title="Swap width and height" onclick={() => ([customW, customH] = [customH, customW])}>
+        <button type="button" class="btn" {@attach tip("Swap width and height")} onclick={() => ([customW, customH] = [customH, customW])}>
           <Icon name="arrows-exchange" size={13} />
         </button>
       </div>
@@ -406,8 +523,9 @@
     visibility: hidden;
     overflow: hidden;
   }
+  /* inherit, not visible: a hidden panel (ChatSidebar's keep-layout pane) must hide it too. */
   .frame.shown {
-    visibility: visible;
+    visibility: inherit;
   }
   .stage.framed .frame {
     box-shadow: 0 0 0 1px var(--panel-border);

@@ -68,6 +68,8 @@ function createWindow() {
       sandbox: true,
       // The side panel's browser (BrowserPanel.svelte); locked down in lockDownWebviews.
       webviewTag: true,
+      // Chromium's built-in PDF viewer, for the explorer's PDF preview (FileEditor.svelte).
+      plugins: true,
       additionalArguments: [
         `--yoake-chrome=${JSON.stringify({ overlay: overlayOn, trafficLights })}`,
       ],
@@ -153,13 +155,22 @@ handle("shell:style_overlay", ({ symbolColor, height }, event) => {
 const WEB = /^(https?:|about:blank)/;
 const BROWSER_PARTITION = "persist:yoake-browser";
 function lockDownWebviews() {
-  session.fromPartition(BROWSER_PARTITION).setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  const browser = session.fromPartition(BROWSER_PARTITION);
+  browser.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  // Requests aren't the only way in: synchronous checks (permissions.query, device lists) are
+  // answered separately, and default to allowed.
+  browser.setPermissionCheckHandler(() => false);
   app.on("web-contents-created", (_e, contents) => {
     contents.on("will-attach-webview", (e, prefs, params) => {
       delete prefs.preload;
+      delete prefs.preloadURL;
       prefs.nodeIntegration = false;
+      prefs.nodeIntegrationInSubFrames = false;
       prefs.contextIsolation = true;
       prefs.sandbox = true;
+      // A `disablewebsecurity` attribute would otherwise turn off same-origin checks.
+      prefs.webSecurity = true;
+      prefs.allowRunningInsecureContent = false;
       if (!WEB.test(params.src) || params.partition !== BROWSER_PARTITION) e.preventDefault();
     });
     if (contents.getType() !== "webview") return;
@@ -167,9 +178,13 @@ function lockDownWebviews() {
       if (WEB.test(url)) void contents.loadURL(url);
       return { action: "deny" };
     });
-    contents.on("will-navigate", (e, url) => {
-      if (!WEB.test(url)) e.preventDefault();
-    });
+    // The agent drives this browser too (browserAgent.svelte.ts), so a server redirect gets the
+    // same web-only rule as a navigation.
+    for (const ev of ["will-navigate", "will-redirect"]) {
+      contents.on(ev, (e, url) => {
+        if (!WEB.test(url)) e.preventDefault();
+      });
+    }
   });
 }
 
