@@ -16,7 +16,10 @@
   const planning = $derived(server?.modeBySession[sessionId] === "plan");
   // Carry it out on any rung but Read, Edit first: the plan already says what to change.
   const rungs = $derived(LADDER.filter((m) => m.id !== "read_only" && sessionModes(server, sessionId).available.includes(m.id)));
-  const preferred = $derived<ChatMode>(rungs.some((m) => m.id === "accept_edits") ? "accept_edits" : "read_write");
+  // Where the picker's dial says it lands, else Edit: the plan already says what to change.
+  const preferred = $derived<ChatMode>(
+    rungs.find((m) => m.id === server?.tierBeforePlan[sessionId])?.id ?? (rungs.some((m) => m.id === "accept_edits") ? "accept_edits" : "read_write"),
+  );
 
   function close() {
     if (server?.openPlanSessionId === sessionId) server.openPlanSessionId = null;
