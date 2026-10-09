@@ -1,4 +1,5 @@
 // Shared between ToolCallCard and ToolCallGroup so both render the same icon/label for a tool name.
+import { humanizeTool, mcpToolParts } from "./extensions";
 import type { NativeToolFields, NativeToolKind } from "./types";
 
 export type ToolIconName =
@@ -16,12 +17,15 @@ export type ToolIconName =
   | "robot"
   | "world-www"
   | "player-stop"
-  | "message-question";
+  | "message-question"
+  | "plug-connected"
+  | "sparkles";
 
 export const toolMeta: Record<string, { icon: ToolIconName; label: string }> = {
   file_read: { icon: "file-text", label: "Read" },
   file_write: { icon: "file-plus", label: "Write" },
   file_edit: { icon: "pencil", label: "Edit" },
+  search: { icon: "search", label: "Search" },
   bash: { icon: "terminal-2", label: "Bash" },
   web_search: { icon: "search", label: "Web Search" },
   web_fetch: { icon: "world", label: "Web Fetch" },
@@ -32,6 +36,7 @@ export const toolMeta: Record<string, { icon: ToolIconName; label: string }> = {
   subagent: { icon: "robot", label: "Subagent" },
   ask_user_question: { icon: "message-question", label: "Question" },
   write_plan: { icon: "file-text", label: "Plan" },
+  skill: { icon: "sparkles", label: "Skill" },
 };
 
 // CLI agents use their own tool names (`Bash`, `commandExecution`, …), so a native call is identified by its ACP `kind`.
@@ -59,6 +64,8 @@ export function metaFor(call: CallLike): { icon: ToolIconName; label: string } {
     const k = KIND_META[call.kind ?? "other"] ?? KIND_META.other;
     return { icon: k.icon, label: k.label };
   }
+  const mcp = mcpToolParts(call.name);
+  if (mcp) return { icon: "plug-connected", label: mcp.tool ? `${mcp.server}: ${humanizeTool(mcp.tool)}` : mcp.server };
   return toolMeta[call.name] ?? { icon: "square", label: call.name };
 }
 
@@ -73,7 +80,7 @@ export function activityFor(call: CallLike): string {
 
 /** One-line preview of a call's args. Args come off the wire/persisted history, so a
  * missing or malformed value here shouldn't be able to crash a card. */
-export function summaryFor(call: { args?: Record<string, unknown> } & NativeToolFields): string {
+export function summaryFor(call: { name?: string; args?: Record<string, unknown> } & NativeToolFields): string {
   if (call.native) {
     // A title that repeats the label ("Edit /x" next to "Edit") drops it.
     if (call.title) {
@@ -83,12 +90,17 @@ export function summaryFor(call: { args?: Record<string, unknown> } & NativeTool
     if (call.locations?.length) return call.locations[0];
   }
   const args = call.args ?? {};
+  if (Array.isArray(args.questions)) {
+    const first = (args.questions[0] as { question?: unknown } | undefined)?.question; // ask_user_question
+    if (typeof first === "string") return args.questions.length > 1 ? `${first} (+${args.questions.length - 1})` : first;
+  }
   if (typeof args.description === "string" && args.prompt !== undefined) return args.description; // subagent
   if (typeof args.action === "string") {
     // browser: "navigate localhost:3000", "click 12"
     const target = [args.url, args.ref && `#${args.ref}`, args.key, args.text].find((v) => typeof v === "string" && v);
     return target ? `${args.action} ${String(target).replace(/^https?:\/\//, "")}` : args.action;
   }
+  if (call.name === "skill" && typeof args.name === "string") return args.name;
   if (typeof args.name === "string" && typeof args.command === "string") return `${args.name}: ${args.command}`; // terminal_start
   if (typeof args.id === "string") return typeof args.input === "string" && args.input ? `${args.id} ← ${JSON.stringify(args.input)}` : args.id; // terminal_output/stop
   if (typeof args.path === "string") {
@@ -117,22 +129,37 @@ const VERB: Record<string, (n: number) => string> = {
   terminal_stop: (n) => `stopped ${n} terminal${n === 1 ? "" : "s"}`,
   browser: (n) => (n === 1 ? "used the browser" : `used the browser ${n} times`),
   subagent: (n) => `ran ${n} subagent${n === 1 ? "" : "s"}`,
+  search: (n) => (n === 1 ? "searched the code" : `searched the code ${n} times`),
+  ask_user_question: (n) => (n === 1 ? "asked a question" : `asked ${n} questions`),
+  write_plan: (n) => (n === 1 ? "wrote a plan" : `wrote the plan ${n} times`),
+  skill: (n) => (n === 1 ? "loaded a skill" : `loaded ${n} skills`),
 };
+
+const MAX_CLAUSES = 3;
 
 /** Natural-language brief for a closed run of calls, grouped by tool name ("3 edits + 1 read").
  * `capitalize: false` lets WorkGroup prefix its own "Thought, then " as one sentence. */
 export function briefFor(calls: CallLike[], opts: { capitalize?: boolean } = {}): string {
   // Native calls group by kind: agents disagree on tool names but not kinds.
   const keyOf = (c: CallLike) =>
-    c.native && (c.name === "Task" || c.name === "Agent") ? "subagent" : c.native ? `kind:${c.kind ?? "other"}` : c.name;
+    c.native && (c.name === "Task" || c.name === "Agent") ? "subagent" : c.native ? `kind:${c.kind ?? "other"}` : mcpToolParts(c.name) ? `mcp:${mcpToolParts(c.name)!.server}` : c.name;
   const counts = new Map<string, number>();
   for (const c of calls) counts.set(keyOf(c), (counts.get(keyOf(c)) ?? 0) + 1);
-  const text = [...counts.entries()]
+  // Past a few kinds the line stops being a glance: the busiest ones, then "N more".
+  const entries = [...counts.entries()];
+  const shown = new Set(
+    [...entries].sort((x, y) => y[1] - x[1]).slice(0, MAX_CLAUSES).map(([key]) => key),
+  );
+  const clauses = entries
+    .filter(([key]) => shown.has(key))
     .map(([key, n]) => {
       if (key.startsWith("kind:")) return (KIND_META[key.slice(5) as NativeToolKind] ?? KIND_META.other).verb(n);
+      if (key.startsWith("mcp:")) return n === 1 ? `used ${key.slice(4)}` : `used ${key.slice(4)} ${n} times`;
       return (VERB[key] ?? ((count: number) => `ran ${count} ${key} call${count === 1 ? "" : "s"}`))(n);
-    })
-    .join(", ");
+    });
+  const hidden = entries.filter(([key]) => !shown.has(key)).reduce((sum, [, n]) => sum + n, 0);
+  if (hidden) clauses.push(`${hidden} more`);
+  const text = clauses.join(", ");
   if (opts.capitalize === false) return text;
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
@@ -143,6 +170,7 @@ const NAME_KIND: Record<string, NativeToolKind> = {
   file_edit: "edit",
   web_search: "search",
   web_fetch: "fetch",
+  search: "search",
 };
 
 /** Which DotMatrix pattern a running call shows. */

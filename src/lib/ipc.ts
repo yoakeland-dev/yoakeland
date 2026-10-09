@@ -1,6 +1,7 @@
-import type { ChatMode, Envelope, FileContent, FileDiff, GitChange, ModelRole, ServerStatus, TreeEntry } from "./types";
+import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerStatus, TreeEntry, ContextBreakdown } from "./types";
 import {
   app,
+  CHAT_PROJECT,
   ServerState,
   forgetKnownServer,
   loadKnownServers,
@@ -9,12 +10,32 @@ import {
   type KnownServer,
 } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
-import { isDesktop, invoke, listen, pickFiles } from "./platform";
+import { briefOf, continuationDraft } from "./chatBrief";
+import { isDesktop, invoke, listen, openUrl, pickFiles } from "./platform";
 import { bytesToBase64, base64ToBytes } from "./base64";
 import { handleBrowserRequest } from "./browserAgent.svelte";
 import type { UsageReport } from "./usage";
+import { parseThemeFiles } from "./theme";
 
 let wired = false;
+
+/** Reads the themes folder into `app.customThemes` and re-applies, so an edited active theme updates live.
+ * Returns a note for the UI (what was wrong with which file), or null when all is well. */
+export async function loadCustomThemes(): Promise<string | null> {
+  try {
+    const { themes, problems } = parseThemeFiles(await invoke("load_themes"));
+    app.customThemes = themes;
+    app.applySettings();
+    return problems.length ? `Skipped ${problems.join("; ")}` : null;
+  } catch (e) {
+    return String(e instanceof Error ? e.message : e);
+  }
+}
+
+/** A file inside the themes folder (seeded with an example if empty), so revealing it opens the folder. */
+export async function themesRevealPath(): Promise<string> {
+  return invoke<string>("themes_reveal_path");
+}
 
 // --- Liveness (§2a) ---
 // A dead network path often produces no read error at all, so instead of only reacting to a
@@ -154,6 +175,14 @@ export function wireEvents() {
       uploadWaiters.get(data.uploadId)?.resolve(data);
       return;
     }
+    if (env.type === "openrouter_oauth_url") {
+      oauthUrlWaiters.get(connectionId)?.(env.data as { requestId: string; url: string });
+      return;
+    }
+    if (env.type === "mcp_oauth_url") {
+      mcpOauthWaiters.get(connectionId)?.(env.data as { requestId: string; url: string });
+      return;
+    }
     if (env.type === "browser_request") {
       void handleBrowserRequest(connectionId, env.data as never, (data) => void send(connectionId, { type: "browser_response", data: data as Record<string, unknown> }));
       return;
@@ -170,6 +199,8 @@ export function wireEvents() {
         ? server.queuedBySession[env.sessionId]?.find((q) => q.turnId === env.turnId && q.append && !q.withdrawing)
         : undefined;
     server.handleEvent(env);
+    // A chat's real directory is only in session summaries; ask once its first output exists.
+    if ((env.type === "tool_result" || env.type === "turn_completed") && env.sessionId) learnChatRoot(connectionId, server, env.sessionId);
     if (env.type === "steer_rejected" && env.sessionId) sendPrompt(connectionId, env.sessionId, (env.data as { prompt: string }).prompt);
     // Run for one turn only: back to where the chat was once that turn is over.
     if (env.type === "turn_completed" && env.sessionId && server.runOnce[env.sessionId]) {
@@ -194,6 +225,7 @@ export function wireEvents() {
     }
   });
 
+  listen("yoake-themes-changed", () => void loadCustomThemes());
   listen<{ connectionId: string; message: string }>("yoake-log", (p) => app.log(p.message));
 
   listen<{ connectionId: string; reason: string }>("yoake-disconnected", (p) => {
@@ -218,22 +250,6 @@ export async function probeUnix(path: string): Promise<boolean> {
   return invoke("probe_unix", { path });
 }
 
-export interface SpawnServerOpts {
-  binPath: string;
-  host: string;
-  port: number;
-  token: string;
-}
-
-async function spawnDetachedServer(opts: SpawnServerOpts) {
-  await invoke("spawn_detached_server", {
-    binPath: opts.binPath,
-    host: opts.host,
-    port: opts.port,
-    token: opts.token,
-  });
-}
-
 export interface SpawnUnixServerOpts {
   binPath: string;
   socketPath: string;
@@ -252,10 +268,11 @@ function afterConnect(connectionId: ConnectionId) {
   startLiveness(connectionId);
   listProjects(connectionId);
   listProviders(connectionId);
+  server.modelsAsked.clear(); // a reconnect (or restarted server) is worth one fresh try per provider
   detectCli(connectionId);
   listNotifications(connectionId);
   // The sidebar groups sessions across every saved project, not just the currently open one.
-  void listSessionsForProjects(connectionId, server.recentProjects);
+  void listSessionsForProjects(connectionId, [CHAT_PROJECT, ...server.recentProjects]);
   if (server.currentProjectPath) listFiles(connectionId, server.currentProjectPath);
   if (server.connectionMode === "local") listTokens(connectionId);
   // Only the desktop app has a browser panel the agent can drive (§3.2 browser_host).
@@ -623,11 +640,17 @@ export function cancelEditingMessage(connectionId: ConnectionId, sessionId: stri
 export function getSessionHistory(connectionId: ConnectionId, sessionId: string) {
   const server = app.servers[connectionId];
   if (!server) return;
-  server.setSessionSyncing(sessionId, true);
+  // Only a cold open dims the chat: a cached transcript is already on screen, so the refetch
+  // repaints it silently. Nor does one that's known to be empty: there's nothing to wait for, and
+  // syncing reads as "not a new chat", docking the composer until the reply lands.
+  if (!server.messagesBySession[sessionId]?.length && server.sessionById.get(sessionId)?.messageCount !== 0)
+    server.setSessionSyncing(sessionId, true);
   // A restarted server forgets the session-to-project binding (§4b), so send it explicitly
   // or the history resolves against the default project and comes back empty.
   const projectPath = server.projectBySession[sessionId];
   void send(connectionId, { type: "get_session_history", data: { sessionId, projectPath } });
+  // Nothing else clears this if the reply never comes, leaving the chat inert and blank.
+  setTimeout(() => app.servers[connectionId]?.setSessionSyncing(sessionId, false), 8000);
 }
 
 /** Re-sends a resumed session's provider/model choice from `providerBySession`: this is
@@ -660,6 +683,8 @@ function reassertSessionSettings(connectionId: ConnectionId, sessionId: string) 
 export function openChatSession(connectionId: ConnectionId, sessionId: string) {
   const server = app.servers[connectionId];
   if (!server) return;
+  // A pairing is one chat in the UI: either half opens it the same way round.
+  sessionId = server.splitAnchorOf(sessionId)?.sessionId ?? sessionId;
   app.activeConnectionId = connectionId;
   if (sessionId !== server.currentSessionId) server.pushNavHistory(server.currentSessionId);
   server.openSession(sessionId);
@@ -705,14 +730,42 @@ export function respondPermission(
   allowed: boolean,
   remember: boolean,
   feedback?: string,
+  /** A picked suggestion (SPEC.md §3.1 permission_response): which rule to remember, and where. */
+  choice?: { ruleId?: string; scope?: string },
 ) {
   void send(connectionId, {
     type: "permission_response",
     sessionId,
     turnId,
     toolCallId,
-    data: { allowed, remember, ...(feedback ? { feedback } : {}) },
+    data: {
+      allowed,
+      remember,
+      ...(feedback ? { feedback } : {}),
+      ...(choice?.ruleId ? { ruleId: choice.ruleId } : {}),
+      ...(choice?.scope ? { scope: choice.scope } : {}),
+    },
   });
+}
+
+// ---- Permission rules (§3.1 list_permission_rules/add_permission_rule/delete_permission_rule) ----
+
+/** The reply, `permission_rules`, lands in `server.permissionRules[projectPath]`. */
+export function listPermissionRules(connectionId: ConnectionId, projectPath?: string) {
+  void send(connectionId, { type: "list_permission_rules", data: { projectPath } });
+}
+
+export function addPermissionRule(
+  connectionId: ConnectionId,
+  projectPath: string | undefined,
+  scope: string,
+  rule: { tool: string; text: string; decision: string; modes?: string[] },
+) {
+  void send(connectionId, { type: "add_permission_rule", data: { projectPath, scope, rule } });
+}
+
+export function deletePermissionRule(connectionId: ConnectionId, projectPath: string | undefined, id: string) {
+  void send(connectionId, { type: "delete_permission_rule", data: { projectPath, id } });
 }
 
 /** Rejects a pending permission with an optional note on *why*, fed to the model as part of
@@ -794,6 +847,15 @@ export function openInSidePanel(connectionId: ConnectionId, sessionId: string) {
   }
 }
 
+/** Makes `sessionId` the only chat on screen: drops its pairing (whichever half it is) and opens it. */
+export function focusChat(connectionId: ConnectionId, sessionId: string) {
+  const server = app.servers[connectionId];
+  if (!server) return;
+  const anchor = server.sessionById.get(sessionId)?.linkedSessionId ? sessionId : server.splitAnchorOf(sessionId)?.sessionId;
+  if (anchor) setSessionLayout(connectionId, anchor, null);
+  openChatSession(connectionId, sessionId);
+}
+
 /** Browses the *backend's* filesystem (§3.1): a native OS dialog here would browse the wrong disk over a remote connection. */
 export function listDirectory(connectionId: ConnectionId, path?: string) {
   void send(connectionId, { type: "list_directory", data: { path: path ?? "" } });
@@ -812,6 +874,7 @@ export function selectProject(connectionId: ConnectionId, path: string) {
   const server = app.servers[connectionId];
   if (!server) return;
   server.selectProject(path);
+  if (path === CHAT_PROJECT) return; // no folder to open; the server makes its scratch dir on the first prompt
   if (server.connectionStatus === "connected") {
     openProject(connectionId, path);
     listSessionsForProject(connectionId, path);
@@ -896,19 +959,48 @@ export async function newChat(connectionId: ConnectionId, projectPath?: string) 
   const server = app.servers[connectionId];
   if (!server) return;
   app.activeConnectionId = connectionId;
-  let path = projectPath ?? server.currentProjectPath;
-  if (!path) {
-    const picked = await browseAndAddProject(connectionId);
-    if (!picked) return;
-    if (picked.connectionId !== connectionId) return newChat(picked.connectionId, picked.path);
-    path = picked.path;
-  }
-  if (path !== server.currentProjectPath) selectProject(connectionId, path);
+  // No project given: a chat with the server as its computer (§4b), not the current project.
+  const path = projectPath ?? CHAT_PROJECT;
+  if (path !== CHAT_PROJECT && path !== server.currentProjectPath) selectProject(connectionId, path);
   const current = server.currentSessionId;
   if (current && (server.messagesBySession[current] ?? []).length === 0) {
     server.discardUnsentSession(current);
   }
-  server.newSessionInProject(path);
+  server.freshChatId = server.newSessionInProject(path);
+}
+
+/** A chat can't change root, so "moving" it starts a session in the project: the chat's files are
+ * copied in (§4b import_chat_files) and the new session's first message is drafted from a digest of
+ * the conversation, for the user to read and send. The chat itself stays until it's deleted. */
+export async function moveChatToProject(connectionId: ConnectionId, sessionId: string, project: string) {
+  const server = app.servers[connectionId];
+  if (!server || server.connectionStatus !== "connected") return;
+  if (!server.messagesBySession[sessionId]?.length) {
+    getSessionHistory(connectionId, sessionId);
+    for (let i = 0; i < 20 && !server.messagesBySession[sessionId]?.length; i++) await new Promise((r) => setTimeout(r, 100));
+  }
+  let imported: { dir: string; files: number } | undefined;
+  try {
+    const r = await rpc<{ error?: string; dir?: string; files?: number }>(connectionId, "import_chat_files", { sessionId, target: project });
+    if (r.dir) imported = { dir: r.dir, files: r.files ?? 0 };
+    else if (r.error && !/no files/.test(r.error) && !confirm(`Couldn't copy the chat's files: ${r.error}. Continue without them?`)) return;
+  } catch (e) {
+    if (!confirm(`Couldn't copy the chat's files: ${e instanceof Error ? e.message : e}. Continue without them?`)) return;
+  }
+  if (imported) listFiles(connectionId, project);
+  await newChat(connectionId, project);
+  const id = server.currentSessionId;
+  if (!id) return;
+  const title = server.sessionById.get(sessionId)?.title || "Untitled chat";
+  server.restoredDraftBySession[id] = continuationDraft(title, briefOf(server.messagesBySession[sessionId] ?? []), imported);
+}
+
+/** A fresh chat in `projectPath` (CHAT_PROJECT for none) whose composer already holds `prompt`, unsent. */
+export async function startChatWith(connectionId: ConnectionId, projectPath: string, prompt: string) {
+  await newChat(connectionId, projectPath);
+  const server = app.servers[connectionId];
+  const id = server?.currentSessionId;
+  if (server && id) server.restoredDraftBySession[id] = prompt;
 }
 
 export function listProjects(connectionId: ConnectionId) {
@@ -925,6 +1017,15 @@ export function listSessionsForProject(connectionId: ConnectionId, projectPath: 
   const server = app.servers[connectionId];
   if (server) server.refreshingProjects[projectPath] = true;
   void send(connectionId, { type: "list_sessions", data: { projectPath } });
+}
+
+const rootAsked = new Set<string>();
+/** A project-less chat's scratch path (the panels need it) only arrives in session summaries. */
+function learnChatRoot(connectionId: ConnectionId, server: ServerState, sessionId: string) {
+  if (server.projectBySession[sessionId] !== CHAT_PROJECT || server.rootBySession[sessionId] || rootAsked.has(sessionId)) return;
+  rootAsked.add(sessionId);
+  setTimeout(() => rootAsked.delete(sessionId), 1500);
+  listSessionsForProject(connectionId, CHAT_PROJECT);
 }
 
 export function listSessionsForProjects(connectionId: ConnectionId, paths: string[]) {
@@ -969,6 +1070,15 @@ export function listModels(connectionId: ConnectionId, providerName: string) {
   void send(connectionId, { type: "list_models", data: { providerName } });
 }
 
+/** `listModels` once per provider per server: a failed ask (host down) isn't asked again by every
+ * picker that mounts, since each one costs the server a dial. Re-registering the provider resets it. */
+export function ensureModels(connectionId: ConnectionId, providerName: string) {
+  const server = app.servers[connectionId];
+  if (!server || server.modelsAsked.has(providerName)) return;
+  server.modelsAsked.add(providerName);
+  listModels(connectionId, providerName);
+}
+
 /** Replaces one provider's favorite-model list (§3.1): a full replacement, not a single toggle. */
 export function setFavoriteModels(connectionId: ConnectionId, providerName: string, models: string[]) {
   void send(connectionId, { type: "set_favorite_models", data: { providerName, models } });
@@ -1011,6 +1121,131 @@ export function removeProvider(connectionId: ConnectionId, name: string) {
   void send(connectionId, { type: "remove_provider", data: { name } });
 }
 
+// The server mints the request id, so openrouter_oauth_url can't ride rpc(); one sign-in per connection.
+const oauthUrlWaiters = new Map<ConnectionId, (d: { requestId: string; url: string }) => void>();
+
+/** OpenRouter sign-in (SPEC.md openrouter_oauth_*). The desktop shell listens on a loopback port for the
+ * redirect; the server builds the PKCE URL and swaps the code for a key, stored as a provider with
+ * authMethod "oauth". Resolves once the code is handed to the server: provider_registered (or an error
+ * event) follows. Rejects if the browser step fails, times out or is cancelled. */
+export async function signInOpenRouter(connectionId: ConnectionId, name: string) {
+  const { callbackUrl } = await invoke<{ callbackUrl: string }>("oauth_listen");
+  try {
+    const { requestId, url } = await new Promise<{ requestId: string; url: string }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        oauthUrlWaiters.delete(connectionId);
+        reject(new Error("the server didn't answer the sign-in request"));
+      }, 15_000);
+      oauthUrlWaiters.set(connectionId, (d) => {
+        clearTimeout(timer);
+        oauthUrlWaiters.delete(connectionId);
+        resolve(d);
+      });
+      void send(connectionId, { type: "openrouter_oauth_start", data: { name, callbackUrl } });
+    });
+    await openUrl(url);
+    const code = await invoke<string>("oauth_wait");
+    void send(connectionId, { type: "openrouter_oauth_complete", data: { requestId, code } });
+  } catch (e) {
+    void invoke("oauth_cancel").catch(() => {});
+    throw e;
+  }
+}
+
+export const cancelOpenRouterSignIn = () => invoke("oauth_cancel");
+
+// ---- MCP servers (§3.1 list_mcp_servers … mcp_sign_out) ----
+// Every reply is an `mcp_servers` event, which lands in `server.mcpByProject[projectPath]`; a refused
+// change carries `error`. A server's own state (connecting → ready) is pushed as it happens.
+
+export function listMcpServers(connectionId: ConnectionId, projectPath: string | undefined, connect = false) {
+  void send(connectionId, { type: "list_mcp_servers", data: { projectPath, connect } });
+}
+
+/** Adds a server (`replacing` empty) or edits one. Secrets sent back as the `redacted` placeholder are kept. */
+export function saveMcpServer(connectionId: ConnectionId, projectPath: string | undefined, name: string, config: McpServerConfig, replacing = "") {
+  void send(connectionId, { type: "save_mcp_server", data: { projectPath, name, replacing, config } });
+}
+
+export function removeMcpServer(connectionId: ConnectionId, projectPath: string | undefined, name: string) {
+  void send(connectionId, { type: "remove_mcp_server", data: { projectPath, name } });
+}
+
+/** Switches your own server on or off; for a project's server, approves (true) or refuses (false) what its .mcp.json runs. */
+export function setMcpServerEnabled(connectionId: ConnectionId, projectPath: string | undefined, name: string, enabled: boolean) {
+  void send(connectionId, { type: "set_mcp_server_enabled", data: { projectPath, name, enabled } });
+}
+
+export function setMcpToolEnabled(connectionId: ConnectionId, projectPath: string | undefined, name: string, tool: string, enabled: boolean) {
+  void send(connectionId, { type: "set_mcp_tool_enabled", data: { projectPath, name, tool, enabled } });
+}
+
+export function reconnectMcpServer(connectionId: ConnectionId, projectPath: string | undefined, name: string) {
+  void send(connectionId, { type: "reconnect_mcp_server", data: { projectPath, name } });
+}
+
+export function signOutMcpServer(connectionId: ConnectionId, projectPath: string | undefined, name: string) {
+  void send(connectionId, { type: "mcp_sign_out", data: { projectPath, name } });
+}
+
+const mcpOauthWaiters = new Map<ConnectionId, (d: { requestId: string; url: string }) => void>();
+
+/** Signs in to a remote MCP server. The desktop shell listens on a loopback port for the redirect, so the
+ * code reaches the server whichever machine it runs on. Resolves once the server has the code
+ * (`mcp_servers` follows, with the server signed in or an `error`); rejects if the browser step fails. */
+export async function signInMcpServer(connectionId: ConnectionId, projectPath: string | undefined, name: string) {
+  const { callbackUrl } = await invoke<{ callbackUrl: string }>("oauth_listen");
+  try {
+    const { requestId, url } = await new Promise<{ requestId: string; url: string }>((resolve, reject) => {
+      const waiter = (d: { requestId: string; url: string }) => {
+        clearTimeout(timer);
+        if (mcpOauthWaiters.get(connectionId) === waiter) mcpOauthWaiters.delete(connectionId);
+        resolve(d);
+      };
+      const timer = setTimeout(() => {
+        if (mcpOauthWaiters.get(connectionId) === waiter) mcpOauthWaiters.delete(connectionId);
+        reject(new Error("the server didn't answer the sign-in request"));
+      }, 20_000);
+      mcpOauthWaiters.set(connectionId, waiter);
+      void send(connectionId, { type: "mcp_oauth_start", data: { projectPath, name, callbackUrl } });
+    });
+    await openUrl(url);
+    const { code, state, iss } = await invoke<{ code: string; state?: string; iss?: string }>("oauth_wait_params");
+    void send(connectionId, { type: "mcp_oauth_complete", data: { projectPath, requestId, code, state, iss } });
+  } catch (e) {
+    void invoke("oauth_cancel").catch(() => {});
+    throw e;
+  }
+}
+
+/** What other tools on the server's machine already have configured (§3.1 scan_mcp_imports). Reads only. */
+export const scanMcpImports = (cid: ConnectionId, projectPath: string | undefined) =>
+  rpc<McpImportData>(cid, "scan_mcp_imports", { projectPath });
+
+/** Copies the chosen candidates into your servers; the daemon re-reads each source file, so no secret passes
+ * through here. Answered with `mcp_servers` (the new servers, or an `error` and nothing saved). */
+export function importMcpServers(connectionId: ConnectionId, projectPath: string | undefined, items: { id: string; name?: string }[]) {
+  void send(connectionId, { type: "import_mcp_servers", data: { projectPath, items } });
+}
+
+/** Gives up a sign-in waiting on the browser; the pending `signInMcpServer` rejects with "sign-in cancelled". */
+export const cancelMcpSignIn = () => invoke("oauth_cancel");
+
+// ---- Skills (§3.1 list_skills, set_skill_enabled, get_skill) ----
+// Replies land in `server.skillsByProject[projectPath]` and `server.skillDetails[dir]`.
+
+export function listSkills(connectionId: ConnectionId, projectPath: string | undefined) {
+  void send(connectionId, { type: "list_skills", data: { projectPath } });
+}
+
+export function setSkillEnabled(connectionId: ConnectionId, projectPath: string | undefined, dir: string, enabled: boolean) {
+  void send(connectionId, { type: "set_skill_enabled", data: { projectPath, dir, enabled } });
+}
+
+export function getSkill(connectionId: ConnectionId, projectPath: string | undefined, dir: string) {
+  void send(connectionId, { type: "get_skill", data: { projectPath, dir } });
+}
+
 // ---- Peer registry & server settings (§2a/§3.1) ----
 
 /** Pushes this connection's display name live; every peer sees it on the next `peer_list` push. */
@@ -1031,8 +1266,23 @@ export function disconnectPeer(connectionId: ConnectionId, peerId: string) {
 
 /** Opens or closes the optional TCP listener live. Local-socket-only: the
  * server rejects this over TCP (§3.1). */
-export function setRemoteAccess(connectionId: ConnectionId, enabled: boolean) {
-  void send(connectionId, { type: "set_remote_access", data: { enabled } });
+export function setRemoteAccess(
+  connectionId: ConnectionId,
+  enabled: boolean,
+  opts: { addr?: string; tlsCert?: string; tlsKey?: string; webRoot?: string } = {},
+) {
+  void send(connectionId, { type: "set_remote_access", data: { enabled, ...opts } });
+}
+
+/** Changes server-wide tunables (`RuntimeSettings`); only the keys given change. Any peer may. The
+ * server answers with `runtime_settings` carrying what it stored (values are clamped). */
+export function setRuntimeSettings(connectionId: ConnectionId, patch: Partial<RuntimeSettings>) {
+  void send(connectionId, { type: "set_runtime_settings", data: patch });
+}
+
+/** Picks the registered provider new chats start on; an empty name clears it. */
+export function setDefaultProvider(connectionId: ConnectionId, providerName: string, model = "") {
+  void send(connectionId, { type: "set_default_provider", data: { providerName, model } });
 }
 
 /** Server-wide default for a first `user_prompt` that omits its own `autoGenerateTitle` (§3.1). */
@@ -1156,6 +1406,28 @@ export function dismissNotification(connectionId: ConnectionId, id?: string) {
   void send(connectionId, { type: "dismiss_notification", data: id ? { id } : {} });
 }
 
+/** Marks notifications read (all of them with no ids) on the server, which tells every device. */
+export function markNotificationsRead(connectionId: ConnectionId, ids?: string[]) {
+  if (ids && !ids.length) return; // no ids means all; an empty list means none
+  const server = app.servers[connectionId];
+  if (server) {
+    const set = ids && new Set(ids);
+    server.notifications = server.notifications.map((n) => (!n.read && (!set || set.has(n.id)) ? { ...n, read: true } : n));
+  }
+  void send(connectionId, { type: "mark_notifications_read", data: ids ? { ids } : {} });
+}
+
+/** The server-wide notification policy (§3.1 set_notify_prefs); every device gets it back as notify_prefs. */
+export function setNotifyPrefs(connectionId: ConnectionId, prefs: NotifyPrefs) {
+  void send(connectionId, { type: "set_notify_prefs", data: { ...prefs } });
+}
+
+/** Tells the server which chats this device shows and whether it's in use, so it can skip
+ * "finished" pings for a chat you're reading and keep other devices quiet (§3.1 set_presence). */
+export function setPresence(connectionId: ConnectionId, sessionIds: string[], focused: boolean, visible: boolean) {
+  void send(connectionId, { type: "set_presence", data: { sessionIds, focused, visible } });
+}
+
 // ---- Uploads (§3.1 upload_begin/upload_chunk) ----
 
 interface UploadReply {
@@ -1207,6 +1479,7 @@ export function openNotificationTarget(connectionId: ConnectionId, n: { sessionI
   if (!server || !n.sessionId) return;
   if (n.projectPath && !server.projectBySession[n.sessionId]) server.projectBySession[n.sessionId] = n.projectPath;
   openChatSession(connectionId, n.sessionId);
+  markNotificationsRead(connectionId, server.notifications.filter((o) => o.sessionId === n.sessionId && !o.read).map((o) => o.id));
 }
 
 // ---- Project files (§3.1 "Project files", v2.17) ----
@@ -1238,6 +1511,11 @@ export const listTree = (cid: ConnectionId, projectPath: string, path: string) =
 
 export const readFile = (cid: ConnectionId, projectPath: string, path: string) =>
   rpc<FileContent>(cid, "read_file", { projectPath, path });
+
+/** A page of the server's audit log, newest first (§3.1 list_audit). `more` says older entries
+ * remain: ask again with `before` set to the last one's `seq`. */
+export const listAudit = (cid: ConnectionId, query: AuditQuery = {}) =>
+  rpc<Reply<{ events: AuditEvent[]; more: boolean }>>(cid, "list_audit", { ...query });
 
 /** Fetches a previewable file's bytes in chunks (server-side caps: 25MB images/fonts, 200MB
  * video/audio/PDF) and hands back an object URL good until `URL.revokeObjectURL` is called on it. */
@@ -1274,6 +1552,10 @@ export const fsOp = (
 
 /** Every recorded round-trip on this server, hourly, plus the CLIs' own transcripts there (SPEC.md §3.1 get_usage). */
 export const getUsage = (cid: ConnectionId) => rpc<Reply<UsageReport>>(cid, "get_usage", { external: true });
+
+/** A chat's context split by category (§3.1 get_context_breakdown). Can take a few seconds when a CLI agent counts it. */
+export const getContextBreakdown = (cid: ConnectionId, sessionId: string, projectPath?: string) =>
+  rpc<Reply<ContextBreakdown>>(cid, "get_context_breakdown", { sessionId, projectPath });
 
 export const listGitChanges = (cid: ConnectionId, projectPath: string) =>
   rpc<Reply<{ files: GitChange[]; truncated?: boolean }>>(cid, "list_git_changes", { projectPath });

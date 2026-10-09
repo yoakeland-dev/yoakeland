@@ -21,7 +21,7 @@
   // empty strip. "Swapped" trades the two columns' roles: tools take the main width and the
   // chat becomes the narrow column on the right (ChatPanel.svelte lays that out).
   import { DropdownMenu } from "bits-ui";
-  import { app, CHAT_SIDEBAR_MIN_WIDTH, chatSidebarMinCss } from "../state.svelte";
+  import { app, CHAT_PROJECT, CHAT_SIDEBAR_MIN_WIDTH, chatSidebarMinCss } from "../state.svelte";
   import Icon from "./Icon.svelte";
   import BrowserPanel from "./sidebar/BrowserPanel.svelte";
   import SnapshotsPanel from "./sidebar/SnapshotsPanel.svelte";
@@ -43,8 +43,18 @@
   const open = $derived(server?.chatSidebarOpenBySession[sessionId] ?? false);
   const swapped = $derived(open && !!server?.chatSidebarSwappedBySession[sessionId]);
   const panel = $derived(server?.chatSidebarPanelBySession[sessionId]);
-  const projectPath = $derived(server?.projectBySession[sessionId] ?? server?.currentProjectPath ?? null);
-  const current = $derived(PANELS.find((p) => p.id === panel));
+  const projectPath = $derived(server?.rootOf(sessionId) ?? server?.currentProjectPath ?? null);
+  // A chat's scratch directory isn't a repo: its files come first, and git and diffs have nothing to show.
+  const isChat = $derived(server?.projectBySession[sessionId] === CHAT_PROJECT);
+  const panels = $derived(
+    isChat
+      ? [
+          { ...PANELS.find((p) => p.id === "explorer")!, label: "Files", hint: "What this chat has made, and what you can add" },
+          ...PANELS.filter((p) => p.id !== "explorer" && p.id !== "git" && p.id !== "diffs"),
+        ]
+      : PANELS,
+  );
+  const current = $derived(panels.find((p) => p.id === panel));
 
   // Panels stay mounted once opened, per session, so switching tabs *or chats* keeps each
   // chat's own browser pages, open files and unsaved edits. This component outlives session
@@ -74,13 +84,13 @@
   const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 14;
   const shown = $derived.by(() => {
     const fit = Math.floor((stripW + 0.14 * rem()) / (2 * rem())); // .tab width + gap
-    if (fit >= PANELS.length) return PANELS;
-    const list = PANELS.slice(0, Math.max(1, fit - 1));
+    if (fit >= panels.length) return panels;
+    const list = panels.slice(0, Math.max(1, fit - 1));
     if (current && !list.includes(current)) list[list.length - 1] = current;
     return list;
   });
-  const overflow = $derived(PANELS.filter((p) => !shown.includes(p)));
-  const showTitle = $derived(stripW >= (PANELS.length * 2 + 5) * rem());
+  const overflow = $derived(panels.filter((p) => !shown.includes(p)));
+  const showTitle = $derived(stripW >= (panels.length * 2 + 5) * rem());
 
   // Whatever floats over this column's top row: the window's (or this chat's own) chrome
   // island on the right, or, once swapped to the left edge, the chat header's left end
@@ -201,7 +211,7 @@
           <span class="picker-sub">Open one beside this chat. They keep their state while you switch.</span>
         </div>
         <div class="grid">
-          {#each PANELS as p (p.id)}
+          {#each panels as p (p.id)}
             <button type="button" class="card" onclick={() => pick(p.id)}>
               <span class="card-icon"><Icon name={p.icon as any} size={17} /></span>
               <span class="card-label">{p.label}</span>
@@ -214,7 +224,7 @@
 
     {#each Object.entries(visited) as [sid, seen] (sid)}
       {@const here = sid === sessionId}
-      {@const sidProject = server?.projectBySession[sid] ?? (here ? projectPath : null)}
+      {@const sidProject = server?.rootOf(sid) ?? (here ? projectPath : null)}
       {@const sidPanel = server?.chatSidebarPanelBySession[sid]}
       {@const sidSwapped = !!server?.chatSidebarSwappedBySession[sid]}
       {#each PANELS as p (p.id)}
@@ -225,7 +235,11 @@
             {:else if p.id === "subagents"}
               <SubagentsPanel sessionId={sid} />
             {:else if !sidProject || !server}
-              <EmptyState icon="folder" title="No project yet" body="Pick a project for this chat and its files, changes and history show up here." />
+              {#if server?.projectBySession[sid] === CHAT_PROJECT}
+                <EmptyState icon="folder" title="Nothing here yet" body="Files this chat makes show up here as it works." />
+              {:else}
+                <EmptyState icon="folder" title="No project yet" body="Pick a project for this chat and its files, changes and history show up here." />
+              {/if}
             {:else if p.id === "snapshots"}
               <SnapshotsPanel sessionId={sid} projectPath={sidProject} visible={here && open && p.id === sidPanel} />
             {:else if p.id === "diffs"}
@@ -362,6 +376,7 @@
     gap: var(--space-2);
     padding: var(--space-2);
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .picker-head {
     display: flex;

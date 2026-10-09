@@ -1,4 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=Questrial&display=swap");
+@import "./lib/ui.css";
 
 @font-face {
   font-family: "Departure Mono";
@@ -38,6 +39,8 @@
   --danger-base: #ff6b6b;
   --danger: var(--danger-base);
   --danger-dim: rgba(255, 107, 107, 0.15);
+  --diff-add: #58d68d;
+  --diff-del: #ff6b6b;
   --success-base: #58d68d;
   --success: var(--success-base);
   --warning-base: #f0b429;
@@ -453,42 +456,6 @@ pre {
   opacity: 0.5;
 }
 
-/* bits-ui Switch — one recipe for every on/off toggle (Settings, the mode
-   picker's tool rows). */
-.switch-root {
-  position: relative;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  width: 2rem;
-  height: 1.14rem;
-  padding: 0.14rem;
-  background: var(--sidebar-hover);
-  border: 1px solid var(--panel-border);
-  border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-  transition: background calc(0.15s * var(--anim-speed, 1)) ease;
-}
-.switch-root[data-state="checked"] {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.switch-root[data-disabled] {
-  opacity: 0.5;
-  cursor: default;
-}
-.switch-thumb {
-  width: 0.86rem;
-  height: 0.86rem;
-  border-radius: 50%;
-  background: var(--text);
-  transition: transform calc(0.15s * var(--anim-speed, 1)) ease;
-}
-.switch-thumb[data-state="checked"] {
-  transform: translateX(0.86rem);
-}
-
 /* The composer toolbar's pickers (ModelPicker, ModePicker): transparent at
    rest, filled on hover/open. The leading icon and a chevron share one slot
    and crossfade on hover/open — same treatment as Dropdown.svelte's
@@ -619,6 +586,7 @@ pre {
   gap: 0.29rem;
   padding: var(--space-half);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .sb-cards {
   display: grid;
@@ -626,6 +594,7 @@ pre {
   gap: 0.43rem;
   padding: var(--space-half);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .sb-foot {
   display: flex;
@@ -824,6 +793,7 @@ button.sb-card.selected:hover {
   margin: 0;
   padding: 0.21rem;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 1px;

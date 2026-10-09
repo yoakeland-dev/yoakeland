@@ -4,7 +4,7 @@
   // search pops one, Escape pops one too if possible, else closes.
   import { Command, Dialog, DropdownMenu } from "bits-ui";
   import { tick, type ComponentProps } from "svelte";
-  import { app, forgetKnownServer } from "../state.svelte";
+  import { app, forgetKnownServer, type PaletteRequest } from "../state.svelte";
   import {
     browseAndAddProject,
     connectServerRow,
@@ -49,9 +49,13 @@
   const pageFor = (k: "root" | "projects" | "browse" | "servers"): Page => ({ kind: k });
   let wasOpen = false;
   let handledRequest = 0;
+  // Set while the projects page is answering pickProject() rather than "New session in…".
+  let picking = $state<PaletteRequest["pick"]>();
   $effect(() => {
     const open = app.paletteOpen;
     const req = app.paletteRequest;
+    if (open && req.at !== handledRequest) picking = req.pick;
+    if (!open) picking = undefined;
     if (open && !wasOpen) {
       stack = [pageFor(req.page)];
       search = "";
@@ -209,8 +213,11 @@
     ["servers", "Servers", "server"],
     ["general", "General", "settings"],
     ["providers", "Providers", "brain"],
-    ["projects", "Projects", "folder"],
+    ["projects", "Projects", "code"],
+    ["safety", "Safety", "shield-check"],
+    ["notifications", "Notifications", "bell"],
     ["access", "Access", "network"],
+    ["audit", "Audit log", "clipboard-list"],
   ];
 
   const chatActions = $derived.by((): Action[] => {
@@ -264,7 +271,7 @@
       list.push({ id: "start:new-here", label: `New in ${server.projectLabel(p)}`, icon: "message-circle-plus", keys: "chat.new", run: () => run(() => void newChat(c, p)) });
     }
     if (c) {
-      list.push({ id: "start:new-in", label: "New session in…", icon: "folder", submenu: true, run: () => push({ kind: "projects" }) });
+      list.push({ id: "start:new-in", label: "New session in…", icon: "code", submenu: true, run: () => push({ kind: "projects" }) });
       list.push({ id: "start:add-project", label: "Add project…", icon: "folder-plus", submenu: true, run: addProject });
     }
     // Doesn't need `cid`: it's how you'd get one.
@@ -284,6 +291,7 @@
         run: () => run(() => app.toggleSidebar()),
       },
       { id: "view:notifications", label: "Show notifications", icon: "bell", keys: "notifications.open", run: () => run(() => (app.notificationsOpen = true)) },
+      { id: "view:extensions", label: "MCP servers and skills", icon: "plug-connected", keys: "extensions.toggle", run: () => run(() => app.openExtensions()) },
       { id: "view:usage", label: app.showUsage ? "Hide usage" : "Show usage", icon: "chart-bar", keys: "usage.toggle", run: () => run(() => (app.showUsage = !app.showUsage)) },
     ];
     if (c && server?.notifications.length) {
@@ -327,7 +335,9 @@
     searching ? chats : chats.filter((c) => !c.archived && !(c.cid === cid && c.id === sessionId)).slice(0, 8),
   );
   const allProjects = $derived(
-    Object.entries(app.servers).flatMap(([scid, srv]) =>
+    Object.entries(app.servers)
+      .filter(([scid]) => !picking || scid === picking.connectionId)
+      .flatMap(([scid, srv]) =>
       srv.recentProjects.map((path) => ({
         cid: scid,
         path,
@@ -478,7 +488,7 @@
           {#if page.kind === "browse"}
             <span class="crumb-label" {@attach tip(listing?.path)}><bdi>{listing?.path ?? "…"}</bdi></span>
           {:else if page.kind === "projects"}
-            <span class="crumb-label"><bdi>New session in</bdi></span>
+            <span class="crumb-label"><bdi>{picking?.title ?? "New session in"}</bdi></span>
           {:else if page.kind === "servers"}
             <span class="crumb-label"><bdi>Servers</bdi></span>
           {:else if page.kind === "server"}
@@ -569,7 +579,10 @@
                 <Command.Item
                   value={`proj:${p.cid}:${p.path}`}
                   keywords={[p.label, p.path]}
-                  onSelect={() => run(() => void newChat(p.cid, p.path))}
+                  onSelect={() => {
+                    const pk = picking;
+                    run(() => (pk ? pk.run(p.path) : void newChat(p.cid, p.path)));
+                  }}
                   class="palette-item"
                 >
                   <Icon name={p.icon} size={14} />
@@ -577,11 +590,13 @@
                   <span class="detail">{p.path}</span>
                 </Command.Item>
               {/each}
-              <Command.Item value="start:add-project" keywords={["Add project"]} onSelect={addProject} class="palette-item">
-                <Icon name="folder-plus" size={14} />
-                <span class="label">Add project…</span>
-                <span class="chevron"><Icon name="chevron-right" size={13} /></span>
-              </Command.Item>
+              {#if !picking}
+                <Command.Item value="start:add-project" keywords={["Add project"]} onSelect={addProject} class="palette-item">
+                  <Icon name="folder-plus" size={14} />
+                  <span class="label">Add project…</span>
+                  <span class="chevron"><Icon name="chevron-right" size={13} /></span>
+                </Command.Item>
+              {/if}
             {:else if page.kind === "servers"}
               <Command.Item value="add-server" keywords={["Add server", "connect", "pair"]} onSelect={() => run(() => app.openAddServer())} class="palette-item">
                 <Icon name="plus" size={14} />
@@ -782,6 +797,7 @@
   :global(.palette-list) {
     max-height: min(26rem, 55vh);
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 0.29rem 0.36rem 0.43rem;
   }
   /* Same small-caps label as Settings' tab groups, for one visual language. */

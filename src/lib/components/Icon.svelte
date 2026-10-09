@@ -2,6 +2,11 @@
   // Tabler Icons, inlined at build time via Vite's `?raw` loader so they
   // inherit color like text (strokes are `currentColor`).
   import plus from "@tabler/icons/outline/plus.svg?raw";
+  import plugConnected from "@tabler/icons/outline/plug-connected.svg?raw";
+  import sparkles from "@tabler/icons/outline/sparkles.svg?raw";
+  import book2 from "@tabler/icons/outline/book-2.svg?raw";
+  import key from "@tabler/icons/outline/key.svg?raw";
+  import lock from "@tabler/icons/outline/lock.svg?raw";
   import arrowBackUp from "@tabler/icons/outline/arrow-back-up.svg?raw";
   import switchHorizontal from "@tabler/icons/outline/switch-horizontal.svg?raw";
   import layoutGrid from "@tabler/icons/outline/layout-grid.svg?raw";
@@ -64,6 +69,7 @@
   import check from "@tabler/icons/outline/check.svg?raw";
   import pencil from "@tabler/icons/outline/pencil.svg?raw";
   import copy from "@tabler/icons/outline/copy.svg?raw";
+  import volume from "@tabler/icons/outline/volume.svg?raw";
   import unlink from "@tabler/icons/outline/unlink.svg?raw";
   import trash from "@tabler/icons/outline/trash.svg?raw";
   import maximize from "@tabler/icons/outline/arrows-maximize.svg?raw";
@@ -81,7 +87,9 @@
   import arrowNarrowDown from "@tabler/icons/outline/arrow-narrow-down.svg?raw";
   import refresh from "@tabler/icons/outline/refresh.svg?raw";
   import eye from "@tabler/icons/outline/eye.svg?raw";
+  import eyeOff from "@tabler/icons/outline/eye-off.svg?raw";
   import bell from "@tabler/icons/outline/bell.svg?raw";
+  import bellOff from "@tabler/icons/outline/bell-off.svg?raw";
   import file from "@tabler/icons/outline/file.svg?raw";
   import cpu from "@tabler/icons/outline/cpu.svg?raw";
   import command from "@tabler/icons/outline/command.svg?raw";
@@ -91,6 +99,7 @@
   import pinned from "@tabler/icons/outline/pinned.svg?raw";
   import gitBranch from "@tabler/icons/outline/git-branch.svg?raw";
   import clock from "@tabler/icons/outline/clock.svg?raw";
+  import coin from "@tabler/icons/outline/coin.svg?raw";
   import filter from "@tabler/icons/outline/filter.svg?raw";
   import bellFilled from "@tabler/icons/filled/bell.svg?raw";
   import chartBar from "@tabler/icons/outline/chart-bar.svg?raw";
@@ -181,6 +190,7 @@
     check,
     pencil,
     copy,
+    volume,
     unlink,
     trash,
     maximize,
@@ -198,7 +208,9 @@
     "arrow-narrow-down": arrowNarrowDown,
     refresh,
     eye,
+    "eye-off": eyeOff,
     bell,
+    "bell-off": bellOff,
     file,
     cpu,
     command,
@@ -208,6 +220,7 @@
     pinned,
     "git-branch": gitBranch,
     clock,
+    coin,
     filter,
     "bell-filled": bellFilled,
     "chart-bar": chartBar,
@@ -253,6 +266,11 @@
     "world-www": worldWww,
     "git-compare": gitCompare,
     checks: circleCheck2,
+    "plug-connected": plugConnected,
+    sparkles,
+    "book-2": book2,
+    key,
+    lock,
   };
 
   let { name, size = 16 }: { name: keyof typeof icons; size?: number } = $props();

@@ -15,7 +15,7 @@
   import { app } from "../state.svelte";
   import { terminalAttach, terminalInput, terminalOpen, terminalResize } from "../ipc";
   import { subscribeTerminal } from "../terminalBus";
-  import { deriveTerminalTheme, TERMINAL_THEME_PRESETS, type TerminalColorTheme } from "../theme";
+  import { TERMINAL_THEME_PRESETS, type TerminalColorTheme } from "../theme";
   import { attachShellIntegration, type ShellIntegration } from "../terminalShellIntegration";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import FindBar from "./FindBar.svelte";
@@ -87,9 +87,9 @@
   }
 
   function currentTheme(): TerminalColorTheme {
-    if (app.settings.terminalUseAppTheme) return deriveTerminalTheme(app.settings.accent, app.resolvedTheme);
+    if (app.settings.terminalUseAppTheme) return app.appTerminalColors;
     const preset = TERMINAL_THEME_PRESETS.find((p) => p.id === app.settings.terminalColorTheme);
-    return preset?.colors ?? deriveTerminalTheme(app.settings.accent, app.resolvedTheme);
+    return preset?.colors ?? app.appTerminalColors;
   }
 
   // A thunk, so `disabled` reads the selection when the menu opens.
@@ -313,6 +313,8 @@
     void app.settings.accent;
     void app.resolvedTheme;
     void app.settings.terminalUseAppTheme;
+    void app.appTheme;
+    void app.customThemes;
     void app.settings.terminalColorTheme;
     const theme = currentTheme();
     if (term) term.options.theme = theme;

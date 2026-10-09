@@ -22,6 +22,7 @@
     justify-content: center;
     padding: 2rem;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .card {
     width: min(28rem, 100%);

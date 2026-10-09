@@ -30,7 +30,7 @@
   // A brand-new chat's sessionId is minted locally and never told to the server until its
   // first message goes out, so there's no session for a terminal to run in yet.
   const isDraft = $derived(!(server?.messagesBySession[sessionId] ?? []).length);
-  const home = $derived(server?.currentProjectPath);
+  const home = $derived(server?.rootOf(sessionId) ?? server?.currentProjectPath);
 
   let views = $state<Record<string, TerminalView>>({});
   let draggingId = $state<string | null>(null);
@@ -477,6 +477,7 @@
     padding: 0.21rem;
     list-style: none;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     border-left: 1px solid var(--panel-border);
     display: flex;
     flex-direction: column;

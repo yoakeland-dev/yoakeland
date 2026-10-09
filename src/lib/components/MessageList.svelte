@@ -193,6 +193,7 @@
   .list {
     flex: 1;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   /* The bottom padding lives here, not on .list, so the composer growing resizes this box and
      the ResizeObserver above keeps the tail in view. */

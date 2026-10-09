@@ -85,6 +85,7 @@
     class="right-slot"
     class:resizing={app.rightSidebarResizing}
     class:collapsed={app.rightSidebarCollapsed}
+    class:hidden={app.fullPage}
     class:crossing-anim={crossingAnim}
     style:flex-basis={app.rightSidebarCollapsed ? "0px" : size}
     bind:this={slotEl}
@@ -122,6 +123,10 @@
   }
   .right-slot.resizing {
     transition: none;
+  }
+  /* The usage page covers the main area; the linked chat comes back with its state intact. */
+  .right-slot.hidden {
+    display: none;
   }
   /* One eased flex-basis change for the collapse-threshold crossing (same as Sidebar.svelte's
      .sidebar-slot.resizing.collapse-anim); dragging keeps transition:none otherwise or every

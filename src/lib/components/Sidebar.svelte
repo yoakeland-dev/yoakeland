@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { awaitingApproval } from "../extensions";
   import { tip } from "../tooltip.svelte";
-  import { app, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, type ConnectionId, type ServerState } from "../state.svelte";
-  import { selectProject, browseAndAddProject, openChatSession, listSessionsForProjects, newChat as newChatIn, disconnect, reconnectServer } from "../ipc";
+  import { CHAT_STARTERS } from "../chatBrief";
+  import { app, CHAT_PROJECT, SIDEBAR_TAB_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, type ConnectionId, type ServerState } from "../state.svelte";
+  import { browseAndAddProject, openChatSession, startChatWith, listSessionsForProjects, newChat as newChatIn, disconnect, reconnectServer } from "../ipc";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { isPhotoAvatar } from "../avatar";
   import type { SessionSummary } from "../types";
@@ -15,8 +17,8 @@
   import SearchInput from "./SearchInput.svelte";
   import { matches } from "../keybinds.svelte";
   import { DropdownMenu } from "bits-ui";
-  import { untrack } from "svelte";
-  import { slide } from "svelte/transition";
+  import { tick, untrack } from "svelte";
+  import { fly, slide } from "svelte/transition";
 
   const ALL_PROJECTS = "__all__";
   // Key in collapsedProjects for the server's whole section.
@@ -29,17 +31,6 @@
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
-  // Doubles as "which project new chats default to" and "which project's chats the sidebar
-  // shows" (projectFilter below). Deliberately not re-synced from server.currentProjectPath
-  // elsewhere, so picking "All projects" sticks instead of narrowing back on an unrelated click.
-  let selectedProjectPath = $state<string>(app.active?.currentProjectPath ?? ALL_PROJECTS);
-  $effect(() => {
-    if (cid && selectedProjectPath !== ALL_PROJECTS && selectedProjectPath !== server?.currentProjectPath) {
-      selectProject(cid, selectedProjectPath);
-    }
-  });
-  const projectFilter = $derived(selectedProjectPath === ALL_PROJECTS ? null : selectedProjectPath);
-
   // A project can become known (recentProjects) via Settings > Projects or project_list (§4b)
   // without a sessionsByProject entry yet, so it'd never show a group. Fetch the moment it's known.
   $effect(() => {
@@ -49,6 +40,63 @@
       if (missing.length > 0) listSessionsForProjects(scid, missing);
     }
   });
+
+  // Chats with no project (SPEC §4b) are a different kind of thing from a project's chats, so
+  // they get their own tab instead of a group among the projects.
+  const TAB_KEY = SIDEBAR_TAB_KEY;
+  let tab = $state<"projects" | "chats">(
+    (() => {
+      try {
+        return localStorage.getItem(TAB_KEY) === "chats" ? "chats" : "projects";
+      } catch {
+        return "projects";
+      }
+    })(),
+  );
+  // Which way the lists swipe: toward the tab that's coming in.
+  let tabDir = $state(1);
+  // The sync below runs once at load with no swipe: nothing was on screen to swipe from.
+  let tabInstant = $state(true);
+  const tabMs = $derived(tabInstant ? 0 : Math.round(200 * app.settings.animationSpeed));
+  function setTab(t: "projects" | "chats") {
+    if (t === tab) return;
+    tabDir = t === "chats" ? 1 : -1;
+    tab = t;
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {}
+  }
+  // The chat you were last in on each tab, so switching back returns to it.
+  const lastOf: Partial<Record<"projects" | "chats", { cid: ConnectionId; sid: string }>> = {};
+  const kindOf = (srv: ServerState | null | undefined, sid: string | null | undefined) => {
+    const p = sid ? srv?.projectBySession[sid] : undefined;
+    return p ? (p === CHAT_PROJECT ? "chats" : "projects") : undefined;
+  };
+  // Opening a chat of the other kind (a notification, the palette, back/forward) brings its tab along.
+  $effect(() => {
+    const sid = server?.currentSessionId;
+    const kind = kindOf(server, sid);
+    if (kind) untrack(() => {
+      setTab(kind);
+      if (cid && sid) lastOf[kind] = { cid, sid };
+    });
+    untrack(() => void tick().then(() => (tabInstant = false)));
+  });
+
+  // Clicking a tab goes there, through the same funnel as every other switch so back/forward
+  // retrace it: to the chat you were last in on that tab, or else a fresh one.
+  function pickTab(t: "projects" | "chats") {
+    if (t === tab) return;
+    const current = server?.currentSessionId;
+    setTab(t);
+    if (!cid || !server || kindOf(server, current) === t) return;
+    const last = lastOf[t];
+    if (last && app.servers[last.cid]?.projectBySession[last.sid]) return openChatSession(last.cid, last.sid);
+    server.pushNavHistory(current ?? null);
+    if (t === "chats") return void newChatIn(cid, CHAT_PROJECT);
+    const project = pickerCid === cid && selectedProjectPath !== ALL_PROJECTS ? selectedProjectPath : server.recentProjects[0];
+    if (project) void newChatIn(cid, project);
+  }
 
   const serverEntries = $derived(Object.entries(app.servers) as [ConnectionId, ServerState][]);
   const multiServer = $derived(serverEntries.length > 1);
@@ -70,6 +118,8 @@
     app.settings.theme = theme;
     app.applySettings();
   }
+  // Servers a project's .mcp.json asks to run, which nothing starts without the user's approval.
+  const extWaiting = $derived(awaitingApproval(app.active?.mcpByProject[app.active.currentProjectPath ?? ""]?.servers).length);
   function openSettings(tab: typeof app.settingsTab) {
     app.settingsTab = tab;
     app.showSettings = true;
@@ -82,7 +132,8 @@
   // Projects in dragged order; anything not placed by hand sorts by most recent chat activity.
   function lastActivity(srv: ServerState, project: string): number {
     let t = 0;
-    for (const s of srv.sessionsByProject[project] ?? []) t = Math.max(t, Date.parse(s.updatedAt) || 0);
+    // Only chats that have started: an unsent one is stamped "now" and would bump its project.
+    for (const s of srv.sessionsByProject[project] ?? []) if (hasMessages(s, srv)) t = Math.max(t, Date.parse(s.updatedAt) || 0);
     return t;
   }
   function orderedProjects(srv: ServerState): string[] {
@@ -121,37 +172,36 @@
   const flat = $derived(!multiServer || !!pickerCid);
   // The picked project's server, shown in the picker's icon slot.
   const pickedServer = $derived(pickerCid ? app.servers[pickerCid] : null);
-  // selectedProjectPath/cid -> pickerValue. A whole-server pick has no project, so leave
-  // "All projects" alone underneath it.
+  // The focus is only a view filter: it never drives the open chat, so the composer can switch
+  // server or project underneath it. A chat that starts outside the focus pulls the focus along.
+  const selectedProjectPath = $derived(
+    pickerValue === ALL_PROJECTS || pickerValue.startsWith("server::") ? ALL_PROJECTS : pickerValue.slice(pickerValue.indexOf("::") + 2),
+  );
+  const projectFilter = $derived(selectedProjectPath === ALL_PROJECTS ? null : selectedProjectPath);
   $effect(() => {
-    if (cid && selectedProjectPath !== ALL_PROJECTS) pickerValue = `${cid}::${selectedProjectPath}`;
-    else if (!untrack(() => pickerValue).startsWith("server::")) pickerValue = ALL_PROJECTS;
+    const sid = server?.currentSessionId;
+    const path = server?.currentProjectPath;
+    if (!cid || !sid || !path || server?.messagesBySession[sid]?.length) return;
+    untrack(() => {
+      if (pickerValue !== ALL_PROJECTS && !(pickerCid === cid && (!projectFilter || projectFilter === path))) {
+        pickerValue = `${cid}::${path}`;
+      }
+    });
   });
-  // pickerValue -> selectedProjectPath/cid: switches the active connection first when the
-  // chosen project belongs to a different one, so the effects above act against the right remote.
-  $effect(() => {
-    if (pickerValue.startsWith("server::")) {
-      const newCid = pickerValue.slice(8);
-      if (newCid !== app.activeConnectionId) app.activeConnectionId = newCid;
-      if (selectedProjectPath !== ALL_PROJECTS) selectedProjectPath = ALL_PROJECTS;
-      return;
-    }
-    if (pickerValue === ALL_PROJECTS) {
-      if (selectedProjectPath !== ALL_PROJECTS) selectedProjectPath = ALL_PROJECTS;
-      return;
-    }
-    const sep = pickerValue.indexOf("::");
-    if (sep === -1) return;
-    const newCid = pickerValue.slice(0, sep);
-    const path = pickerValue.slice(sep + 2);
-    if (newCid !== app.activeConnectionId) app.activeConnectionId = newCid;
-    if (selectedProjectPath !== path) selectedProjectPath = path;
-  });
+
+  // Choosing a focus also takes you there (a server, or a fresh chat in the project). Only this
+  // explicit pick does; the composer switching underneath leaves the focus alone.
+  function pickFocus(v: string | undefined) {
+    if (!v) return;
+    pickerValue = v;
+    if (v.startsWith("server::")) app.activeConnectionId = v.slice(8);
+    else if (v !== ALL_PROJECTS) void newChatIn(v.slice(0, v.indexOf("::")), v.slice(v.indexOf("::") + 2));
+  }
 
   async function addProject(target: ConnectionId | null) {
     if (!target) return;
     const p = await browseAndAddProject(target);
-    if (p) pickerValue = `${p.connectionId}::${p.path}`;
+    if (p) pickFocus(`${p.connectionId}::${p.path}`);
   }
 
   // With "All projects" selected there's no obvious target, so ask (the palette's "New session in…" page).
@@ -254,8 +304,9 @@
     srv: ServerState;
     s: SessionSummary;
   }
+  const inTab = (srv: ServerState, id: string) => (srv.projectBySession[id] === CHAT_PROJECT) === (tab === "chats");
   const key = (r: Row) => `${r.cid}:${r.s.sessionId}`;
-  // The picker narrows project lists; Needs you, Running and Pinned stay global regardless.
+  // The picker narrows project lists; Pinned stays global regardless.
   const inFilter = (gcid: ConnectionId, project: string) =>
     (!pickerCid || gcid === pickerCid) && (!projectFilter || project === projectFilter);
 
@@ -263,10 +314,21 @@
   // ServerState.splitPartnerFor), so it's dropped here.
   const allRows = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
-      srv.recentProjects.flatMap((project) =>
+      (tab === "chats" ? [CHAT_PROJECT] : srv.recentProjects).flatMap((project) =>
         (srv.sessionsByProject[project] ?? [])
           .filter((s) => hasMessages(s, srv) && !srv.hiddenSplitSessionIds.has(s.sessionId))
           .map((s) => ({ cid: gcid, srv, s })),
+      ),
+    ),
+  );
+
+  // Search ignores the tab: every project's chats and the project-less ones, the open tab's first.
+  const searchRows = $derived<(Row & { chat: boolean })[]>(
+    serverEntries.flatMap(([gcid, srv]) =>
+      [...srv.recentProjects, CHAT_PROJECT].flatMap((project) =>
+        (srv.sessionsByProject[project] ?? [])
+          .filter((s) => hasMessages(s, srv) && !srv.hiddenSplitSessionIds.has(s.sessionId))
+          .map((s) => ({ cid: gcid, srv, s, chat: project === CHAT_PROJECT })),
       ),
     ),
   );
@@ -276,7 +338,7 @@
   const needsYou = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
       [...new Set(srv.pendingAsks.map((a) => a.sessionId))]
-        .filter((id) => !srv.hiddenSplitSessionIds.has(id))
+        .filter((id) => !srv.hiddenSplitSessionIds.has(id) && inTab(srv, id))
         .map((id) => ({
           cid: gcid,
           srv,
@@ -293,44 +355,22 @@
   const running = $derived<Row[]>(
     allRows.filter((r) => r.srv.activeTurnBySession[r.s.sessionId] && !needsYouKeys.has(key(r))).sort((a, b) => byRecent(a.s, b.s)),
   );
-  // A chat stays under Running after its reply lands, until you've seen it and moved on, so it's
-  // still at hand when you want to answer. Held while unseen (finishedSessions) or while open.
-  const isOpen = (r: Row) =>
-    r.cid === app.activeConnectionId && (r.s.sessionId === r.srv.currentSessionId || r.s.sessionId === r.srv.sidebarSessionId);
-  let held = $state<string[]>([]);
-  $effect(() => {
-    const prev = untrack(() => held);
-    const next = allRows
-      .filter((r) => !needsYouKeys.has(key(r)) && !r.srv.activeTurnBySession[r.s.sessionId])
-      .filter((r) => r.srv.finishedSessions[r.s.sessionId] || (isOpen(r) && prev.includes(key(r))))
-      .map(key);
-    const live = running.map(key);
-    held = [...live, ...next];
-  });
-  const shown = $derived(
-    [...running, ...allRows.filter((r) => held.includes(key(r)) && !r.srv.activeTurnBySession[r.s.sessionId] && !needsYouKeys.has(key(r)))],
-  );
-  const runningKeys = $derived(new Set(shown.map(key)));
-
   // In pinned order; Ctrl+1-9 jumps to them.
   const pinned = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
       srv.pinnedSessions.flatMap((id) => {
         const s = srv.sessionById.get(id);
-        return s && !srv.hiddenSplitSessionIds.has(id) ? [{ cid: gcid, srv, s }] : [];
+        return s && !srv.hiddenSplitSessionIds.has(id) && inTab(srv, id) ? [{ cid: gcid, srv, s }] : [];
       }),
     ),
   );
   const pinnedKeys = $derived(new Set(pinned.map(key)));
-  const pinnedShown = $derived(pinned.filter((r) => !needsYouKeys.has(key(r)) && !runningKeys.has(key(r))));
 
   function activeSessions(gcid: ConnectionId, srv: ServerState, project: string): SessionSummary[] {
     return (srv.sessionsByProject[project] ?? [])
       .filter((s) => {
         const k = `${gcid}:${s.sessionId}`;
         return (
-          !needsYouKeys.has(k) &&
-          !runningKeys.has(k) &&
           !pinnedKeys.has(k) &&
           !isArchived(s) &&
           !srv.hiddenSplitSessionIds.has(s.sessionId) &&
@@ -339,6 +379,12 @@
       })
       .sort(byRecent);
   }
+
+  // The chats tab is one flat list across servers: no projects to group by.
+  const chatRows = $derived<Row[]>(
+    allRows.filter((r) => !pinnedKeys.has(key(r)) && !isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)),
+  );
+  const archivedChatRows = $derived<Row[]>(allRows.filter((r) => isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)));
 
   const serverSections = $derived(
     serverEntries
@@ -375,8 +421,8 @@
     if (!q) return [];
     const pool =
       chip === "waiting" ? needsYou : chip === "running" ? running : chip === "unread" ? unread
-        : chip === "archived" ? allRows.filter((r) => isArchived(r.s))
-        : allRows;
+        : chip === "archived" ? searchRows.filter((r) => isArchived(r.s))
+        : searchRows;
     const out: (Row & { snippet?: string })[] = [];
     for (const r of pool) {
       if ((r.s.title ?? "").toLowerCase().includes(q) || r.s.sessionId.toLowerCase().includes(q)) {
@@ -391,9 +437,28 @@
           break;
         }
       }
-      if (out.length >= 50) break;
+      if (out.length >= 200) break;
     }
-    return out.sort((a, b) => byRecent(a.s, b.s));
+    const here = (r: Row) => (r.srv.projectBySession[r.s.sessionId] === CHAT_PROJECT) === (tab === "chats");
+    return out.sort((a, b) => +here(b) - +here(a) || byRecent(a.s, b.s));
+  });
+
+  // Search shows project-less chats and project chats as two sections, the open tab's first, each
+  // cut to SEARCH_CAP until "show more" (reset with every new query).
+  const SEARCH_CAP = 8;
+  let showAll = $state<Record<string, boolean>>({});
+  $effect(() => {
+    search;
+    untrack(() => (showAll = {}));
+  });
+  const sections = $derived.by(() => {
+    const isChatRow = (r: Row) => r.srv.projectBySession[r.s.sessionId] === CHAT_PROJECT;
+    const list = [
+      { id: "chats", label: "Chats", icon: "message-circle", rows: results.filter(isChatRow) },
+      { id: "projects", label: "Projects", icon: "code", rows: results.filter((r) => !isChatRow(r)) },
+    ];
+    if (tab === "projects") list.reverse();
+    return list.filter((s) => s.rows.length);
   });
 
   const chipRows = $derived(chip === "waiting" ? needsYou : chip === "running" ? running : chip === "unread" ? unread : []);
@@ -407,7 +472,7 @@
     const status = srv.connectionStatus;
     return [
       { label: "Add project…", icon: "folder-plus", disabled: status !== "connected", onSelect: () => void addProject(gcid) },
-      { label: "Focus this server", icon: "filter", onSelect: () => (pickerValue = `server::${gcid}`) },
+      { label: "Focus this server", icon: "filter", onSelect: () => pickFocus(`server::${gcid}`) },
       { label: open ? "Collapse" : "Expand", icon: open ? "chevron-up" : "chevron-down", onSelect: () => srv.setProjectCollapsed(SERVER_SECTION, open) },
       { label: "Collapse all projects", icon: "chevron-up", onSelect: () => srv.recentProjects.forEach((p) => srv.setProjectCollapsed(p, true)) },
       status === "connected" || status === "connecting"
@@ -469,6 +534,30 @@
     <div class="brand-row">
       <img class="brand-logo" src="logo.png" alt="" />
       <span class="brand">yoakeland</span>
+      <div class="tabs" role="tablist" aria-label="Sidebar">
+        <button
+          role="tab"
+          class="tab"
+          class:on={tab === "projects"}
+          aria-selected={tab === "projects"}
+          aria-label="Projects"
+          {@attach tip("Projects")}
+          onclick={() => pickTab("projects")}
+        >
+          <Icon name="code" size={14} />
+        </button>
+        <button
+          role="tab"
+          class="tab"
+          class:on={tab === "chats"}
+          aria-selected={tab === "chats"}
+          aria-label="Chats"
+          {@attach tip("Chats")}
+          onclick={() => pickTab("chats")}
+        >
+          <Icon name="message-circle" size={14} />
+        </button>
+      </div>
     </div>
     <div class="quick-row">
       <SearchInput bind:value={search} placeholder="Search chats…" />
@@ -496,19 +585,20 @@
       </DropdownMenu.Root>
       <button
         class="new-chat"
-        onclick={newChat}
-        {@attach tip(pickerCid && projectFilter ? `New chat in ${pickedServer?.projectName(projectFilter)}` : "New chat…", "chat.new")}
+        onclick={() => (tab === "chats" ? void newChatIn(cid ?? connectedServers[0]?.[0] ?? "", CHAT_PROJECT) : newChat())}
+        {@attach tip(tab === "chats" ? "New chat" : pickerCid && projectFilter ? `New chat in ${pickedServer?.projectName(projectFilter)}` : "New chat…", "chat.new")}
         aria-label="New chat"
       >
         <Icon name="message-circle-plus" size={16} />
       </button>
     </div>
 
+    <div class="project-slot" class:shut={tab !== "projects"} inert={tab !== "projects"} style:--ms="{tabMs}ms">
     <div class="project-row">
       {#if hasAnyProject}
         <Dropdown
           items={remoteProjectItems}
-          bind:value={pickerValue}
+          bind:value={() => pickerValue, pickFocus}
           placeholder="Select a project…"
           triggerIcon="folder"
           triggerLead={pickedServer && multiServer ? pickedLead : undefined}
@@ -542,8 +632,15 @@
         <Icon name="folder-plus" size={14} />
       </button>
     </div>
+    </div>
 
     <nav class="chat-list">
+     {#key tab}
+      <div
+        class="pane"
+        in:fly={{ x: tabDir * 28, duration: tabMs, delay: tabMs / 4 }}
+        out:fly={{ x: tabDir * -28, duration: tabMs * 0.75 }}
+      >
       {#if chip}
         <div class="section-label filter-head">
           {CHIPS.find((c) => c.id === chip)?.label}
@@ -553,17 +650,31 @@
         </div>
       {/if}
       {#if search.trim()}
-        {#each results as r (key(r))}
-          <ChatRow
-            connectionId={r.cid}
-            session={r.s}
-            variant={isArchived(r.s) ? "archived" : r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default"}
-            showServer={multiServer}
-            snippet={r.snippet}
-            query={search.trim()}
-          />
+        {#each sections as sec, i (sec.id)}
+          <div class="section-label search-head" class:sep={i > 0}>
+            <Icon name={sec.icon as any} size={11} />{sec.label}<span class="count">{sec.rows.length}</span>
+          </div>
+          {#each showAll[sec.id] ? sec.rows : sec.rows.slice(0, SEARCH_CAP) as r (key(r))}
+            <ChatRow
+              connectionId={r.cid}
+              session={r.s}
+              variant={isArchived(r.s) ? "archived" : r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default"}
+              showServer={multiServer}
+              snippet={r.snippet}
+              query={search.trim()}
+            />
+          {/each}
+          {#if sec.rows.length > SEARCH_CAP && !showAll[sec.id]}
+            <button class="more" onclick={() => (showAll[sec.id] = true)}>Show {sec.rows.length - SEARCH_CAP} more</button>
+          {/if}
         {:else}
           <p class="empty">No chats match “{search.trim()}”</p>
+        {/each}
+      {:else if chip === "archived" && tab === "chats"}
+        {#each archivedChatRows as r (key(r))}
+          <ChatRow connectionId={r.cid} session={r.s} variant="archived" showServer={multiServer} />
+        {:else}
+          <p class="empty">Nothing archived</p>
         {/each}
       {:else if chip === "archived"}
         {#each archiveGroups as g (g.cid + "::" + g.project)}
@@ -580,19 +691,29 @@
           </p>
         {/each}
       {:else}
-        {#if needsYou.length}
-          <div class="section-label attention">Needs you</div>
-          <div class="live-card attention">{#each needsYou as r (key(r))}{@render rowFor(r, "attention")}{/each}</div>
-        {/if}
-        {#if shown.length}
-          <div class="section-label">Running</div>
-          <div class="live-card">{#each shown as r (key(r))}{@render rowFor(r, "running")}{/each}</div>
-        {/if}
-        {#if pinnedShown.length}
+        {#if pinned.length}
           <div class="section-label">Pinned</div>
-          {#each pinnedShown as r (key(r))}{@render rowFor(r, "default")}{/each}
+          {#each pinned as r (key(r))}{@render rowFor(r, "default")}{/each}
         {/if}
 
+        {#if tab === "chats"}
+          {#each chatRows as r (key(r))}{@render rowFor(r, r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default")}{:else}
+            <div class="empty-state sidebar-empty">
+              <Icon name="message-circle" size={20} />
+              <p>No chats yet</p>
+              {#if connectedServers.length}
+                <div class="starters">
+                  {#each CHAT_STARTERS.slice(0, 3) as st (st.title)}
+                    <button class="starter" {@attach tip(st.prompt)} onclick={() => void startChatWith(cid ?? connectedServers[0][0], CHAT_PROJECT, st.prompt)}>
+                      <Icon name={st.icon as any} size={13} /><span>{st.title}</span>
+                    </button>
+                  {/each}
+                </div>
+                <button class="empty-action" onclick={() => void newChatIn(cid ?? connectedServers[0][0], CHAT_PROJECT)}>Start a chat</button>
+              {/if}
+            </div>
+          {/each}
+        {:else}
         {#each serverSections as sec (sec.cid)}
           {@const open = !sec.srv.collapsedProjects[SERVER_SECTION]}
           {@const connected = sec.srv.connectionStatus === "connected"}
@@ -683,7 +804,10 @@
         {:else}
           <p class="empty">No servers yet — connect one from the command palette.</p>
         {/each}
+        {/if}
       {/if}
+      </div>
+     {/key}
     </nav>
 
     <div class="user-area">
@@ -744,6 +868,20 @@
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      <!-- Same swap as the usage button next to it: the plug turns into a back arrow while its page is open. -->
+      <button
+        class="icon-btn ext-btn"
+        class:on={app.showExtensions}
+        onclick={() => (app.showExtensions ? (app.showExtensions = false) : app.openExtensions())}
+        {@attach tip(app.showExtensions ? "Back" : extWaiting ? `MCP servers and skills · ${extWaiting} to approve` : "MCP servers and skills", "extensions.toggle")}
+        aria-label={app.showExtensions ? "Close MCP servers and skills" : "MCP servers and skills"}
+      >
+        <span class="swap" class:back={app.showExtensions}>
+          <span class="usage-face"><Icon name="plug-connected" size={15} /></span>
+          <span class="usage-face"><Icon name="arrow-left" size={15} /></span>
+        </span>
+        {#if extWaiting && !app.showExtensions}<span class="pip" role="img" aria-label="{extWaiting} waiting for approval"></span>{/if}
+      </button>
       <!-- Turns into a back arrow while the usage page is open, since that's what it does then. -->
       <button
         class="icon-btn"
@@ -819,7 +957,8 @@
     /* Top padding is the chat panel's own margin, so the first row below
        starts on the same line the panel's header does. */
     padding: var(--chat-margin) var(--pad-x) 0.6rem;
-    gap: 0.55rem;
+    --sb-gap: 0.55rem;
+    gap: var(--sb-gap);
     /* Chrome (labels, buttons, statuses) reads as UI, not content, so it
        isn't selectable by default; inputs opt back in below. */
     user-select: none;
@@ -861,6 +1000,31 @@
     letter-spacing: 0.01em;
     color: var(--text);
   }
+  .tabs {
+    margin-left: auto;
+    display: flex;
+    gap: 0.1rem;
+  }
+  .tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.7rem;
+    height: 1.7rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .tab:hover,
+  .tab.on {
+    color: var(--text);
+    background: var(--sidebar-hover);
+  }
+  .tab.on :global(.icon) {
+    color: var(--accent);
+  }
   .quick-row {
     display: flex;
     align-items: center;
@@ -885,6 +1049,28 @@
   }
   .new-chat :global(.icon) {
     color: var(--accent);
+  }
+  /* Always mounted and eased shut, rather than unmounted with `slide`: the sidebar's flex gap
+     after it only goes when the node does, which made the list jump by a gap at the end. Shut,
+     its margin cancels that gap too. */
+  .project-slot {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition:
+      grid-template-rows var(--ms) ease,
+      margin-top var(--ms) ease,
+      opacity var(--ms) ease;
+  }
+  .project-slot.shut {
+    grid-template-rows: 0fr;
+    margin-top: calc(-1 * var(--sb-gap));
+    opacity: 0;
+  }
+  .project-slot > .project-row {
+    min-height: 0;
+    /* Clip as it shrinks but leave room for the trigger's focus ring when open. */
+    overflow: clip;
+    overflow-clip-margin: 0.3rem;
   }
   .project-row {
     display: flex;
@@ -930,10 +1116,20 @@
   .chat-list {
     flex: 1;
     overflow-y: auto;
+    scrollbar-gutter: stable;
+    overflow-x: hidden;
+    /* The outgoing and incoming tab's lists share the one cell while they swipe. */
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    scrollbar-width: none;
+  }
+  .pane {
+    grid-area: 1 / 1;
     display: flex;
     flex-direction: column;
     gap: 0.07rem;
-    scrollbar-width: none;
+    min-width: 0;
   }
   /* Same small-caps label as the palette's and Settings' group headings. */
   .section-label {
@@ -944,6 +1140,37 @@
     letter-spacing: 0.06em;
     color: var(--sidebar-fg-dim);
     opacity: 0.75;
+  }
+  .search-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  /* The second section is set off by a rule, not just a heading. */
+  .search-head.sep {
+    margin-top: 0.57rem;
+    padding-top: 0.86rem;
+    border-top: 1px solid var(--panel-border);
+  }
+  .search-head .count {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .more {
+    margin: 0.14rem 0 0;
+    padding: 0.3rem var(--space-1);
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: var(--text-label-size);
+    text-align: left;
+    color: var(--sidebar-fg-dim);
+    cursor: pointer;
+  }
+  .more:hover {
+    background: var(--sidebar-hover);
+    color: var(--sidebar-fg);
   }
   .empty,
   .note {
@@ -962,6 +1189,39 @@
   }
   .sidebar-empty p {
     margin: 0;
+  }
+  .starters {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    gap: 0.14rem;
+    margin-top: 0.43rem;
+  }
+  .starter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.36rem 0.57rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--sidebar-fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .starter span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .starter :global(.icon) {
+    flex-shrink: 0;
+    color: var(--accent);
+  }
+  .starter:hover {
+    background: var(--sidebar-hover);
   }
   .empty-action {
     margin-top: 0.29rem;
@@ -986,26 +1246,6 @@
   }
   .link:hover {
     text-decoration: underline;
-  }
-  /* Needs you / Running float like the chat hover card: one surface, rows inside. */
-  .live-card {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 0.21rem;
-    background: var(--float-bg);
-    /* Outer radius = inner radius + padding, so the rows' corners nest evenly. */
-    border: 1px solid var(--float-border);
-    border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
-  }
-  .live-card.attention {
-    border-color: color-mix(in srgb, var(--warning) 35%, transparent);
-  }
-  .section-label.attention {
-    color: var(--warning);
-    opacity: 1;
   }
   :global(.filter-btn) {
     position: relative;
@@ -1335,5 +1575,17 @@
     /* Without this, the chat panel (painted after) wins hit-testing across the handle's
        centre, leaving only its inner half grabbable. */
     z-index: 5;
+  }
+  .ext-btn {
+    position: relative;
+  }
+  .ext-btn .pip {
+    position: absolute;
+    top: 0.3rem;
+    right: 0.3rem;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--warning, var(--accent));
   }
 </style>

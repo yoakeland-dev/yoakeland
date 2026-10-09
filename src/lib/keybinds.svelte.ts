@@ -31,7 +31,7 @@ const sid = () => app.active?.currentSessionId ?? null;
 function withChat(fn: (sessionId: string) => void) {
   return () => {
     const s = sid();
-    if (!s || !app.active) return false;
+    if (!s || !app.active || app.fullPage) return false;
     fn(s);
   };
 }
@@ -57,6 +57,7 @@ export const ACTIONS: KeyAction[] = [
   { id: "settings.open", label: "Settings", group: "General", scope: "global", defaults: ["Mod+,"], run: () => void (app.showSettings = !app.showSettings) },
   { id: "keybinds.open", label: "Keyboard shortcuts", group: "General", scope: "global", defaults: ["Mod+Shift+/"], run: () => openSettings("keyboard") },
   { id: "notifications.open", label: "Notifications", group: "General", scope: "global", defaults: [], run: () => void (app.notificationsOpen = !app.notificationsOpen) },
+  { id: "extensions.toggle", label: "MCP servers and skills", group: "General", scope: "global", defaults: [], run: () => void (app.showExtensions ? (app.showExtensions = false) : app.openExtensions()) },
   { id: "usage.toggle", label: "Usage", group: "General", scope: "global", defaults: [], run: () => void (app.showUsage = !app.showUsage) },
 
   // View

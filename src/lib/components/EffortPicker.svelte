@@ -48,12 +48,13 @@
 
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
-  import { Popover, Switch } from "bits-ui";
+  import { Popover } from "bits-ui";
   import { app } from "../state.svelte";
   import { setModelOptions } from "../ipc";
   import Icon from "./Icon.svelte";
   import SlideText from "./SlideText.svelte";
-  import StopSlider from "./StopSlider.svelte";
+  import Slider from "./ui/Slider.svelte";
+  import Switch from "./ui/Switch.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -142,13 +143,11 @@
             <Icon name="arrow-back-up" size={14} />
           </button>
         </div>
-        <StopSlider {stops} {index} {defaultIndex} hot={lamp} label="Effort" onchange={commit} />
+        <Slider {stops} value={index} {defaultIndex} hot={lamp} tone="neutral" label="Effort" oninput={commit} />
         {#if fastSupported}
           <label class="line">
             <span>Fast <em>quicker output, costs more</em></span>
-            <Switch.Root class="switch-root" checked={fast} onCheckedChange={toggleFast}>
-              <Switch.Thumb class="switch-thumb" />
-            </Switch.Root>
+            <Switch checked={fast} onchange={toggleFast} />
           </label>
         {/if}
       </Popover.Content>

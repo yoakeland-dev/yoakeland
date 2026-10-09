@@ -2,11 +2,11 @@
   // App-wide pages (Profile, Appearance, Terminal, Servers) store on this device;
   // server-scoped pages (General, Providers, Projects, Access) store on whichever
   // server the page header points at.
-  import { Dialog, Tabs, Switch } from "bits-ui";
+  import { Dialog, Tabs } from "bits-ui";
   import { untrack, type ComponentProps } from "svelte";
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
   import { basename } from "../format";
-  import { windowChromeKind } from "../platform";
+  import { isDesktop, revealItemInDir, windowChromeKind } from "../platform";
   import {
     browseAndAddProject,
     connectServerRow,
@@ -18,29 +18,45 @@
     disconnectPeer,
     removeServer,
     setRemoteAccess,
+    setRuntimeSettings,
     setAutoGenerateTitle,
+    setNotifyPrefs,
     setModelRoles,
-    listModels,
+    ensureModels,
     setRemotePassword,
     setServerIdentity,
     registerProvider,
     removeProvider,
+    signInOpenRouter,
+    cancelOpenRouterSignIn,
     registerToken,
     removeToken,
     removeProject,
+    loadCustomThemes,
+    themesRevealPath,
   } from "../ipc";
-  import { extractAccentFromImage, hexToHue, hslToHex, deriveTheme, TERMINAL_THEME_PRESETS } from "../theme";
+  import { extractAccentFromImage, hexToHue, hslToHex, tokensFor, TERMINAL_THEME_PRESETS } from "../theme";
+  import { APP_THEME_PRESETS } from "../themePresets";
   import { encodePairingCode } from "../pairing";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
-  import type { CliKind, ModelRole, ProviderInfo } from "../types";
+  import type { CliKind, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
+  import Button from "./ui/Button.svelte";
+  import NumberField from "./ui/NumberField.svelte";
+  import Segmented from "./ui/Segmented.svelte";
+  import Slider from "./ui/Slider.svelte";
+  import Switch from "./ui/Switch.svelte";
+  import TextField from "./ui/TextField.svelte";
   import { CLI_AGENTS } from "../modelVendor";
+  import { DEFAULT_NOTIFY_PREFS, NOTIFY_KINDS } from "../notifyKinds";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
   import Dropdown from "./Dropdown.svelte";
+  import AuditPanel from "./AuditPanel.svelte";
   import SearchInput from "./SearchInput.svelte";
   import ConnectForm from "./ConnectForm.svelte";
   import Markdown from "./Markdown.svelte";
+  import PermissionRules from "./PermissionRules.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import Kbd from "./Kbd.svelte";
   import { tip } from "../tooltip.svelte";
@@ -68,9 +84,8 @@
   const serverItems = $derived(Object.entries(app.servers).map(([id, s]) => ({ value: id, label: s.label })));
 
   // ---- Providers tab (credentials only; model selection lives in ModelPicker.svelte) ----
-  // OpenRouter uses a plain API key here like Anthropic/OpenAI, no OAuth: it added an
-  // asymmetric path for one vendor with no real benefit over pasting a key. The server-side
-  // openrouter_oauth_* handlers can stay (SPEC.md §3.1); the client just stops offering it.
+  // OpenRouter can be added two ways: pasting a key (the form below, also the only way from a browser)
+  // or signing in from the desktop app (the card with the coding agents, openrouter_oauth_*, SPEC.md §3.1).
   let providerName = $state("");
   let httpProvider = $state<"anthropic" | "openai" | "openrouter">("anthropic");
   let apiKey = $state("");
@@ -81,6 +96,42 @@
     apiKey = "";
     baseUrl = "";
   }
+
+  const OPENROUTER_ACCOUNT = "openrouter-oauth";
+  let orStatus = $state<"idle" | "waiting" | "finishing">("idle");
+  let orError = $state("");
+  const orAccount = $derived(server?.providers.find((p) => p.httpProvider === "openrouter" && p.authMethod === "oauth"));
+  // Pasted keys only: the signed-in account has its own card.
+  const manualKeys = $derived((server?.providers ?? []).filter((p) => p.kind === "api_key" && p.authMethod !== "oauth"));
+
+  async function signInOR() {
+    if (!cid) return;
+    orError = "";
+    orStatus = "waiting";
+    try {
+      await signInOpenRouter(cid, OPENROUTER_ACCOUNT);
+      orStatus = "finishing";
+      // provider_registered ends this (see the effect below); a failed exchange only shows up in the log.
+      setTimeout(() => {
+        if (orStatus !== "finishing") return;
+        orStatus = "idle";
+        orError = "The server couldn't finish signing in. Its log has the reason.";
+      }, 20_000);
+    } catch (e) {
+      // Cancel resets to idle first, so only a real failure still reads "waiting" here.
+      if (orStatus === "waiting") orError = e instanceof Error ? e.message : String(e);
+      orStatus = "idle";
+    }
+  }
+
+  function cancelOR() {
+    orStatus = "idle";
+    void cancelOpenRouterSignIn();
+  }
+
+  $effect(() => {
+    if (orAccount && orStatus !== "idle") orStatus = "idle";
+  });
 
   function submitProvider(e: Event) {
     e.preventDefault();
@@ -136,7 +187,7 @@
   // The role pickers list models the composer may not have fetched yet.
   $effect(() => {
     if (!cid || !server) return;
-    for (const p of apiProviders) if (!server.modelsByProvider[p.name]) listModels(cid, p.name);
+    for (const p of apiProviders) if (!server.modelsByProvider[p.name]) ensureModels(cid, p.name);
   });
   function roleModelItems(key: string) {
     const items: { value: string; label: string; group?: string }[] = [{ value: "", label: "Same as chat" }];
@@ -257,6 +308,42 @@
     if (cid) setAutoGenerateTitle(cid, checked);
   }
 
+  // Server-wide limits and the no-sandbox policy (RuntimeSettings); the server echoes back what it stored.
+  const runtime = $derived(server?.runtime);
+  const unsandboxedOpen = $derived(server?.unsandboxedProjects ?? []);
+  function patchRuntime(patch: Parameters<typeof setRuntimeSettings>[1]) {
+    if (cid) setRuntimeSettings(cid, patch);
+  }
+  /** The numeric runtime settings beyond the limits above: key, label, hint, unit, minimum. */
+  const RESOURCE_SETTINGS = [
+    { key: "execTimeoutSec", label: "Command timeout", hint: "How long one bash command may run.", unit: "s", min: 1 },
+    { key: "execOutputMaxBytes", label: "Command output kept", hint: "Output of one bash command past this is dropped.", unit: "bytes", min: 4096 },
+    { key: "terminalMemoryMaxMB", label: "Terminal memory cap", hint: "Per terminal opened from now on, where the system supports it.", unit: "MB", min: 64 },
+    { key: "terminalPidsMax", label: "Terminal process cap", hint: "Processes per terminal opened from now on.", unit: "", min: 16 },
+    { key: "terminalReadMaxChars", label: "Terminal output the model sees", hint: "The tail of each terminal read.", unit: "chars", min: 500 },
+    { key: "terminalHistoryKB", label: "Terminal scrollback replayed", hint: "What a client gets when it attaches.", unit: "KB", min: 16 },
+    { key: "poolIdleMinutes", label: "Keep idle coding agents for", hint: "An unused Claude/Codex/… process is closed after this.", unit: "min", min: 1 },
+    { key: "poolMaxLive", label: "Most coding agents alive at once", hint: "0 means no cap. The least recently used idle one is closed to make room; running turns are never stopped.", unit: "", min: 0 },
+    { key: "pricingRefreshHours", label: "Refresh model prices every", hint: "An unpriced model also triggers one refresh, at most hourly.", unit: "h", min: 1 },
+  ] as const;
+  let remoteAddrInput = $state("");
+  $effect(() => {
+    remoteAddrInput = server?.remoteAddr ?? "";
+  });
+  function submitRemoteAddr(e: Event) {
+    e.preventDefault();
+    if (cid) setRemoteAccess(cid, server?.remoteAccessEnabled ?? false, { addr: remoteAddrInput.trim() });
+  }
+
+  // Notification policy (server-wide, every device sees the same) and this device's OS alerts.
+  const notifyPrefs = $derived(server?.notifyPrefs ?? DEFAULT_NOTIFY_PREFS);
+  function patchNotify(patch: Partial<NotifyPrefs>) {
+    if (cid) setNotifyPrefs(cid, { ...notifyPrefs, ...patch });
+  }
+  function setKindOn(kind: string, on: boolean) {
+    patchNotify({ muted: on ? notifyPrefs.muted.filter((k) => k !== kind) : [...notifyPrefs.muted, kind] });
+  }
+
   function submitRemotePassword(e: Event) {
     e.preventDefault();
     if (!cid || !remotePasswordInput) return;
@@ -270,6 +357,7 @@
     setServerIdentity(cid, serverIdentityInput.trim());
   }
 
+  let addingPerson = $state(false);
   let tokenNameInput = $state("");
   let tokenEmailInput = $state("");
 
@@ -279,6 +367,7 @@
     registerToken(cid, tokenNameInput.trim(), tokenEmailInput.trim() || undefined);
     tokenNameInput = "";
     tokenEmailInput = "";
+    addingPerson = false;
   }
 
   function onRemoveToken(name: string) {
@@ -299,6 +388,25 @@
   function setAccent(color: string) {
     app.settings.accent = color;
     apply();
+  }
+
+  let themeNote = $state<string | null>(null);
+
+  // The accent only paints a mode that has no theme of its own.
+  const accentUsed = $derived(
+    (app.settings.theme !== "light" && !app.themeFor("dark")) || (app.settings.theme !== "dark" && !app.themeFor("light")),
+  );
+
+  async function reloadThemes() {
+    themeNote = await loadCustomThemes();
+  }
+
+  async function revealThemesFile() {
+    try {
+      await revealItemInDir(await themesRevealPath());
+    } catch (e) {
+      themeNote = String(e instanceof Error ? e.message : e);
+    }
   }
 
   // ---- Custom hue slider (fixed saturation/lightness, see hslToHex) ----
@@ -324,10 +432,10 @@
     setAccent(hex);
   }
 
-  // Mode cards preview the actual derived surfaces for the current accent, not a fixed gray,
-  // so recoloring the accent visibly recolors these too.
-  const darkPreview = $derived(deriveTheme(app.settings.accent, "dark"));
-  const lightPreview = $derived(deriveTheme(app.settings.accent, "light"));
+  // Mode cards preview what each mode would paint: its chosen theme, or the accent-derived
+  // colors, so picking a theme or moving the accent visibly recolors them.
+  const darkPreview = $derived(tokensFor(app.themeFor("dark"), app.settings.accent, "dark"));
+  const lightPreview = $derived(tokensFor(app.themeFor("light"), app.settings.accent, "light"));
 
   function skeletonBg(modeId: string): string {
     if (modeId === "dark") return darkPreview.bg;
@@ -409,7 +517,7 @@
 
   // ---- Search: dims non-matching rows rather than hiding them, so the page doesn't reflow.
   // Every tab's content stays mounted (bits-ui only toggles `hidden`), so all are indexed. ----
-  const TAB_ORDER = ["profile", "appearance", "terminal", "keyboard", "servers", "general", "providers", "projects", "access"];
+  const TAB_ORDER = ["profile", "appearance", "terminal", "keyboard", "servers", "general", "providers", "projects", "safety", "notifications", "access", "audit"];
   const TAB_LABELS: Record<string, string> = {
     profile: "profile you name avatar picture",
     appearance: "appearance look theme fonts",
@@ -419,7 +527,10 @@
     general: "general server name titles",
     providers: "providers models api keys subscriptions",
     projects: "projects folders paths",
+    safety: "safety limits bash sandbox permissions browser spend rules",
+    notifications: "notifications alerts needs you desktop",
     access: "access network remote password tokens peers people",
+    audit: "audit log history approved refused",
   };
   let settingsSearch = $state("");
   let tabHasMatch = $state<Record<string, boolean>>({});
@@ -431,7 +542,7 @@
       // Searching a tab's own name lights up the whole tab.
       const wholeTab = !!q && TAB_LABELS[tab].includes(q);
       const rows = node.querySelectorAll<HTMLElement>(
-        ".field, .setting-row, .cli-card, .provider-form, .list > li",
+        ".field, .setting-row, .cli-card, .provider-form, .list > li, .servers > li",
       );
       let first: HTMLElement | null = null;
       rows.forEach((row) => {
@@ -545,21 +656,13 @@
 {/snippet}
 
 {#snippet toggle(checked: boolean, onChange: (v: boolean) => void, disabled = false)}
-  <Switch.Root class="switch-root" {checked} {disabled} onCheckedChange={onChange}>
-    <Switch.Thumb class="switch-thumb" />
-  </Switch.Root>
+  <Switch {checked} {disabled} onchange={onChange} />
 {/snippet}
 
 <!-- A handful of mutually exclusive options, all visible at once, a
      dropdown only earns its extra click once the list is too long to show. -->
 {#snippet segmented(options: { value: string; label: string }[], value: string, pick: (v: string) => void)}
-  <div class="segmented" role="radiogroup">
-    {#each options as o (o.value)}
-      <button type="button" role="radio" aria-checked={o.value === value} class:active={o.value === value} onclick={() => pick(o.value)}>
-        {o.label}
-      </button>
-    {/each}
-  </div>
+  <Segmented {options} {value} onchange={pick} />
 {/snippet}
 
 {#snippet presetPicker(get: () => string, set: (v: string) => void)}
@@ -575,6 +678,43 @@
       {#if selected}<Icon name="check" size={11} />{/if}
     {/snippet}
   </Dropdown>
+{/snippet}
+
+{#snippet slotPicker(mode: "dark" | "light", label: string)}
+  {@const all = [...APP_THEME_PRESETS, ...app.customThemes].filter((t) => t[mode])}
+  <div class="setting-row">
+    {@render rowText(label, app.themeFor(mode) ? undefined : "Default follows the accent below.")}
+    <Dropdown
+      items={[
+        { value: "default", label: "Default" },
+        ...APP_THEME_PRESETS.filter((t) => t[mode]).map((t) => ({ value: t.id, label: t.name, group: "Presets" })),
+        ...app.customThemes.filter((t) => t[mode]).map((t) => ({ value: t.id, label: t.name, group: "Custom" })),
+      ]}
+      bind:value={
+        () => app.themeFor(mode)?.id ?? "default",
+        (v) => {
+          const id = v === "default" ? "" : v;
+          if (mode === "dark") app.settings.darkTheme = id;
+          else app.settings.lightTheme = id;
+          apply();
+        }
+      }
+      contentClass="above-modal"
+    >
+      {#snippet item({ value, label, selected })}
+        {@const c = tokensFor(all.find((x) => x.id === value), app.settings.accent, mode)}
+        <span class="item-lead">
+          <span class="check-gutter">{#if selected}<Icon name="check" size={10} />{/if}</span>
+          <span class="term-theme-swatch" style="background: {c.bg}">
+            <span style="background: {c.panelBg}"></span>
+            <span style="background: {c.text}"></span>
+            <span style="background: {c.accent}"></span>
+          </span>
+        </span>
+        <span class="dropdown-item-label">{label}</span>
+      {/snippet}
+    </Dropdown>
+  </div>
 {/snippet}
 
 {#snippet tab(value: string, label: string, icon: ComponentProps<typeof Icon>["name"])}
@@ -622,7 +762,7 @@
       <Tabs.Root bind:value={app.settingsTab} orientation="vertical" class="settings-tabs">
         <Tabs.List class="tabs-list">
           <Dialog.Title class="settings-title">Settings</Dialog.Title>
-          <div class="settings-search"><SearchInput bind:value={settingsSearch} placeholder="Search settings…" /></div>
+          <div class="settings-search"><SearchInput boxed bind:value={settingsSearch} placeholder="Search settings…" /></div>
           {#if noMatches}<div class="no-matches">No settings match “{settingsSearch.trim()}”</div>{/if}
 
           <div class="tabs-group-label">App</div>
@@ -637,69 +777,67 @@
           </div>
           {@render tab("general", "General", "settings")}
           {@render tab("providers", "Providers", "brain")}
-          {@render tab("projects", "Projects", "folder")}
+          {@render tab("projects", "Projects", "code")}
+          {@render tab("safety", "Safety", "shield-check")}
+          {@render tab("notifications", "Notifications", "bell")}
           {@render tab("access", "Access", "network")}
+          {@render tab("audit", "Audit log", "clipboard-list")}
         </Tabs.List>
 
         <Tabs.Content value="profile" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "profile", query: settingsSearch }}>
             {@render pageHead("Profile", false)}
             <section class="settings-section">
-              <div class="field">
-                <span class="row-label">Picture</span>
-                <div class="avatar-row">
-                  <button
-                    type="button"
-                    class="avatar-preview"
-                    onclick={() => avatarInput?.click()}
-                    {@attach tip("Choose a picture")}
-                    disabled={uploadingAvatar}
-                  >
+              <div class="field profile-card">
+                <button
+                  type="button"
+                  class="avatar-preview"
+                  onclick={() => avatarInput?.click()}
+                  {@attach tip("Choose a picture")}
+                  disabled={uploadingAvatar}
+                >
+                  {#if isPhotoAvatar(app.settings.profileAvatar)}
+                    <img src={app.settings.profileAvatar} alt="" />
+                  {:else}
+                    <span class="emoji">{app.settings.profileAvatar || "🐣"}</span>
+                  {/if}
+                  <span class="avatar-edit"><Icon name="media-image" size={13} /></span>
+                </button>
+                <div class="profile-fields">
+                  <label class="profile-name">
+                    <span class="row-label">Display name</span>
+                    <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
+                    <span class="hint">How you appear to other people on the servers you connect to.</span>
+                  </label>
+                  <div class="btn-row">
+                    <Button type="button" onclick={() => avatarInput?.click()} disabled={uploadingAvatar}>
+                      <Icon name="media-image" size={13} />
+                      {uploadingAvatar ? "Reading…" : isPhotoAvatar(app.settings.profileAvatar) ? "Replace picture" : "Choose picture"}
+                    </Button>
                     {#if isPhotoAvatar(app.settings.profileAvatar)}
-                      <img src={app.settings.profileAvatar} alt="" />
-                    {:else}
-                      <span class="emoji">{app.settings.profileAvatar || "🐣"}</span>
+                      <Button type="button" variant="ghost" onclick={() => setEmojiAvatar(QUICK_AVATARS[0])}>Remove</Button>
                     {/if}
-                    <span class="avatar-edit"><Icon name="media-image" size={13} /></span>
-                  </button>
-                  <div class="avatar-side">
-                    <div class="btn-row">
-                      <button type="button" class="btn" onclick={() => avatarInput?.click()} disabled={uploadingAvatar}>
-                        <Icon name="media-image" size={13} />
-                        {uploadingAvatar ? "Reading…" : isPhotoAvatar(app.settings.profileAvatar) ? "Replace picture" : "Choose picture"}
-                      </button>
-                      {#if isPhotoAvatar(app.settings.profileAvatar)}
-                        <button type="button" class="btn ghost" onclick={() => setEmojiAvatar(QUICK_AVATARS[0])}>Remove</button>
-                      {/if}
-                    </div>
-                    <div class="quick-avatars">
-                      {#each QUICK_AVATARS as emoji (emoji)}
-                        <button
-                          type="button"
-                          class="quick-avatar"
-                          class:active={app.settings.profileAvatar === emoji}
-                          {@attach tip(`Use ${emoji} instead of a picture`)}
-                          onclick={() => setEmojiAvatar(emoji)}
-                        >
-                          {emoji}
-                        </button>
-                      {/each}
-                    </div>
-                    <p class="hint">Cropped square and scaled to 96×96 before it leaves this device.</p>
                   </div>
                 </div>
-                <input bind:this={avatarInput} type="file" accept="image/*" hidden onchange={onAvatarFile} />
               </div>
-              <div class="setting-row">
-                {@render rowText("Display name", "How you appear to other people on the servers you connect to.")}
-                <input
-                  type="text"
-                  class="ctrl-wide"
-                  placeholder="anonymous"
-                  bind:value={app.settings.profileName}
-                  onchange={onProfileNameChange}
-                />
+              <input bind:this={avatarInput} type="file" accept="image/*" hidden onchange={onAvatarFile} />
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Or use an emoji</h3>
+              <div class="quick-avatars">
+                {#each QUICK_AVATARS as emoji (emoji)}
+                  <button
+                    type="button"
+                    class="quick-avatar"
+                    class:active={app.settings.profileAvatar === emoji}
+                    {@attach tip(`Use ${emoji} instead of a picture`)}
+                    onclick={() => setEmojiAvatar(emoji)}
+                  >
+                    {emoji}
+                  </button>
+                {/each}
               </div>
+              <p class="hint">Pictures are cropped square and scaled to 96×96 before they leave this device.</p>
             </section>
           </div>
         </Tabs.Content>
@@ -727,7 +865,7 @@
                             <span class="sk-line" style="background: {skeletonLine(mode.id)}"></span>
                             <span class="sk-line short" style="background: {skeletonLine(mode.id)}"></span>
                             <div class="sk-toggles">
-                              <span class="sk-toggle on" style="background: {app.settings.accent}"></span>
+                              <span class="sk-toggle on" style="background: {mode.id === "light" ? lightPreview.accent : darkPreview.accent}"></span>
                               <span class="sk-toggle off" style="background: {skeletonLine(mode.id)}"></span>
                             </div>
                           </div>
@@ -738,7 +876,13 @@
                   {/each}
                 </div>
               </div>
-
+              {#if app.settings.theme !== "light"}
+                {@render slotPicker("dark", "Dark theme")}
+              {/if}
+              {#if app.settings.theme !== "dark"}
+                {@render slotPicker("light", "Light theme")}
+              {/if}
+              {#if accentUsed}
               <div class="field">
                 <span class="row-label">Accent</span>
                 <div class="accent-row">
@@ -769,7 +913,33 @@
                 </div>
                 {#if extracting}<p class="hint">Reading colors from the wallpaper…</p>{/if}
               </div>
-
+              {/if}
+              {#if isDesktop}
+                <div class="setting-row">
+                  {@render rowText("Custom themes", themeNote ?? "One .json file per theme, with a dark and a light side. Changes apply as you save.")}
+                  <div class="btn-row">
+                    <Button type="button" onclick={revealThemesFile}>Open folder</Button>
+                    <Button type="button" onclick={reloadThemes}>Reload</Button>
+                  </div>
+                </div>
+              {/if}
+              <div class="setting-row">
+                {@render rowText("Diff colors", "How added and removed lines are drawn.")}
+                <div class="btn-row">
+                  <span class="diff-preview" aria-hidden="true"><span class="add">+</span><span class="del">−</span></span>
+                  {@render segmented(
+                    [
+                      { value: "default", label: "Green / red" },
+                      { value: "colorblind", label: "Blue / orange" },
+                    ],
+                    app.settings.diffColors,
+                    (v) => ((app.settings.diffColors = v as "default" | "colorblind"), apply()),
+                  )}
+                </div>
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Wallpaper</h3>
               <div class="setting-row">
                 {@render rowText("New-chat wallpaper", "Shown behind an empty thread's composer.")}
                 <div class="btn-row">
@@ -780,18 +950,17 @@
                       <Icon name="media-image" size={14} />
                     {/if}
                   </div>
-                  <button
-                    type="button"
-                    class="btn icon"
+                  <Button type="button"
+                    icon
                     onclick={() => wallpaperInput?.click()}
                     {@attach tip(app.settings.wallpaper ? "Change image" : "Choose image")}
                   >
                     <Icon name="pencil" size={13} />
-                  </button>
+                  </Button>
                   {#if app.settings.wallpaper}
-                    <button type="button" class="btn icon danger" onclick={clearWallpaper} {@attach tip("Remove image")}>
+                    <Button type="button" icon destructive onclick={clearWallpaper} {@attach tip("Remove image")}>
                       <Icon name="trash" size={13} />
-                    </button>
+                    </Button>
                   {/if}
                 </div>
               </div>
@@ -815,7 +984,9 @@
                   />
                 </div>
               {/if}
-
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Window</h3>
               <div class="setting-row">
                 {@render rowText("Main area", "Floating insets the chat area as a rounded card; flat fills the window edge to edge.")}
                 {@render segmented(
@@ -840,6 +1011,11 @@
                 )}
               </div>
 
+              <div class="setting-row">
+                {@render rowText("New chat feed", "Recent chats, your working tree and starter prompts below the composer in an empty chat.")}
+                {@render toggle(app.settings.emptyFeed, (v) => ((app.settings.emptyFeed = v), apply()))}
+              </div>
+
               {#if windowChromeKind}
                 <div class="setting-row">
                   {@render rowText(
@@ -851,17 +1027,16 @@
                 </div>
               {/if}
             </section>
-
             <section class="settings-section">
               <h3 class="section-heading">Typography</h3>
               <div class="setting-row">
                 {@render rowText("Interface font")}
-                <input type="text" class="ctrl-wide" bind:value={app.settings.uiFontFamily} onchange={apply} />
+                <TextField type="text" class="ctrl-wide" bind:value={app.settings.uiFontFamily} onchange={apply} />
               </div>
               <div class="setting-row">
                 {@render rowText("Interface scale", "Scales text and spacing across the whole app.")}
                 <div class="slider">
-                  <input type="range" min="80" max="140" step="5" bind:value={scalePct} onchange={applyScale} />
+                  <Slider label="Interface scale" min={80} max={140} step={5} bind:value={scalePct} onchange={applyScale} format={(v) => `${v}%`} />
                   <span class="slider-value">{scalePct}%</span>
                 </div>
               </div>
@@ -872,12 +1047,12 @@
               <div class="code-preview"><Markdown text={CODE_PREVIEW} /></div>
               <div class="setting-row">
                 {@render rowText("Font")}
-                <input type="text" class="ctrl-wide" bind:value={app.settings.codeFontFamily} onchange={apply} />
+                <TextField type="text" class="ctrl-wide" bind:value={app.settings.codeFontFamily} onchange={apply} />
               </div>
               <div class="setting-row">
                 {@render rowText("Font size")}
                 <div class="with-unit">
-                  <input type="number" class="ctrl-num" min="10" max="18" step="0.5" bind:value={app.settings.codeFontSize} onchange={apply} />
+                  <NumberField class="ctrl-num" min={10} max={18} step={0.5} bind:value={app.settings.codeFontSize} onchange={apply} />
                   <span>px</span>
                 </div>
               </div>
@@ -894,22 +1069,36 @@
                 {@render presetPicker(() => app.settings.codeColorTheme, (v) => ((app.settings.codeColorTheme = v), apply()))}
               </div>
             </section>
-
             <section class="settings-section">
               <h3 class="section-heading">Behavior</h3>
               <div class="setting-row">
                 {@render rowText("Animation speed", "0 turns animations off.")}
                 <div class="slider">
-                  <input type="range" min="0" max="2" step="0.1" bind:value={app.settings.animationSpeed} oninput={apply} />
+                  <Slider label="Animation speed" min={0} max={2} step={0.1} bind:value={app.settings.animationSpeed} oninput={apply} format={(v) => `${v.toFixed(1)}×`} />
                   <span class="slider-value">{app.settings.animationSpeed.toFixed(1)}×</span>
                 </div>
               </div>
               <div class="setting-row">
                 {@render rowText("Auto-archive threads", "Idle threads move to the archive after this many days.")}
                 <div class="with-unit">
-                  <input type="number" class="ctrl-num" min="1" max="365" bind:value={app.settings.autoArchiveDays} onchange={apply} />
+                  <NumberField class="ctrl-num" min={1} max={365} bind:value={app.settings.autoArchiveDays} onchange={apply} />
                   <span>days</span>
                 </div>
+              </div>
+              <div class="setting-row">
+                {@render rowText("Desktop alerts on this device", "While the window is in the background. Never for the chat you are reading, or when another of your devices is in use.")}
+                {@render segmented(
+                  [
+                    { value: "off", label: "Off" },
+                    { value: "urgent", label: "Needs you" },
+                    { value: "all", label: "Also finished" },
+                  ],
+                  app.settings.osNotifications,
+                  (v) => {
+                    app.settings.osNotifications = v as typeof app.settings.osNotifications;
+                    apply();
+                  },
+                )}
               </div>
             </section>
           </div>
@@ -934,14 +1123,14 @@
               <div class="setting-row">
                 {@render rowText("Horizontal padding")}
                 <div class="slider">
-                  <input type="range" min="0" max="40" step="1" bind:value={app.settings.terminalMarginX} oninput={apply} />
+                  <Slider label="Horizontal padding" min={0} max={40} bind:value={app.settings.terminalMarginX} oninput={apply} format={(v) => `${v}px`} />
                   <span class="slider-value">{app.settings.terminalMarginX}px</span>
                 </div>
               </div>
               <div class="setting-row">
                 {@render rowText("Vertical padding")}
                 <div class="slider">
-                  <input type="range" min="0" max="40" step="1" bind:value={app.settings.terminalMarginY} oninput={apply} />
+                  <Slider label="Vertical padding" min={0} max={40} bind:value={app.settings.terminalMarginY} oninput={apply} format={(v) => `${v}px`} />
                   <span class="slider-value">{app.settings.terminalMarginY}px</span>
                 </div>
               </div>
@@ -959,9 +1148,9 @@
             <div class="keys-intro">
               <p class="hint">Click a shortcut to change it, then press the new keys (Esc cancels). Each action takes up to two.</p>
               {#if anyCustomized}
-                <button type="button" class="btn small ghost" onclick={() => (stopRecording(), resetBinds())}>
+                <Button type="button" size="sm" variant="ghost" onclick={() => (stopRecording(), resetBinds())}>
                   <Icon name="restore" size={12} /> Reset all
-                </button>
+                </Button>
               {/if}
             </div>
             {#each actionGroups as [group, actions] (group)}
@@ -973,9 +1162,9 @@
                     {@render rowText(a.label)}
                     <div class="binds">
                       {#if isCustomized(a.id)}
-                        <button type="button" class="btn icon ghost reset" {@attach tip("Reset to default")} onclick={() => resetBinds(a.id)}>
+                        <Button type="button" icon variant="ghost" class="reset" {@attach tip("Reset to default")} onclick={() => resetBinds(a.id)}>
                           <Icon name="restore" size={12} />
-                        </button>
+                        </Button>
                       {/if}
                       {@render bindSlot(a, 0, binds[0])}
                       {#if binds.length || (rec?.id === a.id && rec.slot === 1)}
@@ -989,8 +1178,8 @@
                       <span class="grow">
                         <Kbd combo={rec.combo} /> is already used by {rec.taken.map((t) => t.label).join(", ")}.
                       </span>
-                      <button type="button" class="btn small primary" onclick={() => commit(a.id, rec!.slot, rec!.combo!)}>Use here</button>
-                      <button type="button" class="btn small ghost" onclick={stopRecording}>Cancel</button>
+                      <Button type="button" size="sm" variant="primary" onclick={() => commit(a.id, rec!.slot, rec!.combo!)}>Use here</Button>
+                      <Button type="button" size="sm" variant="ghost" onclick={stopRecording}>Cancel</Button>
                     </div>
                   {/if}
                 {/each}
@@ -1016,15 +1205,15 @@
                       <span class="list-meta" {@attach tip(r.address)}>{r.address}</span>
                     </div>
                     {#if r.connectionId && (r.status === "connected" || r.status === "connecting")}
-                      <button type="button" class="btn small" onclick={() => disconnect(r.connectionId!)}>Disconnect</button>
+                      <Button type="button" size="sm" onclick={() => disconnect(r.connectionId!)}>Disconnect</Button>
                     {:else}
-                      <button type="button" class="btn small" onclick={() => connectServerRow(r)}>
+                      <Button type="button" size="sm" onclick={() => connectServerRow(r)}>
                         {r.connectionId ? "Reconnect" : "Connect"}
-                      </button>
+                      </Button>
                     {/if}
-                    <button type="button" class="btn icon ghost danger" onclick={() => onRemoveRow(r)} {@attach tip(r.connectionId ? "Remove" : "Forget")}>
+                    <Button type="button" icon variant="ghost" destructive onclick={() => onRemoveRow(r)} {@attach tip(r.connectionId ? "Remove" : "Forget")}>
                       <Icon name="trash" size={13} />
-                    </button>
+                    </Button>
                   </li>
                 {:else}
                   <li class="empty">No servers yet.</li>
@@ -1035,17 +1224,17 @@
                   <div class="inset-card">
                     <div class="inset-head">
                       <span class="row-label">Add a remote server</span>
-                      <button type="button" class="btn icon ghost" onclick={() => (addPrefill = null)} {@attach tip("Cancel")}>
+                      <Button type="button" icon variant="ghost" onclick={() => (addPrefill = null)} {@attach tip("Cancel")}>
                         <Icon name="xmark" size={13} />
-                      </button>
+                      </Button>
                     </div>
                     <ConnectForm prefill={addPrefill} showLocal={false} onconnected={() => (addPrefill = null)} />
                   </div>
                 {/key}
               {:else}
-                <button type="button" class="btn align-start" onclick={() => (addPrefill = {})}>
+                <Button type="button" class="align-start" onclick={() => (addPrefill = {})}>
                   <Icon name="plus" size={13} /> Add server
-                </button>
+                </Button>
               {/if}
             </section>
           </div>
@@ -1058,16 +1247,136 @@
               <form class="setting-row" onsubmit={submitServerIdentity}>
                 {@render rowText("Server name", "What everyone connected to this server sees it called.")}
                 <div class="btn-row">
-                  <input type="text" class="ctrl-wide" placeholder="this server's name" bind:value={serverIdentityInput} disabled={!connected} />
-                  <button type="submit" class="btn" disabled={!connected || !serverIdentityInput.trim() || serverIdentityInput.trim() === server?.serverIdentity}>
+                  <TextField type="text" class="ctrl-wide" placeholder="this server's name" bind:value={serverIdentityInput} disabled={!connected} />
+                  <Button type="submit" disabled={!connected || !serverIdentityInput.trim() || serverIdentityInput.trim() === server?.serverIdentity}>
                     Save
-                  </button>
+                  </Button>
                 </div>
               </form>
               <div class="setting-row">
                 {@render rowText("Auto-generate chat titles", "Names new threads from their first message.")}
                 {@render toggle(server?.autoGenerateTitleEnabled ?? true, onAutoGenerateTitleToggle, !connected)}
               </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Resources</h3>
+              {#each RESOURCE_SETTINGS as r (r.key)}
+                <div class="setting-row">
+                  {@render rowText(r.label, r.hint)}
+                  <span class="num-unit">
+                    <NumberField
+
+                      class="ctrl-num"
+                      min={r.min}
+                      step={1}
+                      disabled={!connected || !runtime}
+                      value={runtime?.[r.key] ?? 0}
+                      onchange={(v) => patchRuntime({ [r.key]: Math.max(r.min, Math.round(v || r.min)) })}
+                    />
+                    <span class="hint">{r.unit}</span>
+                  </span>
+                </div>
+              {/each}
+            </section>
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content value="safety" class="tab-panel">
+          <div class="tab-body" use:searchable={{ tab: "safety", query: settingsSearch }}>
+            {@render pageHead("Safety", true)}
+            <section class="settings-section">
+              <h3 class="section-heading">Limits</h3>
+              <div class="setting-row">
+                {@render rowText("Model calls per turn", "After this many, the turn pauses and asks whether to continue. 0 means no limit. Coding agents like Claude Code run their own loop and are not limited.")}
+                <NumberField
+
+                  class="ctrl-num"
+                  min={0}
+                  step={1}
+                  disabled={!connected || !runtime}
+                  value={runtime?.maxRoundsPerTurn ?? 0}
+                  onchange={(v) => patchRuntime({ maxRoundsPerTurn: Math.max(0, Math.round(v || 0)) })}
+                />
+              </div>
+              <div class="setting-row">
+                {@render rowText("Spend per chat (USD)", "A chat that has spent this much pauses, mid-turn too, and asks whether to continue. 0 means no limit. Only priced usage counts.")}
+                <NumberField
+
+                  class="ctrl-num"
+                  min={0}
+                  step={0.5}
+                  disabled={!connected || !runtime}
+                  value={runtime?.maxSessionCostUsd ?? 0}
+                  onchange={(v) => patchRuntime({ maxSessionCostUsd: Math.max(0, v || 0) })}
+                />
+              </div>
+              <div class="warning-card" class:danger-card={unsandboxedOpen.length > 0 && !runtime?.disableBashWhenUnsandboxed}>
+                <div class="setting-row">
+                  {@render rowText(
+                    "Turn bash off when a project has no sandbox",
+                    "Without bubblewrap or namespaces, bash and terminals run straight on the machine and can read or change anything the server's user can. This withholds them from the model in those projects. Off by default.",
+                  )}
+                  {@render toggle(runtime?.disableBashWhenUnsandboxed ?? false, (v) => patchRuntime({ disableBashWhenUnsandboxed: v }), !connected || !runtime)}
+                </div>
+                {#if unsandboxedOpen.length > 0}
+                  <p class="hint danger-text">
+                    <Icon name="warning" size={13} />
+                    {unsandboxedOpen.length === 1 ? "1 open project has" : `${unsandboxedOpen.length} open projects have`} no sandbox:
+                    {runtime?.disableBashWhenUnsandboxed ? "bash is off there." : "bash there is unprotected."}
+                  </p>
+                {/if}
+              </div>
+              <div class="setting-row">
+                {@render rowText("Keep the browser on approved sites", "While the agent drives the browser, a link or redirect to a site it has not been cleared to visit is stopped, and the agent has to ask. Your own navigation is never blocked.")}
+                {@render toggle(runtime?.browserBlockCrossOrigin ?? true, (v) => patchRuntime({ browserBlockCrossOrigin: v }), !connected || !runtime)}
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Permissions</h3>
+              <PermissionRules {cid} projectPath={server?.currentProjectPath ?? undefined} />
+            </section>
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content value="notifications" class="tab-panel">
+          <div class="tab-body" use:searchable={{ tab: "notifications", query: settingsSearch }}>
+            {@render pageHead("Notifications", true)}
+            <section class="settings-section">
+              <p class="hint">Only the first two are on by default. Nothing is raised for a chat you are looking at on any device, and each one is remembered on the server, so reading it on one device reads it on all of them.</p>
+              <div class="setting-row">
+                {@render rowText("Needs you", "Permission requests, questions from the agent, failed turns, the spend cap.")}
+                {@render toggle(notifyPrefs.urgent, (v) => patchNotify({ urgent: v }), !connected)}
+              </div>
+              <div class="setting-row">
+                {@render rowText("Worth knowing", "A long response finished in a chat you weren't watching; a response cut off at the output limit.")}
+                {@render toggle(notifyPrefs.normal, (v) => patchNotify({ normal: v }), !connected)}
+              </div>
+              <div class="setting-row">
+                {@render rowText("Devices", "A remote device connected or disconnected.")}
+                {@render toggle(notifyPrefs.quiet, (v) => patchNotify({ quiet: v }), !connected)}
+              </div>
+              <div class="setting-row">
+                {@render rowText("Announce finished responses after", "Seconds a turn must have run. Shorter ones stay quiet.")}
+                <NumberField
+
+                  class="ctrl-num"
+                  min={0}
+                  max={3600}
+                  step={5}
+                  disabled={!connected}
+                  value={notifyPrefs.minTurnSec}
+                  onchange={(v) => patchNotify({ minTurnSec: Math.max(0, Math.round(v || 0)) })}
+                />
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Kinds</h3>
+              {#each NOTIFY_KINDS as k (k.kind)}
+                <div class="setting-row">
+                  {@render rowText(k.label)}
+                  {@render toggle(!notifyPrefs.muted.includes(k.kind), (v) => setKindOn(k.kind, v), !connected)}
+                </div>
+              {/each}
             </section>
           </div>
         </Tabs.Content>
@@ -1076,8 +1385,8 @@
           <div class="tab-body" use:searchable={{ tab: "providers", query: settingsSearch }}>
             {@render pageHead("Providers", true)}
             <section class="settings-section">
-              <h3 class="section-heading">Coding agents</h3>
-              <p class="hint">Runs an agent CLI already signed in on the server, with its own tools — yoakeland never sees the credential. Sign in once in a terminal on the server first.</p>
+              <h3 class="section-heading">Accounts</h3>
+              <p class="hint">Coding agents run a CLI already signed in on the server, with its own tools — yoakeland never sees the credential. Sign in once in a terminal on the server first.</p>
               <div class="cli-cards">
                 {#each cliRows as c (c.kind)}
                   <div class="cli-card">
@@ -1095,23 +1404,51 @@
                     </div>
                   </div>
                 {/each}
+                {#if isDesktop || orAccount}
+                  <div class="cli-card">
+                    <div class="cli-card-top">
+                      <LobeIcon name="openrouter" size={22} />
+                      {#if orAccount}
+                        <Button type="button" onclick={() => onRemoveProvider(orAccount.name)}>Sign out</Button>
+                      {:else if orStatus === "idle"}
+                        <Button type="button" disabled={!connected} onclick={signInOR}>Sign in</Button>
+                      {:else}
+                        <Button type="button" variant="ghost" onclick={cancelOR}>Cancel</Button>
+                      {/if}
+                    </div>
+                    <div class="list-text">
+                      <span class="list-title">OpenRouter</span>
+                      {#if orError}
+                        <span class="list-meta warn"><Icon name="warning" size={11} /> {orError}</span>
+                      {:else if orAccount}
+                        <span class="list-meta">Signed in</span>
+                      {:else if orStatus === "waiting"}
+                        <span class="list-meta">Finish signing in in your browser…</span>
+                      {:else if orStatus === "finishing"}
+                        <span class="list-meta">Finishing…</span>
+                      {:else}
+                        <span class="list-meta" {@attach tip("Opens openrouter.ai in your browser. The server stores the key it returns")}>Sign in with your account</span>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
               </div>
             </section>
 
             <section class="settings-section">
               <h3 class="section-heading">API keys</h3>
-              {#if server?.providers.some((p) => p.kind === "api_key")}
+              {#if manualKeys.length}
                 <ul class="list">
-                  {#each (server?.providers ?? []).filter((p) => p.kind === "api_key") as p (p.name)}
+                  {#each manualKeys as p (p.name)}
                     <li>
                       <Icon name="brain" size={14} />
                       <div class="list-text">
                         <span class="list-title">{p.name}</span>
                         <span class="list-meta">{p.httpProvider}</span>
                       </div>
-                      <button type="button" class="btn icon ghost danger" onclick={() => onRemoveProvider(p.name)} {@attach tip("Remove")}>
+                      <Button type="button" icon variant="ghost" destructive onclick={() => onRemoveProvider(p.name)} {@attach tip("Remove")}>
                         <Icon name="trash" size={13} />
-                      </button>
+                      </Button>
                     </li>
                   {/each}
                 </ul>
@@ -1121,7 +1458,7 @@
                 <div class="form-grid">
                   <label>
                     Name
-                    <input type="text" bind:value={providerName} placeholder="my-anthropic" />
+                    <TextField type="text" bind:value={providerName} placeholder="my-anthropic" />
                   </label>
                   <label>
                     Provider
@@ -1137,16 +1474,16 @@
                   </label>
                   <label>
                     API key
-                    <input bind:value={apiKey} type="password" placeholder="sk-…" />
+                    <TextField bind:value={apiKey} type="password" placeholder="sk-…" />
                   </label>
                   <label>
                     <span>Base URL <span class="optional">(optional)</span></span>
-                    <input type="text" bind:value={baseUrl} placeholder="http://localhost:11434/v1" />
+                    <TextField type="text" bind:value={baseUrl} placeholder="http://localhost:11434/v1" />
                   </label>
                 </div>
-                <button class="btn primary align-end" type="submit" disabled={!connected || !providerName.trim() || !apiKey.trim()}>
+                <Button variant="primary" class="align-end" type="submit" disabled={!connected || !providerName.trim() || !apiKey.trim()}>
                   Add key
-                </button>
+                </Button>
               </form>
             </section>
 
@@ -1192,9 +1529,8 @@
                       <span class="list-title">{basename(path)}</span>
                       <span class="list-meta" {@attach tip(path)}>{path}</span>
                     </div>
-                    <button
-                      type="button"
-                      class="btn icon ghost danger"
+                    <Button type="button"
+                      icon variant="ghost" destructive
                       onclick={() => {
                         server?.forgetProject(path);
                         if (cid) removeProject(cid, path);
@@ -1202,15 +1538,15 @@
                       {@attach tip("Remove from list")}
                     >
                       <Icon name="trash" size={13} />
-                    </button>
+                    </Button>
                   </li>
                 {:else}
                   <li class="empty">No projects yet.</li>
                 {/each}
               </ul>
-              <button type="button" class="btn align-start" disabled={!connected} onclick={() => cid && browseAndAddProject(cid)}>
+              <Button type="button" class="align-start" disabled={!connected} onclick={() => cid && browseAndAddProject(cid)}>
                 <Icon name="folder-plus" size={13} /> Add project…
-              </button>
+              </Button>
             </section>
           </div>
         </Tabs.Content>
@@ -1226,33 +1562,38 @@
 
             <section class="settings-section">
               <h3 class="section-heading">Remote access</h3>
-              <div class="warning-card">
-                <div class="setting-row">
-                  {@render rowText("Allow remote (TCP) connections", "Exposes this server to the network. Anyone with a token or the password can connect.")}
-                  {@render toggle(server?.remoteAccessEnabled ?? false, onRemoteAccessToggle, !isLocalConnection)}
-                </div>
+              <div class="setting-row">
+                {@render rowText("Allow remote (TCP) connections", "Exposes this server to the network. Anyone with a token or the password can connect.")}
+                {@render toggle(server?.remoteAccessEnabled ?? false, onRemoteAccessToggle, !isLocalConnection)}
+              </div>
+              <div class="inset-card" class:disabled-row={!server?.remoteAccessEnabled}>
+                <form class="setting-row" onsubmit={submitRemoteAddr}>
+                  {@render rowText("Listen address", "Empty means :7890. Changing it restarts the listener.")}
+                  <div class="btn-row">
+                    <TextField type="text" class="ctrl-wide" placeholder=":7890" bind:value={remoteAddrInput} disabled={!isLocalConnection} />
+                    <Button type="submit" disabled={!isLocalConnection || remoteAddrInput.trim() === (server?.remoteAddr ?? "")}>Save</Button>
+                  </div>
+                </form>
                 <form class="setting-row" onsubmit={submitRemotePassword}>
                   {@render rowText("Shared password", "One secret for everyone. Prefer per-person tokens below.")}
                   <div class="btn-row">
-                    <input
-                      type="password"
-                      class="ctrl-wide"
-                      placeholder="new password"
-                      bind:value={remotePasswordInput}
-                      disabled={!isLocalConnection}
-                    />
-                    <button type="submit" class="btn" disabled={!isLocalConnection || !remotePasswordInput}>Set</button>
+                    <TextField type="password" class="ctrl-wide" placeholder="new password" bind:value={remotePasswordInput} disabled={!isLocalConnection} />
+                    <Button type="submit" disabled={!isLocalConnection || !remotePasswordInput}>Set</Button>
                   </div>
                 </form>
               </div>
             </section>
 
             <section class="settings-section">
-              <h3 class="section-heading">People with access</h3>
-              <p class="hint">
-                Per-person tokens. Names are fixed once registered — revoke and re-register to rename. Chats and git
-                commits over a token are attributed to its name.
-              </p>
+              <div class="section-head">
+                <h3 class="section-heading">People</h3>
+                {#if !addingPerson}
+                  <Button type="button" size="sm" disabled={!isLocalConnection} onclick={() => (addingPerson = true)}>
+                    <Icon name="plus" size={13} /> Add person
+                  </Button>
+                {/if}
+              </div>
+              <p class="hint">Each person gets their own token, and their chats and git commits carry its name. Names are fixed once registered, so revoke and re-register to rename.</p>
 
               {#if server?.justRegisteredToken}
                 <div class="warning-card">
@@ -1264,15 +1605,14 @@
                       : ""}.
                   </p>
                   <div class="btn-row">
-                    <input
+                    <TextField
                       type="text"
                       readonly
                       value={encodePairingCode(server.justRegisteredToken.token, server.justRegisteredToken.caPem)}
                       onclick={(e) => (e.target as HTMLInputElement).select()}
                     />
-                    <button
-                      type="button"
-                      class="btn primary"
+                    <Button type="button"
+                      variant="primary"
                       onclick={() => {
                         const t = server?.justRegisteredToken;
                         if (t) void navigator.clipboard?.writeText(encodePairingCode(t.token, t.caPem));
@@ -1280,9 +1620,27 @@
                       }}
                     >
                       <Icon name="copy" size={13} /> Copy &amp; dismiss
-                    </button>
+                    </Button>
                   </div>
                 </div>
+              {/if}
+
+              {#if addingPerson}
+                <form class="inset-card" onsubmit={submitToken}>
+                  <div class="form-grid">
+                    <label>Name <TextField type="text" placeholder="name" bind:value={tokenNameInput} disabled={!isLocalConnection} /></label>
+                    <label>
+                      <span>Email <span class="optional">(optional)</span></span>
+                      <TextField type="email" placeholder="for git commits" bind:value={tokenEmailInput} disabled={!isLocalConnection} />
+                    </label>
+                  </div>
+                  <div class="btn-row align-end">
+                    <Button type="button" variant="ghost" onclick={() => (addingPerson = false)}>Cancel</Button>
+                    <Button type="submit" variant="primary" disabled={!isLocalConnection || !tokenNameInput.trim()}>
+                      <Icon name="plus" size={13} /> Add
+                    </Button>
+                  </div>
+                </form>
               {/if}
 
               <ul class="list">
@@ -1293,35 +1651,20 @@
                       <span class="list-title">{token.name}</span>
                       <span class="list-meta">{token.email ?? "no email"}</span>
                     </div>
-                    <button
-                      type="button"
-                      class="btn icon ghost danger"
+                    <Button type="button"
+                      icon variant="ghost" destructive
                       onclick={() => onRemoveToken(token.name)}
                       disabled={!isLocalConnection}
                       {@attach tip("Revoke access")}
                     >
                       <Icon name="user-x" size={13} />
-                    </button>
+                    </Button>
                   </li>
                 {:else}
                   <li class="empty">No one yet.</li>
                 {/each}
               </ul>
-
-              <form class="btn-row" onsubmit={submitToken}>
-                <input type="text" placeholder="name" bind:value={tokenNameInput} disabled={!isLocalConnection} />
-                <input
-                  type="email"
-                  placeholder="email (optional, for git commits)"
-                  bind:value={tokenEmailInput}
-                  disabled={!isLocalConnection}
-                />
-                <button type="submit" class="btn" disabled={!isLocalConnection || !tokenNameInput.trim()}>
-                  <Icon name="plus" size={13} /> Add
-                </button>
-              </form>
             </section>
-
             {#if server?.connectionStatus === "connected"}
               <section class="settings-section">
                 <h3 class="section-heading">Connected now</h3>
@@ -1340,14 +1683,13 @@
                           {peer.deviceType}{peer.ip ? ` · ${peer.ip}` : ""}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        class="btn icon ghost danger"
+                      <Button type="button"
+                        icon variant="ghost" destructive
                         onclick={() => onDisconnectPeer(peer.peerId, peer.name)}
                         {@attach tip("Disconnect")}
                       >
                         <Icon name="unlink" size={13} />
-                      </button>
+                      </Button>
                     </li>
                   {:else}
                     <li class="empty">No one else is connected.</li>
@@ -1355,6 +1697,16 @@
                 </ul>
               </section>
             {/if}
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content value="audit" class="tab-panel">
+          <div class="tab-body" use:searchable={{ tab: "audit", query: settingsSearch }}>
+            {@render pageHead("Audit log", true)}
+            <section class="settings-section">
+              <p class="hint">What was approved or refused, what ran, and which settings, credentials and devices changed on this server. Kept on the server (newest 15 MB), never containing a password, token or key.</p>
+              <AuditPanel cid={cid ?? null} connected={!!connected} />
+            </section>
           </div>
         </Tabs.Content>
       </Tabs.Root>
@@ -1385,8 +1737,8 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: min(56rem, 94vw);
-    height: min(44rem, 88vh);
+    width: min(72rem, 94vw);
+    height: min(50rem, 90vh);
     display: flex;
     /* A dialog card is a floating surface like any other, see the --float-*
        tokens in app.css. */
@@ -1502,6 +1854,7 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 1.14rem 1.71rem 1.71rem;
   }
   :global(.tab-panel[hidden]) {
@@ -1511,7 +1864,9 @@
     --ctrl-h: 2rem;
     display: flex;
     flex-direction: column;
-    gap: 1.14rem;
+    gap: 1.43rem;
+    max-width: 44rem;
+    margin-inline: auto;
   }
   .page-head {
     display: flex;
@@ -1555,8 +1910,8 @@
   .settings-section {
     display: flex;
     flex-direction: column;
-    gap: 0.71rem;
-    padding-top: 1.14rem;
+    gap: 0.86rem;
+    padding-top: 1.43rem;
     border-top: 1px solid var(--panel-border);
   }
   .page-head + .settings-section,
@@ -1610,37 +1965,17 @@
     opacity: 0.7;
   }
 
-  /* ---- Controls: one height (--ctrl-h, shared with Dropdown) for every
-     input, select and button. ---- */
-  input[type="text"],
-  input[type="number"],
-  input[type="password"],
-  input[type="email"] {
-    box-sizing: border-box;
-    height: var(--ctrl-h);
-    width: 100%;
-    min-width: 0;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    padding: 0 0.64rem;
-    font-size: var(--text-body-size);
-    font-family: inherit;
+  /* ---- Controls: one height (--ctrl-h, shared with Dropdown) for every field and button.
+     The controls themselves are in components/ui; these only size them for a settings row. ---- */
+  :global(.ui-field.ctrl-wide) {
+    width: 15rem;
   }
-  input:focus-visible {
-    outline: none;
-    border-color: color-mix(in srgb, var(--accent) 60%, var(--panel-border));
-  }
-  input:disabled {
-    opacity: 0.5;
-  }
-  .ctrl-wide {
-    width: 15rem !important;
-  }
-  .ctrl-num {
-    width: 4.57rem !important;
+  /* Unit in a fixed column so the fields line up down the page whatever their unit is. */
+  .num-unit {
+    display: inline-grid;
+    grid-template-columns: auto 2.8rem;
+    align-items: center;
+    gap: 6px;
   }
   .with-unit {
     display: flex;
@@ -1654,11 +1989,6 @@
     align-items: center;
     gap: 0.57rem;
     width: 15rem;
-  }
-  .slider input {
-    flex: 1;
-    min-width: 0;
-    accent-color: var(--accent);
   }
   .slider-value {
     width: 2.57rem;
@@ -1678,38 +2008,6 @@
   .form-grid :global(.dropdown-trigger) {
     width: 100%;
   }
-  .segmented {
-    display: inline-flex;
-    gap: 2px;
-    height: var(--ctrl-h);
-    padding: 2px;
-    box-sizing: border-box;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-sm);
-  }
-  .segmented button {
-    padding: 0 0.78rem;
-    background: none;
-    border: none;
-    border-radius: var(--radius-xs);
-    color: var(--text-dim);
-    font: inherit;
-    font-size: var(--text-label-size);
-    cursor: pointer;
-    transition:
-      background calc(0.12s * var(--anim-speed, 1)) ease,
-      color calc(0.12s * var(--anim-speed, 1)) ease;
-  }
-  .segmented button:hover {
-    color: var(--text);
-  }
-  .segmented button.active {
-    background: var(--sidebar-active);
-    color: var(--text);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  }
   .keys-intro {
     display: flex;
     align-items: center;
@@ -1724,7 +2022,7 @@
     align-items: center;
     gap: 0.29rem;
   }
-  .binds .reset {
+  .binds :global(.reset) {
     --ctrl-h: 1.57rem;
   }
   .bind {
@@ -1802,64 +2100,10 @@
     align-items: center;
     gap: 0.43rem;
   }
-  .btn {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.43rem;
-    box-sizing: border-box;
-    height: var(--ctrl-h);
-    padding: 0 0.86rem;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-label-size);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .btn:hover:not(:disabled) {
-    background: var(--sidebar-hover);
-  }
-  .btn:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #0d1020;
-    font-weight: 600;
-  }
-  .btn.primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 88%, #fff);
-  }
-  .btn.ghost {
-    background: none;
-    border-color: transparent;
-    color: var(--text-dim);
-  }
-  .btn.ghost:hover:not(:disabled) {
-    color: var(--text);
-  }
-  .btn.danger:hover:not(:disabled) {
-    color: var(--danger);
-  }
-  .btn.icon {
-    width: var(--ctrl-h);
-    padding: 0;
-  }
-  .btn.small {
-    --ctrl-h: 1.71rem;
-    padding: 0 0.64rem;
-  }
-  .align-start {
+  :global(.align-start) {
     align-self: flex-start;
   }
-  .align-end {
+  :global(.align-end) {
     align-self: flex-end;
   }
 
@@ -1993,6 +2237,18 @@
     border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--panel-border));
     border-radius: var(--radius-lg);
   }
+  /* Bash is exposed with no sandbox: red, not the usual amber. */
+  .warning-card.danger-card {
+    background: var(--danger-dim);
+    border-color: var(--danger);
+  }
+  .hint.danger-text {
+    display: flex;
+    align-items: center;
+    gap: 0.36rem;
+    color: var(--danger);
+    font-weight: 600;
+  }
   .warning-heading {
     display: flex;
     align-items: center;
@@ -2007,12 +2263,6 @@
   }
   .code-preview :global(.code-block) {
     margin: 0;
-  }
-  .avatar-side {
-    display: flex;
-    flex-direction: column;
-    gap: 0.71rem;
-    min-width: 0;
   }
   .mode-cards {
     display: flex;
@@ -2183,6 +2433,41 @@
     border-radius: var(--radius-xs);
     border: 1px solid rgba(255, 255, 255, 0.12);
   }
+  /* The check lives in the left margin a grouped item is already indented by; Default (no group)
+     gets the same x and its content is pushed over to line up with the rest. */
+  .diff-preview {
+    display: inline-flex;
+    gap: 0.14rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .diff-preview span {
+    width: 1.14rem;
+    text-align: center;
+    border-radius: var(--radius-xs);
+  }
+  .diff-preview .add {
+    color: var(--diff-add);
+    background: color-mix(in srgb, var(--diff-add) 14%, transparent);
+  }
+  .diff-preview .del {
+    color: var(--diff-del);
+    background: color-mix(in srgb, var(--diff-del) 14%, transparent);
+  }
+  .item-lead {
+    display: flex;
+    align-items: center;
+  }
+  .check-gutter {
+    display: flex;
+    flex-shrink: 0;
+    width: 0.72rem;
+    margin: 0 0.1rem 0 -0.1rem;
+  }
+  :global(.dropdown-item.grouped) .check-gutter {
+    margin-left: -0.82rem;
+  }
   .term-theme-swatch span {
     width: 0.29rem;
     height: 0.29rem;
@@ -2248,16 +2533,38 @@
   .swatch.active {
     border-color: var(--text);
   }
-  .avatar-row {
+  .profile-card {
+    flex-direction: row;
+    align-items: center;
+    gap: 1.43rem;
+    padding: 1.14rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-lg);
+  }
+  .profile-fields {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.86rem;
+  }
+  .profile-name {
+    display: flex;
+    flex-direction: column;
+    gap: 0.36rem;
+  }
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 1rem;
   }
   .avatar-preview {
     position: relative;
     flex-shrink: 0;
-    width: 5.14rem;
-    height: 5.14rem;
+    width: 6.43rem;
+    height: 6.43rem;
     border-radius: 50%;
     overflow: hidden;
     background: rgba(255, 255, 255, 0.05);
@@ -2277,7 +2584,7 @@
     height: 100%;
     align-items: center;
     justify-content: center;
-    font-size: 2rem;
+    font-size: 2.6rem;
     line-height: 1;
   }
   .avatar-preview .avatar-edit {

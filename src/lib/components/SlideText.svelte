@@ -2,12 +2,14 @@
   // Text that rolls vertically when it changes: the old text slides and fades out while the
   // new one slides in from the other side, and the box eases to the new width, so whatever
   // sits next to it moves with it. `dir` 1 rolls upward, -1 downward. Two layers swap roles
-  // on every change, so the animations are plain CSS with nothing to clean up. With `still`,
-  // the leading words that match the previous text stay put and everything from the first
-  // changed word on rolls.
-  import { untrack } from "svelte";
+  // on every change, so the animations are plain CSS with nothing to clean up. The leading
+  // words that match the previous text stay put and everything from the first changed word on
+  // rolls. While the composer is moving between chats (its `snap` context) the text just
+  // changes: only a value changing within a chat rolls.
+  import { getContext, untrack } from "svelte";
 
-  let { text, dir = 1, still = false }: { text: string; dir?: number; still?: boolean } = $props();
+  let { text, dir = 1 }: { text: string; dir?: number } = $props();
+  const snapping = getContext<(() => boolean) | undefined>("snap");
 
   let layers = $state(untrack(() => [text, ""]));
   let widths = $state([0, 0]);
@@ -19,6 +21,13 @@
 
   $effect(() => {
     if (text === last) return;
+    if (snapping?.()) {
+      last = text;
+      layers[cur] = text;
+      changed = false;
+      keep = 0;
+      return;
+    }
     let i = 0;
     while (i < text.length && text[i] === last[i]) i++;
     keep = text.lastIndexOf(" ", i - 1) + 1;
@@ -37,7 +46,7 @@
 <span class="slide" class:ready style:--dir={dir} style:width={widths[cur] ? `${widths[cur]}px` : undefined}>
   {#each layers as layer, i (i)}
     <span class="layer" class:in={i === cur} class:out={i !== cur} class:changed bind:offsetWidth={widths[i]} aria-hidden={i !== cur}>
-      {#each [...layer] as ch, j}<span class="ch" class:same={still && j < keep}>{ch}</span>{/each}
+      {#each [...layer] as ch, j}<span class="ch" class:same={j < keep}>{ch}</span>{/each}
     </span>
   {/each}
 </span>

@@ -2,9 +2,11 @@
   import { tip } from "../tooltip.svelte";
   import { untrack } from "svelte";
   import { app } from "../state.svelte";
-  import { navigateSessionHistory } from "../ipc";
+  import { navigateSessionHistory, focusChat } from "../ipc";
   import Icon from "./Icon.svelte";
-  import { shortNum } from "../format";
+  import ChatCard from "./ChatCard.svelte";
+  import { liveTabsFor } from "../liveChats";
+  import LiveTabs from "./LiveTabs.svelte";
 
   let {
     sessionId,
@@ -13,6 +15,7 @@
     ownsChrome = true,
     sidePanel = false,
     overlay = false,
+    snap = false,
     chatWidth,
     swapped = false,
     leftWidth = $bindable(0),
@@ -24,6 +27,8 @@
     ownsChrome?: boolean;
     sidePanel?: boolean;
     overlay?: boolean;
+    /** Moving between chats: the fade lands without animating. */
+    snap?: boolean;
     /** The chat column's width while the tools column shares the panel. */
     chatWidth?: string;
     /** Tools on the left: the header still spans the panel so its left end stays put. */
@@ -34,32 +39,12 @@
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
 
-  const messages = $derived(server?.messagesBySession[sessionId] ?? []);
-  const lastFinish = $derived(
-    [...messages].reverse().find((m) => m.role === "assistant" && m.finish)
-      ?.finish,
-  );
-  const git = $derived.by(() => {
-    const project = server?.projectBySession[sessionId];
-    return project ? server?.gitStatusByProject[project] : undefined;
-  });
-  // §3.1 ping status.budgets: session-scope cap, shown against this session's total.
-  const sessionCap = $derived(
-    server?.serverStatus?.budgets?.find((b) => b.scope === "session" && b.period === "total")?.limitUsd,
-  );
-  const contextPct = $derived(
-    lastFinish?.context
-      ? Math.min(
-          100,
-          Math.round(
-            (lastFinish.context.estimatedTokens /
-              lastFinish.context.maxTokens) *
-              100,
-          ),
-        )
-      : 0,
-  );
-  const takenOver = $derived(server?.takenOverSessions[sessionId]);
+  // Nothing scrolls under an empty chat's header, so its fade goes (the wallpaper shows clean);
+  // a chat with messages gets a stronger one.
+  const empty = $derived(!(server?.messagesBySession[sessionId]?.length) && !server?.syncingSessions[sessionId]);
+
+  const paired = $derived(sidePanel || (!!server?.sidebarSessionId && !app.rightSidebarCollapsed));
+
   const project = $derived(server?.projectBySession[sessionId]);
   const title = $derived(
     (project ? server?.sessionsByProject[project] : undefined)?.find(
@@ -75,12 +60,21 @@
   let typeTimer: ReturnType<typeof setInterval> | undefined;
   let outTimer: ReturnType<typeof setTimeout> | undefined;
 
+  let titleSession = untrack(() => sessionId);
   $effect(() => {
     const next = title;
+    const switched = sessionId !== titleSession;
+    titleSession = sessionId;
     if (next === syncedTitle) return;
     syncedTitle = next;
     clearInterval(typeTimer);
     clearTimeout(outTimer);
+    // Another chat's title just appears; only a rename within a chat fades and retypes.
+    if (switched && snap) {
+      displayTitle = next;
+      titlePhase = "idle";
+      return;
+    }
     titlePhase = "out";
     outTimer = setTimeout(() => {
       displayTitle = "";
@@ -101,52 +95,43 @@
     clearInterval(typeTimer);
     clearTimeout(outTimer);
   });
-  const sandboxTier = $derived(
-    project ? server?.sandboxTierByProject[project] : undefined,
+  // Chats elsewhere that want you, across every server. Needs-you tabs stay ahead of the rest
+  // (the sort is stable, so each server's own order survives). Not shown while the tools column
+  // is swapped under this header: it would land on the tools' tab row.
+  const liveTabs = $derived(
+    sidePanel || swapped
+      ? []
+      : Object.entries(app.servers)
+          .flatMap(([scid, srv]) =>
+            liveTabsFor(scid, srv, scid === app.activeConnectionId ? [srv.currentSessionId, srv.sidebarSessionId] : []),
+          )
+          .sort((a, b) => +(a.status !== "action") - +(b.status !== "action")),
   );
+  // The title's hover card: the same card the sidebar rows show, with git, sandbox and spend in it.
+  const summary = $derived(server?.sessionById.get(sessionId));
 </script>
 
-{#snippet gitCard()}
-  {#if git}
-    <div class="tip-title">{git.detached ? "Detached HEAD" : git.branch}</div>
-    <dl class="tip-rows">
-      <dt>Changed</dt><dd>{git.dirtyFiles} file{git.dirtyFiles === 1 ? "" : "s"}</dd>
-      {#if git.hasUpstream}
-        <dt>Ahead</dt><dd>{git.ahead} to push</dd>
-        <dt>Behind</dt><dd>{git.behind} to pull</dd>
-      {:else}
-        <dt>Upstream</dt><dd class="tip-dim">none</dd>
-      {/if}
-    </dl>
-  {/if}
-{/snippet}
-
-{#snippet contextCard()}
-  {#if lastFinish?.context}
-    <div class="tip-title">Context window</div>
-    <dl class="tip-rows">
-      <dt>Used</dt><dd>{shortNum(lastFinish.context.estimatedTokens)} tokens ({contextPct}%)</dd>
-      <dt>Limit</dt><dd>{shortNum(lastFinish.context.maxTokens)} tokens</dd>
-      {#if lastFinish.usage}<dt>Last reply</dt><dd>{shortNum(lastFinish.usage.outputTokens)} out</dd>{/if}
-    </dl>
-  {/if}
+{#snippet titleCard()}
+  {#if cid && summary}<ChatCard connectionId={cid} session={summary} />{/if}
 {/snippet}
 
 <header
-  class="header"
+  class="header has-island"
   class:reserve-chrome={reserveChrome}
   class:reserve-toggle={reserveToggle}
   class:overlay
-  class:has-island={!sidePanel}
+  class:empty
+  class:snap
+  class:has-live={liveTabs.length > 0}
   class:split={!!chatWidth && !swapped}
   class:swapped={!!chatWidth && swapped}
   style={`--header-chrome-reserve: var(${ownsChrome ? "--chrome-reserve" : "--local-island-reserve"})${chatWidth ? `; --chat-w: ${chatWidth}` : ""}`}
 >
   <div class="left" bind:clientWidth={leftWidth}>
-    {#if !sidePanel}
-      <!-- Arrows before the title: it types in a character at a time, so
-           anything to its left would shuffle sideways each keystroke. -->
-      <div class="chrome-surface chat-island">
+    <!-- Buttons before the title: it types in a character at a time, so
+         anything to its left would shuffle sideways each keystroke. -->
+    <div class="chrome-surface chat-island">
+      {#if !sidePanel}
         <button
           class="chrome-btn"
           {@attach tip("Previous chat", "chat.back")}
@@ -165,64 +150,37 @@
         >
           <Icon name="chevron-right" size={13} />
         </button>
-        <span
-          class="session-id"
-          class:fading={titlePhase === "out"}
-          class:typing={titlePhase === "in"}>{displayTitle}</span
+      {/if}
+      <!-- Either half of a visible pairing can be pulled out on its own. -->
+      {#if paired}
+        <button
+          class="chrome-btn"
+          {@attach tip("Focus this chat")}
+          aria-label="Focus this chat"
+          onclick={() => cid && focusChat(cid, sessionId)}
         >
-      </div>
-    {:else}
+          <Icon name="maximize" size={13} />
+        </button>
+      {/if}
+      {#if sidePanel}
+        <button
+          class="chrome-btn"
+          {@attach tip("Close side chat")}
+          aria-label="Close side chat"
+          onclick={() => server?.closeSidePanel()}
+        >
+          <Icon name="xmark" size={13} />
+        </button>
+      {/if}
       <span
         class="session-id"
         class:fading={titlePhase === "out"}
-        class:typing={titlePhase === "in"}>{displayTitle}</span
+        class:typing={titlePhase === "in"}
+        {@attach tip(summary && cid ? titleCard : undefined, { side: "bottom" })}>{displayTitle}</span
       >
-    {/if}
-    {#if sandboxTier === "local_restricted_fallback"}
-      <span
-        class="badge warn"
-        {@attach tip("bash tool calls in this project have no sandbox isolation")}
-      >
-        <Icon name="warning" size={12} /> No sandbox
-      </span>
-    {/if}
-    {#if takenOver}
-      <span class="badge warn"
-        ><Icon name="warning" size={12} /> Opened elsewhere</span
-      >
-    {/if}
+    </div>
   </div>
-  <div class="right">
-    {#if git}
-      <span
-        class="stat git"
-        {@attach tip(gitCard, { side: "bottom" })}
-      >
-        <Icon name="git-branch" size={12} />
-        {git.detached ? "detached" : git.branch}
-        {#if git.dirtyFiles}<span class="dirty">±{git.dirtyFiles}</span>{/if}
-        {#if git.hasUpstream && git.ahead}<span>↑{git.ahead}</span>{/if}
-        {#if git.hasUpstream && git.behind}<span>↓{git.behind}</span>{/if}
-      </span>
-    {/if}
-    {#if lastFinish?.context}
-      <span class="ctx" {@attach tip(contextCard, { side: "bottom" })}>
-        <div class="meter">
-          <div class="meter-fill" style="width: {contextPct}%"></div>
-        </div>
-        <span class="stat">{contextPct}% ctx</span>
-      </span>
-    {/if}
-    {#if lastFinish?.spend}
-      {@const total = lastFinish.spend.sessionTotalUsd ?? 0}
-      <span
-        class="stat"
-        class:over={sessionCap != null && total >= sessionCap * 0.8}
-        {@attach tip(sessionCap != null ? `The server stops a session at $${sessionCap.toFixed(2)}` : undefined)}
-        >${total.toFixed(2)}{#if sessionCap != null}&nbsp;/ ${sessionCap.toFixed(2)}{/if} session</span
-      >
-    {/if}
-  </div>
+  {#if liveTabs.length}<LiveTabs tabs={liveTabs} />{/if}
 </header>
 
 <style>
@@ -243,20 +201,30 @@
     );
     transition: padding calc(0.2s * var(--anim-speed, 1)) ease;
   }
-  /* Floats above the body so scrolled content passes under it. Fade hands off
-     to ::after below at a matching tint so it reads as one continuous fade. */
+  /* Floats above the body so scrolled content passes under it. The fade is the ::before (and
+     ::after below it, at a matching tint so it reads as one continuous fade): fading their
+     opacity lets it ease in and out with the composer's slide, which a gradient can't do itself. */
   .header.overlay {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     z-index: 2;
-    --header-fade-mid: color-mix(in srgb, var(--panel-bg) 38%, transparent);
+    background: none;
+    --header-fade-mid: color-mix(in srgb, var(--panel-bg) 58%, transparent);
+  }
+  .header.overlay::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
     background: linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--panel-bg) 70%, transparent) 40%,
+      color-mix(in srgb, var(--panel-bg) 88%, transparent) 40%,
       var(--header-fade-mid)
     );
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
   }
   .header.overlay::after {
     content: "";
@@ -267,6 +235,16 @@
     height: 1.5rem;
     background: linear-gradient(to bottom, var(--header-fade-mid), transparent);
     pointer-events: none;
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
+  }
+  /* Nothing scrolls under an empty chat's header, so its fade goes. */
+  .header.overlay.empty::before,
+  .header.overlay.empty::after {
+    opacity: 0;
+  }
+  .header.snap::before,
+  .header.snap::after {
+    transition: none;
   }
   .header.split {
     right: var(--chat-w);
@@ -281,16 +259,8 @@
     pointer-events: auto;
   }
   .header.swapped::before {
-    content: "";
-    position: absolute;
     inset: 0 0 0 auto;
     width: var(--chat-w);
-    z-index: -1;
-    background: linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--panel-bg) 70%, transparent) 40%,
-      var(--header-fade-mid)
-    );
   }
   .header.swapped::after {
     left: auto;
@@ -361,58 +331,9 @@
       opacity: 0;
     }
   }
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-half);
-    font-size: 0.68rem;
-    padding: 0.14rem 0.57rem;
-    border-radius: var(--radius-pill);
-    white-space: nowrap;
-  }
-  .badge.warn {
-    background: var(--danger-dim);
-    color: var(--danger);
-  }
-  .right {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    flex-shrink: 0;
-  }
-  .ctx {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-  .meter {
-    width: 4rem;
-    height: 0.29rem;
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: var(--radius-pill);
-    overflow: hidden;
-  }
-  .meter-fill {
-    height: 100%;
-    background: var(--accent);
-  }
-  .stat {
-    font-size: var(--text-heading-size);
-    color: var(--text-dim);
-    white-space: nowrap;
-  }
-  .stat.git {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.29rem;
-    max-width: 14rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .dirty {
-    color: var(--warning);
-  }
-  .stat.over {
-    color: var(--warning);
+  /* The tabs sit right after the title island instead of space-between pushing them to the far
+     end; the title clips (ellipsis) before the tabs do. */
+  .header.has-live {
+    justify-content: flex-start;
   }
 </style>

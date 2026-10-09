@@ -16,6 +16,9 @@
   import { decodePairingCode } from "../pairing";
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
+  import Button from "./ui/Button.svelte";
+  import TextArea from "./ui/TextArea.svelte";
+  import TextField from "./ui/TextField.svelte";
 
   // showLocal off (Settings > Servers): the local server auto-connects at
   // startup, so adding one later is always a remote.
@@ -174,8 +177,8 @@
       <div class="row">
         <label class="grow">
           Host
-          <input
-            bind:this={hostInputEl}
+          <TextField
+            bind:el={hostInputEl}
             bind:value={host}
             onkeydown={onHostKeydown}
             onpaste={onHostPortPaste}
@@ -184,7 +187,7 @@
         </label>
         <label>
           Port
-          <input
+          <TextField
             type="number"
             bind:value={port}
             onkeydown={onPortKeydown}
@@ -193,9 +196,9 @@
           />
         </label>
       </div>
-      <button type="button" class="primary" disabled={!host.trim()} onclick={goToCode}>
+      <Button variant="primary" class="submit" disabled={!host.trim()} onclick={goToCode}>
         Next <Icon name="chevron-right" size={14} />
-      </button>
+      </Button>
     {:else if step === "code"}
       <p class="hint">
         Always TLS, against a CA only the server operator has — paste the pairing code they gave you
@@ -203,8 +206,8 @@
       </p>
       <label>
         Pairing code
-        <input
-          bind:this={codeInputEl}
+        <TextField
+          bind:el={codeInputEl}
           value={pairingCode}
           onkeydown={onCodeKeydown}
           oninput={(e) => applyPairingCode((e.target as HTMLInputElement).value)}
@@ -222,29 +225,29 @@
         <button type="button" class="back-step" onclick={goToAddress} {@attach tip("Back", "Backspace")}>
           <Icon name="chevron-left" size={13} />
         </button>
-        <button class="primary grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
+        <Button variant="primary" class="submit grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
           {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
-        </button>
+        </Button>
       </div>
     {:else}
       <p class="hint">Only needed if you don't have a pairing code — a bare token, or one from an operator-supplied real certificate that has no CA to bundle.</p>
       <label>
         Auth token
-        <input bind:this={manualTokenEl} bind:value={token} onkeydown={onManualTokenKeydown} placeholder="shared secret from -token" type="password" />
+        <TextField bind:el={manualTokenEl} bind:value={token} onkeydown={onManualTokenKeydown} placeholder="shared secret from -token" type="password" />
       </label>
       {#if isDesktop}
         <label>
           Server CA certificate
           <div class="row">
-            <textarea
+            <TextArea
               class="ca-input"
               bind:value={caPem}
-              rows="3"
+              rows={3}
               placeholder="Paste ca.pem contents, or import the file… — leave blank only if the server has a real, publicly-trusted certificate"
-            ></textarea>
-            <button class="ca-import" type="button" onclick={importCa} disabled={importingCa}>
+            />
+            <Button class="ca-import" onclick={importCa} disabled={importingCa}>
               {importingCa ? "Importing…" : "Import…"}
-            </button>
+            </Button>
           </div>
         </label>
         {#if caImportError}
@@ -257,9 +260,9 @@
         <button type="button" class="back-step" onclick={goToCode} {@attach tip("Back", "Backspace")}>
           <Icon name="chevron-left" size={13} />
         </button>
-        <button class="primary grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
+        <Button variant="primary" class="submit grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
           {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
-        </button>
+        </Button>
       </div>
     {/if}
   </form>
@@ -286,21 +289,21 @@
         </p>
         <label>
           Socket path
-          <input bind:value={socketPath} placeholder={FALLBACK_SOCKET_PATH} />
+          <TextField bind:value={socketPath} placeholder={FALLBACK_SOCKET_PATH} />
         </label>
         <details>
           <summary>Fallback launch settings</summary>
           <label>
             yoakeland binary
             <div class="row">
-              <input bind:value={binPath} placeholder="yoakeland" />
-              <button type="button" onclick={pickBinary}>Browse</button>
+              <TextField bind:value={binPath} placeholder="yoakeland" />
+              <Button onclick={pickBinary}>Browse</Button>
             </div>
           </label>
         </details>
-        <button class="primary" type="submit" disabled={app.connectionStatus === "connecting"}>
+        <Button variant="primary" class="submit" type="submit" disabled={app.connectionStatus === "connecting"}>
           {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
-        </button>
+        </Button>
       </form>
     </Tabs.Content>
     <Tabs.Content value="remote">
@@ -382,7 +385,7 @@
   details[open] summary {
     margin-bottom: 0.14rem;
   }
-  .grow {
+  :global(.grow) {
     flex: 1;
   }
   .menu-option {
@@ -422,69 +425,23 @@
   .back-step:hover {
     color: var(--text);
   }
-  .steps .primary {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.29rem;
+  /* First-run form: roomier than a settings row, so the controls here are taller. */
+  .steps {
+    --ctrl-h: 2.64rem;
   }
-  input {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    padding: 0.57rem 0.71rem;
-    font-size: var(--text-body-size);
-    width: 100%;
+  :global(.submit) {
+    margin-top: 0.43rem;
+    font-size: 0.9rem;
   }
-  input:focus {
-    outline: 1px solid var(--accent);
-  }
-  .ca-input {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    padding: 0.57rem 0.71rem;
-    font-size: var(--text-label-size);
+  :global(.ui-field.ca-input textarea) {
     font-family: var(--code-font-family);
-    width: 100%;
-    resize: vertical;
+    font-size: var(--text-label-size);
   }
-  .ca-input:focus {
-    outline: 1px solid var(--accent);
-  }
-  .ca-import {
+  :global(.ca-import) {
     align-self: flex-start;
-    flex-shrink: 0;
   }
   button {
     cursor: pointer;
-  }
-  .row button {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    padding: 0 0.86rem;
-    white-space: nowrap;
-  }
-  .primary {
-    margin-top: 0.43rem;
-    background: var(--accent);
-    color: #0d1020;
-    font-weight: 600;
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 0.71rem;
-    font-size: 0.9rem;
-  }
-  .primary:disabled {
-    opacity: 0.6;
-    cursor: default;
   }
   .error {
     display: flex;

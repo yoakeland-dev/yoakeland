@@ -94,9 +94,11 @@
         </div>
         <div class="sb-foot">
           <span class="sb-foot-title">Subscription usage</span>
-          <button type="button" class="sb-foot-btn" onclick={() => ((app.showUsage = true), (open = false))}>
-            <Icon name="chart-bar" size={12} /> Usage page
-          </button>
+          {#if !app.showUsage}
+            <button type="button" class="sb-foot-btn" onclick={() => ((app.showUsage = true), (open = false))}>
+              <Icon name="chart-bar" size={12} /> Usage page
+            </button>
+          {/if}
         </div>
       </Popover.Content>
     </Popover.Portal>
@@ -115,6 +117,7 @@
   }
   :global(.usage-panel .sb-card) {
     gap: 0.5rem;
+    padding: 0.36rem 0.5rem;
   }
   .wins {
     display: grid;

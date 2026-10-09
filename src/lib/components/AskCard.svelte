@@ -12,8 +12,10 @@
   import { metaFor, summaryFor } from "../toolMeta";
   import { findCallInMessages, subagentOwning, subagentTitle } from "../subagents";
   import { fileIconUrl } from "../fileIcons";
-  import type { PendingAsk } from "../types";
+  import { SCOPES, alwaysAnswer, defaultSuggestion, legacyRemember } from "../permissionRules";
+  import type { PendingAsk, PermissionScope } from "../types";
   import DiffView from "./DiffView.svelte";
+  import Dropdown from "./Dropdown.svelte";
   import Icon from "./Icon.svelte";
 
   let { sessionId, asks }: { sessionId: string; asks: PendingAsk[] } = $props();
@@ -48,11 +50,21 @@
   });
   const target = $derived(diff || command ? "" : call ? summaryFor(call) : "");
 
-  // Ask and Edit force every shell call (bash, the terminal tools) to ask and can't remember it (SPEC.md §4c).
-  const alwaysUnavailable = $derived(
-    (server?.modeBySession[sessionId] === "read_write" || server?.modeBySession[sessionId] === "accept_edits") &&
-      ["bash", "terminal_start", "terminal_output"].includes(permission?.toolName ?? ""),
-  );
+  // "Always allow" picks one of the rules the server offered for this call (SPEC.md §3.2 permission_request);
+  // a call it offers none for (a terminal, a chained command) can only be allowed once.
+  const suggestions = $derived(permission?.suggestions ?? []);
+  const legacy = $derived(!!permission && legacyRemember(permission));
+  let pick = $state(0);
+  let scope = $state<PermissionScope>("project");
+  $effect(() => {
+    void ask.toolCallId;
+    pick = Math.max(0, defaultSuggestion(suggestions));
+    scope = "project";
+  });
+  const picked = $derived(suggestions[pick]);
+  const suggestionItems = $derived(suggestions.map((s, i) => ({ value: String(i), label: s.label.replaceAll("`", "") })));
+  const scopeItems = SCOPES.map((s) => ({ value: s.value, label: s.label }));
+  const canAlways = $derived(legacy || !!picked);
   // An edit asked about in Ask can move the chat up to Edit, instead of being asked again for the next one.
   const canAcceptEdits = $derived(
     server?.modeBySession[sessionId] === "read_write" &&
@@ -68,6 +80,15 @@
     const c = cid();
     if (!c || !permission) return;
     respondPermission(c, ask.sessionId, ask.turnId, ask.toolCallId, true, remember);
+    done();
+  }
+  function allowAlways() {
+    const c = cid();
+    if (!c || !permission) return;
+    if (legacy) return allow(true);
+    const a = alwaysAnswer(suggestions, pick, scope);
+    if (!a) return;
+    respondPermission(c, ask.sessionId, ask.turnId, ask.toolCallId, true, a.remember, undefined, { ruleId: a.ruleId, scope: a.scope });
     done();
   }
   /** Allows this edit and every later one in this chat. */
@@ -128,7 +149,7 @@
     if (!empty) return false;
     if (permission && e.key === "Enter" && !e.shiftKey) {
       if (!(e.ctrlKey || e.metaKey)) allow(false);
-      else if (!alwaysUnavailable) allow(true);
+      else if (canAlways) allowAlways();
       return true;
     }
     if (!options.length) return false;
@@ -186,7 +207,9 @@
           <span class="kind"><Icon name="message-question" size={14} /></span>
           <span class="question">{question.question}</span>
         {/if}
-        {#if asks.length > 1}<span class="count">1 of {asks.length}</span>{/if}
+        {#if question?.total && question.total > 1}
+          <span class="count">{question.index} of {question.total}</span>
+        {:else if asks.length > 1}<span class="count">1 of {asks.length}</span>{/if}
       </div>
       {#if owner}
         <div class="owner"><Icon name="robot" size={12} /> Asked by subagent “{subagentTitle(owner)}”</div>
@@ -202,13 +225,26 @@
         {/if}
         <div class="actions">
           <button type="button" class="btn danger" onclick={reject}>Reject <kbd>Esc</kbd></button>
-          <span class="spacer"></span>
-          {#if alwaysUnavailable}
-            <span class="note" {@attach tip("Ask and Edit modes ask for every command, so this one can't be remembered.")}>
-              <Icon name="info-circle" size={13} />
-            </span>
-          {:else}
-            <button type="button" class="btn" onclick={() => allow(true)}>Always allow <kbd>Ctrl ⏎</kbd></button>
+          {#if canAlways}
+            <div class="always">
+              {#if suggestions.length}
+                <Dropdown
+                  items={suggestionItems}
+                  bind:value={() => String(pick), (v) => (pick = Number(v))}
+                  triggerClass="ask-pick"
+                  triggerTitle="What to always allow"
+                />
+                {#if !picked?.native}
+                  <Dropdown
+                    items={scopeItems}
+                    bind:value={() => scope, (v) => (scope = v as PermissionScope)}
+                    triggerClass="ask-pick"
+                    triggerTitle="Where to remember it"
+                  />
+                {/if}
+              {/if}
+              <button type="button" class="btn" onclick={allowAlways}>Always allow <kbd>Ctrl ⏎</kbd></button>
+            </div>
           {/if}
           {#if canAcceptEdits}
             <button type="button" class="btn" {@attach tip("Switch this chat to Edit: file edits go through without asking, commands still ask")} onclick={allowEdits}>Allow edits</button>
@@ -278,11 +314,11 @@
     left: 12px;
     right: 12px;
     top: -6px;
-    height: 20px;
+    height: 6px;
     z-index: -1;
     border: 1px solid var(--float-border);
     border-bottom: none;
-    border-radius: 16px 16px 0 0;
+    border-radius: 10px 10px 0 0;
     background: var(--float-bg);
     opacity: 0.7;
   }
@@ -290,6 +326,7 @@
     left: 24px;
     right: 24px;
     top: -11px;
+    height: 5px;
     opacity: 0.4;
   }
   .inner {
@@ -369,6 +406,7 @@
   .diff-box {
     max-height: 40vh;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     border-radius: var(--radius-sm);
   }
   .command {
@@ -383,6 +421,7 @@
     word-break: break-word;
     max-height: 30vh;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .prompt {
     opacity: 0.5;
@@ -396,12 +435,34 @@
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.43rem;
     margin-top: var(--space-1);
   }
-  .spacer {
-    flex: 1;
+  /* Dropdown.svelte's trigger sits transparent inside the pill; only its hover fill shows. */
+  .always {
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--radius-pill);
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .always :global(.dropdown-trigger.ask-pick) {
+    max-width: 14rem;
+    border-color: transparent;
+    border-radius: var(--radius-pill);
+    padding: 0 0.7rem;
+  }
+  .always :global(.dropdown-trigger.ask-pick:hover),
+  .always :global(.dropdown-trigger.ask-pick[data-state="open"]) {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .always .btn {
+    background: none;
+  }
+  .always .btn:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
   .btn {
     display: inline-flex;
@@ -409,7 +470,8 @@
     gap: 0.43rem;
     border: none;
     border-radius: var(--radius-pill);
-    padding: 0.43rem 0.86rem;
+    height: var(--ctrl-h, 2rem);
+    padding: 0 0.86rem;
     background: rgba(255, 255, 255, 0.07);
     color: var(--text);
     font-size: var(--text-label-size);
@@ -420,6 +482,7 @@
     background: rgba(255, 255, 255, 0.11);
   }
   .btn.danger {
+    margin-right: auto;
     background: none;
     color: var(--danger);
   }
@@ -430,15 +493,21 @@
     background: var(--accent);
     color: #0d1020;
   }
-  kbd {
-    font-family: inherit;
-    font-size: 0.68rem;
-    font-weight: 500;
-    opacity: 0.6;
+  .btn.primary:hover {
+    background: var(--accent);
+    filter: brightness(1.08);
   }
-  .note {
-    display: inline-flex;
-    color: var(--text-dim);
+  kbd {
+    padding: 0.05rem 0.3rem;
+    border-radius: var(--radius-xs);
+    background: rgba(255, 255, 255, 0.08);
+    font-family: inherit;
+    font-size: 0.66rem;
+    font-weight: 500;
+    opacity: 0.7;
+  }
+  .btn.primary kbd {
+    background: rgba(0, 0, 0, 0.12);
   }
   .options {
     list-style: none;

@@ -15,6 +15,16 @@ export function shortNum(n: number): string {
   return compactNumber.format(n);
 }
 
+/** 1536 -> "1.5 KB". */
+export function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let n = bytes / 1024;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) (n /= 1024), i++;
+  return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+}
+
 export function basename(path: string): string {
   if (typeof path !== "string") return String(path ?? "");
   return path.split(/[/\\]/).filter(Boolean).pop() ?? path;

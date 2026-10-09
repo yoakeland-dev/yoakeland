@@ -54,6 +54,28 @@
       { name: "my-openrouter", kind: "api_key", httpProvider: "openrouter" },
       { name: "opencode", kind: "cli_opencode" },
     ];
+    for (const path of Object.keys(projects)) {
+      s.mcpByProject[path] = {
+        projectPath: path,
+        redacted: "••••••",
+        servers: [
+          { name: "github", scope: "user", state: "ready", config: { type: "http", url: "https://api.githubcopilot.com/mcp/", headers: { Authorization: "••••••" } }, remote: true, signedIn: true, tools: [
+            { name: "mcp__github__create_issue", rawName: "create_issue", description: "Open an issue", enabled: true },
+            { name: "mcp__github__list_prs", rawName: "list_prs", description: "List pull requests", readOnly: true, enabled: true },
+          ] },
+          { name: "linear", scope: "user", state: "needs_auth", config: { type: "http", url: "https://mcp.linear.app/mcp" }, remote: true, error: "This server wants you to sign in." },
+          { name: "fs", scope: "project", state: "pending", approval: "pending", config: { type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "."], env: { LOG: "info" } } },
+        ],
+      };
+      s.skillsByProject[path] = {
+        projectPath: path,
+        roots: [{ path: `${path}/.claude/skills`, source: "claude", scope: "project", exists: true }],
+        skills: [
+          { name: "review-pr", description: "Review a pull request for bugs and style", dir: `${path}/.claude/skills/review-pr`, file: "SKILL.md", scope: "project", source: "claude", agents: ["claude", "native"], enabled: true, userInvocable: true, argumentHint: "<number>", files: 2, bytes: 2100 },
+          { name: "release-notes", description: "Draft release notes from merged changes", dir: "/home/me/.claude/skills/release-notes", file: "SKILL.md", scope: "user", source: "claude", agents: ["claude", "native"], enabled: true, userInvocable: true, files: 1, bytes: 900 },
+        ],
+      };
+    }
     s.cliAvailability = { cli_claude: true, cli_codex: false, cli_kimi: true };
     s.modelsByProvider = {
       "claude-subscription": [
@@ -101,7 +123,7 @@
   // and sidebar have something to say.
   remote.activeTurnBySession = { r1: "turn-2" };
   remote.pendingAsks = [
-    { kind: "permission", sessionId: "r1", projectPath: "/srv/media-stack", turnId: "turn-2", toolCallId: "t1", toolName: "bash", description: "bash on {\"command\":\"docker compose up -d\"}", requiresAsk: true, cacheKey: "bash:docker" },
+    { kind: "permission", sessionId: "r1", projectPath: "/srv/media-stack", turnId: "turn-2", toolCallId: "t1", toolName: "bash", description: "bash on {\"command\":\"docker compose up -d\"}", requiresAsk: true, cacheKey: "bash:docker", suggestions: [{ id: "r1", label: "`docker compose up *`" }, { id: "r2", label: "`docker compose *`" }] },
   ];
   seed("vps", "remote", "work box", { "/opt/app": [session("v1", "Renew nginx certs", 60 * 10)] }).connectionStatus = "disconnected";
   app.spendToday = { day: new Date().toDateString(), usd: 4.82 };
@@ -119,7 +141,7 @@
   };
   local.pendingAsks = [
     { kind: "question", sessionId: "s1", projectPath: "/home/aveline/Projects/yoake/yoake-gui", turnId: "turn-3", toolCallId: "q1", question: "Which toggle style should the rows use?", options: ["Switch", "Checkbox"] },
-    { kind: "permission", sessionId: "s1", projectPath: "/home/aveline/Projects/yoake/yoake-gui", turnId: "turn-3", toolCallId: "c3", toolName: "Edit", description: "Edit SettingsPanel.svelte", requiresAsk: true, cacheKey: "", diff: noteDiff },
+    { kind: "permission", sessionId: "s1", projectPath: "/home/aveline/Projects/yoake/yoake-gui", turnId: "turn-3", toolCallId: "c3", toolName: "Edit", description: "Edit SettingsPanel.svelte", requiresAsk: true, cacheKey: "", diff: noteDiff, suggestions: [{ id: "e1", label: "Edits in `src/lib/components/**`" }, { id: "e2", label: "All edits" }] },
   ];
   // Status bar: CLI rate limits, server-side spend, a queued turn, a session cap.
   local.serverStatus = {
@@ -175,6 +197,13 @@
       title: `Pixel 9 ${i % 2 ? "disconnected" : "connected"}`, body: "10.0.0.23", createdAt: iso(60 + i * 30),
     })),
   ];
+  // No sandbox on yoake-gui (the mode picker, status bar and header shout about it), bubblewrap on the other.
+  local.sandboxTierByProject = { "/home/aveline/Projects/yoake/yoake-gui": "local_restricted_fallback", "/home/aveline/Projects/yoakeland": "bubblewrap" };
+  local.runtime = {
+    maxRoundsPerTurn: 0, maxSessionCostUsd: 0, disableBashWhenUnsandboxed: false, execTimeoutSec: 60, execOutputMaxBytes: 1048576,
+    terminalMemoryMaxMB: 2048, terminalPidsMax: 512, terminalReadMaxChars: 12000, terminalHistoryKB: 256, poolIdleMinutes: 30,
+    poolMaxLive: 0, pricingRefreshHours: 24, browserBlockCrossOrigin: true,
+  };
   local.selfPeerId = "p1";
   remote.selfPeerId = "p3";
   remote.peers = [
@@ -296,6 +325,8 @@
     },
   ];
   local.messagesBySession = { s1: msgs, s2, s3: [], s4: [] };
+  local.contextBySession = { s1: { estimatedTokens: 86_000, maxTokens: 200_000, windowTokens: 200_000, budgetTokens: 64_000, source: "provider" } };
+  local.spendBySession = { s1: { sessionTotalUsd: 1.37, projectTotalUsd: 12.9 } };
   local.terminalById.t5 = { ...term("t5", "s2", "bash", "running", "/home/aveline/Projects/yoake/yoake-gui"), name: "dev server", agent: true, busy: true, command: "npm run dev" };
   local.terminalsBySession.s2 = ["t2", "t5"];
   if (new URLSearchParams(location.search).get("chat") === "s2") {
@@ -312,6 +343,57 @@
       ];
     }
   }
+  // ?live: chats elsewhere that want you, for the header's live tabs. =many adds enough to overflow,
+  // =none leaves nothing live.
+  const live = new URLSearchParams(location.search).get("live");
+  if (live === "none") {
+    for (const srv of [local, remote]) {
+      srv.activeTurnBySession = {};
+      srv.finishedSessions = {};
+      srv.pendingAsks = [];
+    }
+  } else if (live !== null) {
+    if (live === "many") {
+      // Named, listed chats rather than bare ids, so the tabs and cards have titles to show.
+      const titles = ["Migrate settings to tabs", "Audit bash sandbox rules", "Write release notes", "Profile message list scroll", "Fix flaky terminal test", "Refactor ipc handlers"];
+      const gui = "/home/aveline/Projects/yoake/yoake-gui";
+      local.sessionsByProject[gui] = [...local.sessionsByProject[gui], ...titles.map((t, i) => session(`g${i + 1}`, t, 4 + i * 3))];
+      for (let i = 1; i <= titles.length; i++) local.projectBySession[`g${i}`] = gui;
+    }
+    local.activeTurnBySession = { s2: "turn-2", ...(live === "many" ? Object.fromEntries([1, 2, 3, 4, 5, 6].map((i) => [`g${i}`, `turn-g${i}`])) : {}) };
+    local.finishedSessions = { s3: true };
+    local.pendingAsks = [
+      { kind: "permission", sessionId: "s4", projectPath: local.currentProjectPath!, turnId: "turn-4", toolCallId: "a4", toolName: "bash", description: "bash on rg", requiresAsk: true, cacheKey: "" },
+    ];
+  }
+  // ?split: the saved pairing is open, with s2 linked beside the main chat.
+  if (new URLSearchParams(location.search).has("split")) {
+    local.projectBySession.s2 = "/home/aveline/Projects/yoake/yoake-gui";
+    local.sidebarSessionId = "s2";
+    local.sessionsByProject["/home/aveline/Projects/yoake/yoake-gui"] = local.sessionsByProject["/home/aveline/Projects/yoake/yoake-gui"].map((x) =>
+      x.sessionId === "s1" ? { ...x, linkedSessionId: "s2" } : x,
+    );
+    app.rightSidebarCollapsed = false;
+  }
+  // ?empty: a fresh chat in the project, for the feed under the composer. ?empty=chat: a
+  // project-less one, with a couple of chats of its own to pick up.
+  const emptyMode = new URLSearchParams(location.search).get("empty");
+  if (emptyMode !== null) {
+    if (emptyMode === "chat") {
+      local.sessionsByProject["@chat"] = [
+        session("c1", "Plot the CSV by month", 90, { projectPath: "/state/chats/c1" }),
+        session("c2", "Rename photos by date", 60 * 30, { projectPath: "/state/chats/c2" }),
+      ];
+      for (const id of ["c1", "c2"]) local.projectBySession[id] = "@chat";
+      local.messagesBySession.c1 = [
+        { id: "u", role: "user", text: "Plot the CSV by month", toolCalls: [], streaming: false, createdAt: now - 6e6 },
+        { id: "a", role: "assistant", text: "I grouped the rows by month and saved the chart as sales.png; March is the outlier.", toolCalls: [{ toolCallId: "t", name: "file_write", args: {}, status: "done", diffs: [{ filePath: "sales.png", unified: "", hunks: [] }, { filePath: "plot.py", unified: "", hunks: [] }] }], streaming: false, createdAt: now - 5e6 },
+      ];
+      local.newSessionInProject("@chat");
+    } else {
+      local.newSessionInProject("/home/aveline/Projects/yoake/yoake-gui");
+    }
+  }
   app.activeConnectionId = "local";
 
   // ?flat: flat main area. ?open=model|mode: open that composer picker.
@@ -320,6 +402,7 @@
   if (params.has("flat")) app.settings.mainArea = "flat";
   onMount(() => {
     app.applySettings();
+    if (params.get("ext")) app.openExtensions();
     const open = params.get("open");
     if (!open) return;
     setTimeout(() => {

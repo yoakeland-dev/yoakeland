@@ -164,6 +164,7 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding-bottom: var(--space-2);
   }
   .group {

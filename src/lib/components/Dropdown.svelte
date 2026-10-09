@@ -285,6 +285,7 @@
   }
   :global(.dropdown-viewport) {
     overflow-y: auto;
+    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
     gap: 0.07rem;

@@ -155,6 +155,11 @@ export function titleFor(entry: Entry): string {
   return raw;
 }
 
+/** The built-in claude-/codex-subscription providers read as just "subscription". */
+export function providerLabel(p: ProviderInfo): string {
+  return p.name.endsWith("-subscription") ? "subscription" : p.name;
+}
+
 export function vendorMetaFor(entry: Entry): { label: string; icon: string } {
   if (entry.provider.kind === "cli_codex") return { label: "ChatGPT", icon: "openai" };
   if (isCli(entry.provider)) {

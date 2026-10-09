@@ -9,6 +9,7 @@
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
   import VersionCycle from "./VersionCycle.svelte";
+  import CopyButton from "./CopyButton.svelte";
 
   // `queued`: sent mid-turn, waiting for that turn to end (§3.1 turn_started); undoable until then.
   // `steering`: sent into the running turn (§3.1 steer_turn), waiting for the agent to take it.
@@ -110,14 +111,17 @@
         </button>
       {:else}
         <VersionCycle {message} {sessionId} />
-        <button
-          class="action"
-          onclick={edit}
-          {@attach tip("Edit — regenerates from here; doesn't undo any file changes the discarded reply made")}
-        >
-          <Icon name="pencil" size={12} />
-          Edit
-        </button>
+        <span class="actions">
+          <CopyButton text={message.text} label="Copy message" />
+          <button
+            class="action"
+            onclick={edit}
+            aria-label="Edit"
+            {@attach tip("Edit — regenerates from here; doesn't undo any file changes the discarded reply made")}
+          >
+            <Icon name="pencil" size={12} />
+          </button>
+        </span>
       {/if}
     </div>
   </div>
@@ -194,6 +198,16 @@
   }
   .action:disabled {
     cursor: default;
+  }
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .row:not(:hover, :focus-within) .actions {
+    opacity: 0;
+    pointer-events: none;
   }
   .queued-note {
     display: inline-flex;

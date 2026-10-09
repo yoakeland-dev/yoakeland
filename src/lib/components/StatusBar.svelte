@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
   // App-wide, not per-server: multiple servers/chats run at once, so this only shows what
-  // spans all of them. Per-chat numbers (context, session cost) live in the chat header instead.
+  // spans all of them. Per-chat numbers live with the chat: session cost in its header, context in its composer.
   import { app, type ConnectionId } from "../state.svelte";
   import { openChatSession } from "../ipc";
   import Icon from "./Icon.svelte";

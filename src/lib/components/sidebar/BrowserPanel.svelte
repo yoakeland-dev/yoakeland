@@ -3,7 +3,7 @@
   // A small browser for previewing pages beside the chat, on Electron's <webview> (see
   // lockDownWebviews in electron/main.js for what a page may and may not do). The viewport can
   // be fit to the panel, forced to a device size (scaled down to fit), or held at an aspect ratio.
-  import { isDesktop, openUrl } from "../../platform";
+  import { browserGuard, browserUnguard, isDesktop, openUrl } from "../../platform";
   import { registerBrowser, type BrowserController } from "../../browserAgent.svelte";
   import { SNAPSHOT_JS, clickJs, focusJs, locateJs, scrollJs } from "../../browserSnapshot";
   import Icon from "../Icon.svelte";
@@ -11,6 +11,7 @@
   import EmptyState from "./EmptyState.svelte";
 
   interface Webview extends HTMLElement {
+    getWebContentsId(): number;
     getURL(): string;
     canGoBack(): boolean;
     canGoForward(): boolean;
@@ -206,7 +207,33 @@
   }
 
   const controller: BrowserController = {
-    async run(action, args) {
+    async run(action, args, guard) {
+      const w = views.get(active.id);
+      if (!guard || !w) return runAction(action, args);
+      // Page-initiated navigation off the approved hosts is stopped by the main process while
+      // the action runs; the agent is told, and must use navigate (which asks the user).
+      const id = w.getWebContentsId();
+      await browserGuard(id, guard.hosts);
+      let out: string;
+      try {
+        out = await runAction(action, args);
+      } catch (e) {
+        await browserUnguard(id);
+        throw e;
+      }
+      const blocked = await browserUnguard(id);
+      if (blocked.length) {
+        throw new Error(
+          `blocked: the page tried to go to ${blocked[0]}, a site you haven't been cleared to visit, so the browser stayed where it was. ` +
+            "To go there, call navigate with that URL; the user is asked first.",
+        );
+      }
+      return out;
+    },
+  };
+
+  async function runAction(action: string, args: Record<string, unknown>): Promise<string> {
+    {
       const tab = active;
       const w = views.get(tab.id);
       if (!w) throw new Error("the browser isn't ready yet; try again");
@@ -264,8 +291,8 @@
       await settle(tab);
       if (tab.error && ["navigate", "back", "forward", "reload"].includes(action)) throw new Error(`couldn't load the page: ${tab.error}`);
       return snapshot(tab, w);
-    },
-  };
+    }
+  }
 
   $effect(() => {
     if (sessionId && isDesktop) return registerBrowser(sessionId, controller);

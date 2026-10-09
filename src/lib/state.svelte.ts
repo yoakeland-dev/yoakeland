@@ -9,6 +9,11 @@ import type {
   GitStatus,
   NativeToolFields,
   ServerNotification,
+  NotifyPrefs,
+  PermissionRulesData,
+  McpServersData,
+  SkillsData,
+  SkillDetailData,
   ServerStatus,
   Envelope,
   PeerInfo,
@@ -19,6 +24,7 @@ import type {
   PendingAsk,
   PermissionRequestData,
   ProviderInfo,
+  RuntimeSettings,
   SandboxTier,
   SessionSummary,
   SnapshotInfo,
@@ -30,6 +36,8 @@ import type {
   ToolCallRequestedData,
   ToolResultData,
   TurnCompletedData,
+  ContextData,
+  SpendData,
   TerminalSummary,
   QueuedPrompt,
   SubagentRun,
@@ -38,7 +46,16 @@ import { findCall, findCallInMessages } from "./subagents";
 
 /** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
 type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
-import { deriveTheme, deriveTerminalTheme, TERMINAL_THEME_PRESETS } from "./theme";
+import {
+  DIFF_COLORS,
+  deriveTerminalTheme,
+  TERMINAL_THEME_PRESETS,
+  terminalFromVariant,
+  tokensFor,
+  type AppTheme,
+  type TerminalColorTheme,
+} from "./theme";
+import { APP_THEME_PRESETS } from "./themePresets";
 import { invoke, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
@@ -72,6 +89,8 @@ const SESSION_SCOPED_EVENTS = new Set([
   "permission_request",
   "ask_user_question_requested",
   "tool_result",
+  "snapshot_capturing",
+  "snapshot_created",
   "turn_completed",
   "session_taken_over",
   "plan_written",
@@ -280,6 +299,18 @@ export function loadServerToken(serverId: string): Promise<string | null> {
 }
 
 /** Stable key for a (provider, model) pair, used as a Svelte `#each` key. */
+/** projectPath of a chat with no project (SPEC §4b): the server gives it a scratch directory. */
+export const CHAT_PROJECT = "@chat";
+/** localStorage key for the sidebar's Projects/Chats tab, also read at startup to pick where to land. */
+export const SIDEBAR_TAB_KEY = "yoake.sidebarTab";
+
+export interface PaletteRequest {
+  page: "root" | "projects" | "browse" | "servers";
+  at: number;
+  /** The projects page picks for a caller instead of opening a chat. */
+  pick?: { title: string; connectionId: ConnectionId; run: (projectPath: string) => void };
+}
+
 export function modelKey(providerName: string, model: string): string {
   return `${providerName}::${model}`;
 }
@@ -310,6 +341,9 @@ function saveBool(key: string, value: boolean) {
   }
 }
 
+/** Notification kinds that mirror a pending ask; the pending-asks list is the authority for those. */
+export const ASK_KINDS = new Set(["permission_request", "ask_user_question_requested"]);
+
 const SIDEBAR_COLLAPSED_KEY = "yoake.sidebarCollapsed";
 const RIGHT_SIDEBAR_COLLAPSED_KEY = "yoake.rightSidebarCollapsed";
 const SIDEBAR_WIDTH_KEY = "yoake.sidebarWidth";
@@ -318,12 +352,16 @@ const TERMINAL_HEIGHT_RATIO_KEY = "yoake.terminalHeightRatio";
 const CHAT_SIDEBAR_WIDTH_RATIO_KEY = "yoake.chatSidebarWidthRatio";
 const SETTINGS_KEY = "yoake.settings";
 
-// Appearance/profile preferences: entirely per-device, client-only. Custom themes are just
-// `accent` overridden at runtime; derived colors use CSS color-mix() (app.css).
+// Appearance/profile preferences: entirely per-device, client-only. A mode with no theme
+// chosen derives its colors from `accent`; derived colors use CSS color-mix() (app.css).
 export interface AppSettings {
   /** "system" follows the OS's prefers-color-scheme, re-applied live. */
   theme: "dark" | "light" | "system";
   accent: string;
+  /** One theme per resolved mode (a preset or custom theme id); "" = derive from `accent`.
+   * Choosing one never touches `theme` or `accent`. */
+  darkTheme: string;
+  lightTheme: string;
   /** Root font size in px; the UI presents it as an interface scale (14px = 100%). */
   uiFontSize: number;
   codeFontSize: number;
@@ -345,6 +383,10 @@ export interface AppSettings {
   /** "opaque": plain panel fill. "frosted": floating surfaces (composer, popups, dialogs, window
    * chrome) go translucent over a blur; pure CSS via `data-surface` (app.css). */
   surface: "opaque" | "frosted";
+  /** The new chat's feed under the composer (EmptyFeed.svelte): recent chats, the working tree, starter prompts. */
+  emptyFeed: boolean;
+  /** What added and removed lines are drawn in: "colorblind" is blue/orange instead of green/red. */
+  diffColors: "default" | "colorblind";
   /** Window controls and the drag strip. */
   windowChrome: boolean;
   /** Keep the accent in sync with the wallpaper, re-derived whenever it changes. */
@@ -370,11 +412,15 @@ export interface AppSettings {
   usageFocus: string;
   /** Per-action overrides of keybinds.svelte.ts's defaults; absent means the default. */
   keybinds: Record<string, string[]>;
+  /** OS alerts on this device while the window is unfocused: "urgent" = asks, errors and spend caps only. */
+  osNotifications: "all" | "urgent" | "off";
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
   accent: "#7c9bff",
+  darkTheme: "",
+  lightTheme: "",
   uiFontSize: 14,
   codeFontSize: 12.5,
   uiFontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -389,6 +435,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   wallpaper: "",
   wallpaperStyle: "dither",
   surface: "opaque",
+  emptyFeed: true,
+  diffColors: "default",
   windowChrome: true,
   accentFromWallpaper: false,
   autoArchiveDays: 14,
@@ -401,6 +449,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   terminalMarginY: 5,
   usageFocus: "",
   keybinds: {},
+  osNotifications: "all",
 };
 
 function loadSettings(): AppSettings {
@@ -438,13 +487,49 @@ export class ServerState {
   nextProjectOpenSwitches = true;
 
   sandboxTierByProject = $state<Record<string, SandboxTier>>({});
+  /** Server-wide tunables from `runtime_settings` (pushed on connect and after every change). */
+  runtime = $state<RuntimeSettings | null>(null);
+  /** The listen address behind `remoteAccessEnabled` ("" = the server's default). */
+  remoteAddr = $state("");
+  /** Registered provider (and model) new chats start on, from `default_provider_set`. */
+  defaultProvider = $state<{ providerName: string; model: string }>({ providerName: "", model: "" });
+  /** The project has no real sandbox: its `bash` runs with nothing between it and the machine. */
+  isUnsandboxed(project: string | undefined): boolean {
+    return !!project && this.sandboxTierByProject[project] === "local_restricted_fallback";
+  }
+  /** ...and the server is set to withhold bash/terminal_* from the model there. */
+  shellDisabled(project: string | undefined): boolean {
+    return this.isUnsandboxed(project) && !!this.runtime?.disableBashWhenUnsandboxed;
+  }
+  /** The server's spend cap for one chat, if it sets one (status.budgets, §3.1). */
+  get sessionCapUsd(): number | undefined {
+    return this.serverStatus?.budgets?.find((b) => b.scope === "session" && b.period === "total")?.limitUsd;
+  }
+  /** Projects open on this server with no sandbox, for the status bar. */
+  get unsandboxedProjects(): string[] {
+    return Object.entries(this.sandboxTierByProject)
+      .filter(([, tier]) => tier === "local_restricted_fallback")
+      .map(([path]) => path);
+  }
   snapshotsByProject = $state<Record<string, SnapshotInfo[]>>({});
   // Set on snapshot_restored (§3.2) so SnapshotsPanel can confirm the restore completed instead of assuming it.
   lastSnapshotRestored = $state<{ snapshotId: string; at: number } | null>(null);
 
-  // Replayed by list_notifications on connect, then kept live by pushes.
+  // Replayed by list_notifications on connect, then kept live by pushes. Read state is the
+  // server's, so it follows you across devices.
   notifications = $state<ServerNotification[]>([]);
-  unseenNotifications = $state(0);
+  notifyPrefs = $state<NotifyPrefs | null>(null);
+  /** The permission rules in force per project (SPEC.md §3.2 permission_rules); `error` is why the last change was refused. */
+  permissionRules = $state<Record<string, PermissionRulesData>>({});
+  /** MCP servers per project (SPEC.md §3.2 mcp_servers), pushed as each one's state changes. */
+  mcpByProject = $state<Record<string, McpServersData>>({});
+  /** Skills per project (§3.2 skills), and the documents opened from them (§3.2 skill_detail), by folder. */
+  skillsByProject = $state<Record<string, SkillsData>>({});
+  skillDetails = $state<Record<string, SkillDetailData>>({});
+  /** Unread entries worth a badge: pending asks have their own list, so their mirrors don't count. */
+  get unreadNotifications(): number {
+    return this.notifications.filter((n) => !n.read && !ASK_KINDS.has(n.kind)).length;
+  }
   // Last status snapshot from the heartbeat (§2a), for the status bar.
   serverStatus = $state<ServerStatus | null>(null);
 
@@ -481,13 +566,32 @@ export class ServerState {
   // Set while a session's transcript is being refetched; the chat view grays out and blocks
   // input until session_history lands. Cleared wholesale on disconnect too.
   syncingSessions = $state<Record<string, boolean>>({});
+  /** The chat "New chat" just made: the only session change the chat panel animates (see ChatPanel). */
+  freshChatId = $state<string | null>(null);
 
   // `recentProjects` is the project switcher/picker list, a capped (20-entry) local cache
   // reconciled against the server's persisted `projects.json` (§4b) on every `project_list`,
   // painting instantly before that round-trip lands. Both loaded lazily once serverId is known.
   projects = $state<string[]>([]);
   recentProjects = $state<string[]>([]);
+  private projectsListed = false;
   currentProjectPath = $state<string | null>(null);
+  /** A chat's real scratch directory, learned from session summaries: what the server echoes
+   * on file_list/git_status/etc., unlike projectBySession, which holds "@chat". */
+  rootBySession = $state<Record<string, string>>({});
+  /** The sandbox tier chats get, from the "@chat" listing; "Run" is only the default where it's real. */
+  chatSandboxTier = $state<SandboxTier | undefined>(undefined);
+  private get chatsSandboxed(): boolean {
+    return !!this.chatSandboxTier && this.chatSandboxTier !== "local_restricted_fallback";
+  }
+  /** Chats that already had the Files panel opened for them on their first written file. */
+  private filesShown = new Set<string>();
+  /** Where a session's files live, for panels and terminals; undefined for a chat not yet on the server. */
+  rootOf(sessionId: string | null | undefined): string | undefined {
+    if (!sessionId) return undefined;
+    const p = this.projectBySession[sessionId];
+    return p === CHAT_PROJECT ? this.rootBySession[sessionId] : p;
+  }
 
   sessionsByProject = $state<Record<string, SessionSummary[]>>({});
   // A re-fetch never blanks the list; the sidebar just dims what it has until fresh data lands.
@@ -536,6 +640,10 @@ export class ServerState {
   takenOverSessions = $state<Record<string, boolean>>({});
   // Cleared the moment its session is opened, so "finished" means "done, and you haven't looked yet."
   finishedSessions = $state<Record<string, boolean>>({});
+  // The server's word on how full each chat's context is and what it has cost: from turn_completed,
+  // and from session_history so a reload or another device has them without a turn (§3.2).
+  contextBySession = $state<Record<string, ContextData>>({});
+  spendBySession = $state<Record<string, SpendData>>({});
 
   providers = $state<ProviderInfo[]>([]);
   cliAvailability = $state<Partial<Record<CliKind, boolean>>>({});
@@ -554,6 +662,9 @@ export class ServerState {
   modelOptionsBySession = $state<Record<string, ModelOptions>>({});
   // Fetched lazily per provider rather than up front: never hardcode a model list.
   modelsByProvider = $state<Record<string, ModelInfo[]>>({});
+  // Providers whose list was already asked for. A failed ask leaves no entry in modelsByProvider,
+  // so without this every picker mount would dial the dead host again (see ipc.ensureModels).
+  modelsAsked = new Set<string>();
   // Whatever provider/model/mode last got confirmed on ANY session on this server; new sessions
   // default to this instead of landing on "Provider...". Per-server since names are registry-scoped.
   lastUsedProvider = $state<string | null>(null);
@@ -722,6 +833,12 @@ export class ServerState {
     return linkedId ? (this.sessionById.get(linkedId) ?? null) : null;
   }
 
+  /** The anchor `sessionId` is stacked under, if it's a pairing's partner half. */
+  splitAnchorOf(sessionId: string): SessionSummary | null {
+    for (const s of this.sessionById.values()) if (s.linkedSessionId === sessionId) return s;
+    return null;
+  }
+
   /** Whether the current main chat can anchor a split: not an unstarted
    * draft (nothing to persist the pairing on) and not archived, same
    * archived rule as the sidebar's (explicit flag or auto-archive age). */
@@ -873,14 +990,15 @@ export class ServerState {
   }
 
   selectProject(path: string) {
-    this.currentProjectPath = path;
-    this.currentSessionId = null;
+    // Straight to a fresh chat: a null session would unmount the chat panel (and its wallpaper
+    // canvas) for a frame.
+    this.newSessionInProject(path);
   }
 
   /** Reopens whichever session last had a message, so a restart drops the user back where they
    * left off. Falls back to the most recently used project when there's no chat history at all. */
   restoreLastSession() {
-    if (this.currentSessionId) return;
+    if (this.currentSessionId && !this.isBlankPlaceholder(this.currentSessionId)) return;
     let latestId: string | null = null;
     let latestTime = -Infinity;
     for (const [sessionId, msgs] of Object.entries(this.messagesBySession)) {
@@ -892,8 +1010,30 @@ export class ServerState {
     }
     if (latestId) {
       this.openSession(latestId);
-    } else if (this.recentProjects[0]) {
-      this.currentProjectPath = this.recentProjects[0];
+    } else {
+      this.bindPlaceholderToFirstProject();
+    }
+  }
+
+  /** The unbound, empty session ensureCurrentSession hands the chat view before a project is known. */
+  private isBlankPlaceholder(sessionId: string): boolean {
+    return !this.projectBySession[sessionId] && !this.messagesBySession[sessionId]?.length;
+  }
+
+  /** Swaps a blank placeholder for a fresh session in the most recent project, if any exists. */
+  private bindPlaceholderToFirstProject() {
+    const project = this.currentProjectPath ?? this.recentProjects[0];
+    const placeholder = this.currentSessionId;
+    if (placeholder && !this.isBlankPlaceholder(placeholder)) return;
+    if (placeholder) this.discardUnsentSession(placeholder);
+    this.newSessionInProject(project ?? CHAT_PROJECT);
+  }
+
+  private lastTabWasProjects(): boolean {
+    try {
+      return localStorage.getItem(SIDEBAR_TAB_KEY) !== "chats";
+    } catch {
+      return false;
     }
   }
 
@@ -903,10 +1043,14 @@ export class ServerState {
     if (this.currentSessionId) return;
     if (this.currentProjectPath) {
       this.newSessionInProject(this.currentProjectPath);
-    } else {
+    } else if (this.lastTabWasProjects()) {
+      // Reopen on Projects: leave the session unbound until the project list arrives and
+      // bindPlaceholderToFirstProject picks one (or falls back to a chat if there are none).
       const id = `session-${crypto.randomUUID().slice(0, 8)}`;
       this.ensureSession(id);
       this.currentSessionId = id;
+    } else {
+      this.newSessionInProject(CHAT_PROJECT);
     }
   }
 
@@ -916,6 +1060,7 @@ export class ServerState {
     this.ensureSession(sessionId);
     this.currentSessionId = sessionId;
     app.showUsage = false;
+    app.showExtensions = false;
     const partner = this.splitPartnerFor(sessionId);
     if (partner) {
       this.ensureSession(partner.sessionId);
@@ -1248,7 +1393,8 @@ export class ServerState {
     if (!parent) return;
     const run = (parent.subagent ??= { calls: [], text: "" });
     if (parent.status === "requested") parent.status = "running";
-    const call = env.toolCallId ? findCall(run.calls, env.toolCallId) : undefined;
+    // A stacked question's id is "<call>#<i>": it belongs to the ask_user_question call.
+    const call = env.toolCallId ? findCall(run.calls, env.toolCallId.split("#")[0]) : undefined;
     switch (env.type) {
       case "model_delta": {
         const data = env.data as { content?: string; reasoning?: string };
@@ -1304,6 +1450,11 @@ export class ServerState {
           call.output = data.output;
           call.error = data.error;
           if (data.diffs?.length) call.diffs = data.diffs;
+          // A chat's workspace is the point of it: show it the first time the agent writes a file.
+          if (data.diffs?.length && this.projectBySession[sessionId] === CHAT_PROJECT && !this.filesShown.has(sessionId)) {
+            this.filesShown.add(sessionId);
+            if (!this.chatSidebarOpenBySession[sessionId]) this.openSidebarPanel(sessionId, "explorer");
+          }
         }
         if (env.toolCallId) this.removeAsk(env.toolCallId);
         this.bumpFs(this.projectBySession[sessionId]);
@@ -1325,10 +1476,13 @@ export class ServerState {
       { sessionId: id, updatedAt: new Date().toISOString(), messageCount: 0 },
       ...existing,
     ];
-    this.currentProjectPath = projectPath;
+    if (projectPath !== CHAT_PROJECT) this.currentProjectPath = projectPath;
+    // A chat's workspace is its own, so where that's walled off it starts in Run.
+    else if (this.chatsSandboxed) this.modeBySession[id] = "autonomous";
     this.currentSessionId = id;
     this.sidebarSessionId = null;
     app.showUsage = false;
+    app.showExtensions = false;
     return id;
   }
 
@@ -1337,6 +1491,7 @@ export class ServerState {
    * these behind is unbounded growth, not just a display bug. */
   private forgetSessionState(sessionId: string) {
     delete this.projectBySession[sessionId];
+    delete this.rootBySession[sessionId];
     delete this.messagesBySession[sessionId];
     delete this.activeTurnBySession[sessionId];
     delete this.queuedBySession[sessionId];
@@ -1348,6 +1503,8 @@ export class ServerState {
     delete this.restoredDraftBySession[sessionId];
     delete this.editingMessageId[sessionId];
     delete this.modelOptionsBySession[sessionId];
+    delete this.contextBySession[sessionId];
+    delete this.spendBySession[sessionId];
     delete this.modeBySession[sessionId];
     delete this.tierBeforePlan[sessionId];
     delete this.runOnce[sessionId];
@@ -1533,7 +1690,9 @@ export class ServerState {
 
     // server_identity races connect: a session/message can already be in memory before this
     // runs. Merge disk-loaded state UNDER what's resident, or that first chat gets wiped.
-    this.recentProjects = [...new Set([...this.recentProjects, ...loadServerRecentProjects(serverId)])];
+    // Once the server has listed its projects that list is the truth; the disk copy would only
+    // bring back ones it no longer has (or another server's, if two share a saved list).
+    if (!this.projectsListed) this.recentProjects = [...new Set([...this.recentProjects, ...loadServerRecentProjects(serverId)])];
     const history = loadServerChatHistory(serverId);
     this.sessionsByProject = { ...history.sessionsByProject, ...this.sessionsByProject };
     this.projectBySession = { ...history.projectBySession, ...this.projectBySession };
@@ -1685,7 +1844,7 @@ export class ServerState {
         const data = env.data as unknown as AskUserQuestionData;
         const msg = this.findAssistantMessage(sessionId, env.turnId);
         if (msg && env.toolCallId) {
-          const entry = findCall(msg.toolCalls, env.toolCallId);
+          const entry = findCall(msg.toolCalls, env.toolCallId.split("#")[0]);
           if (entry) {
             entry.status = "awaiting_answer";
             entry.question = data;
@@ -1713,11 +1872,20 @@ export class ServerState {
             entry.status = data.error ? (data.error.includes("permission denied") ? "denied" : "error") : "done";
             entry.output = data.output;
             entry.error = data.error;
+            entry.snapshotting = false;
             if (data.diffs?.length) entry.diffs = data.diffs;
           }
         }
         if (env.toolCallId) this.removeAsk(env.toolCallId);
         this.bumpFs(this.projectBySession[sessionId]);
+        break;
+      }
+      // The Snapshots panel already refreshes off tool_result's bumpFs; these only drive the "Saving snapshot" label.
+      case "snapshot_capturing":
+      case "snapshot_created": {
+        const msg = this.findAssistantMessage(sessionId, env.turnId);
+        const entry = msg && env.toolCallId ? findCall(msg.toolCalls, env.toolCallId) : undefined;
+        if (entry) entry.snapshotting = env.type === "snapshot_capturing";
         break;
       }
       case "steer_accepted": {
@@ -1777,6 +1945,8 @@ export class ServerState {
           break;
         }
         if (data.finishReason !== "no_provider") this.app.recordSpend(data.usage?.costUsd ?? 0);
+        if (data.context) this.contextBySession[sessionId] = data.context;
+        if (data.spend) this.spendBySession[sessionId] = data.spend;
         if (data.finishReason === "no_provider") {
           // Reachable if the provider became unavailable between being picked and the turn
           // running. "Unsend" it: pull the prompt back and clear the selection so the composer blocks again.
@@ -1836,6 +2006,7 @@ export class ServerState {
       case "provider_list": {
         const data = env.data as { providers?: ProviderInfo[]; name?: string };
         if (data.providers) this.providers = data.providers;
+        if (data.name) this.modelsAsked.delete(data.name); // re-registered: its endpoint may have changed
         break;
       }
       case "provider_removed": {
@@ -1843,6 +2014,7 @@ export class ServerState {
         this.providers = this.providers.filter((p) => p.name !== data.name);
         const { [data.name]: _removed, ...rest } = this.modelsByProvider;
         this.modelsByProvider = rest;
+        this.modelsAsked.delete(data.name);
         break;
       }
       case "provider_set": {
@@ -1909,10 +2081,13 @@ export class ServerState {
         // so walk in reverse to match server order.
         const data = env.data as { paths: string[] };
         const known = new Set(data.paths ?? []);
+        this.projectsListed = true;
         for (const p of [...(data.paths ?? [])].reverse()) this.rememberProject(p);
         // Can arrive unprompted (v2.13, pushed to every connection); prune anything local
         // that's no longer in the authoritative list.
         for (const p of this.recentProjects.filter((p) => !known.has(p))) this.forgetProject(p);
+        // First list of a fresh install: nothing was restorable locally, so pick one now.
+        if (this.currentSessionId && this.isBlankPlaceholder(this.currentSessionId)) this.bindPlaceholderToFirstProject();
         break;
       }
       case "project_removed": {
@@ -1922,8 +2097,18 @@ export class ServerState {
         break;
       }
       case "session_list": {
-        const data = env.data as { projectPath?: string; sessions: SessionSummary[] };
+        const data = env.data as { projectPath?: string; sessions: SessionSummary[]; sandboxTier?: SandboxTier };
         const project = data.projectPath || this.currentProjectPath;
+        if (project === CHAT_PROJECT && data.sandboxTier) {
+          const first = !this.chatSandboxTier;
+          this.chatSandboxTier = data.sandboxTier;
+          // The list can land after the first blank chat was made at startup.
+          if (first && this.chatsSandboxed) {
+            for (const [id, p] of Object.entries(this.projectBySession)) {
+              if (p === CHAT_PROJECT && !(this.messagesBySession[id] ?? []).length) this.modeBySession[id] = "autonomous";
+            }
+          }
+        }
         if (project) {
           const listed = new Set((data.sessions ?? []).map((x) => x.sessionId));
           // A never-prompted chat doesn't exist server-side, so it's never listed. Keep the
@@ -1941,6 +2126,7 @@ export class ServerState {
           this.sessionsByProject[project] = [...keep, ...(data.sessions ?? [])];
           for (const s of data.sessions ?? []) {
             this.projectBySession[s.sessionId] = project;
+            if (project === CHAT_PROJECT && s.projectPath) this.rootBySession[s.sessionId] = s.projectPath;
             if (!this.lastViewedBySession[s.sessionId] || s.sessionId === this.currentSessionId) {
               this.markViewed(s.sessionId, s.updatedAt, false);
             }
@@ -1955,6 +2141,7 @@ export class ServerState {
       case "session_updated": {
         const data = env.data as unknown as SessionSummary;
         const project = this.projectBySession[data.sessionId];
+        if (project === CHAT_PROJECT && data.projectPath) this.rootBySession[data.sessionId] = data.projectPath;
         if (project && this.sessionsByProject[project]) {
           this.sessionsByProject[project] = this.sessionsByProject[project].map((s) =>
             s.sessionId === data.sessionId ? { ...s, ...data } : s,
@@ -2026,10 +2213,11 @@ export class ServerState {
         break;
       }
       case "notification": {
+        // The server folds a repeat into its earlier entry (same id, higher count): replace, don't add.
         const n = env.data as unknown as ServerNotification;
-        this.notifications = [...this.notifications, n];
-        this.unseenNotifications++;
+        this.notifications = [...this.notifications.filter((o) => o.id !== n.id), n].slice(-200);
         this.app.toast(this.connectionId, n);
+        this.app.osAlert(this.connectionId, n);
         break;
       }
       case "notification_list": {
@@ -2040,7 +2228,40 @@ export class ServerState {
       case "notification_dismissed": {
         const { id } = (env.data ?? {}) as { id?: string };
         this.notifications = id ? this.notifications.filter((n) => n.id !== id) : [];
-        if (!this.notifications.length) this.unseenNotifications = 0;
+        break;
+      }
+      case "notifications_read": {
+        const { ids } = (env.data ?? {}) as { ids?: string[] };
+        const read = new Set(ids ?? []);
+        this.notifications = this.notifications.map((n) => (read.has(n.id) ? { ...n, read: true } : n));
+        break;
+      }
+      case "notify_prefs": {
+        this.notifyPrefs = env.data as unknown as NotifyPrefs;
+        break;
+      }
+      case "permission_rules": {
+        const data = env.data as unknown as PermissionRulesData;
+        // A refused change carries no rules: keep the list, show why.
+        const prev = this.permissionRules[data.projectPath];
+        this.permissionRules[data.projectPath] = data.error && prev ? { ...prev, error: data.error } : data;
+        break;
+      }
+      case "mcp_servers": {
+        const data = env.data as unknown as McpServersData;
+        // A refused change carries the unchanged list: keep showing it, with why.
+        this.mcpByProject[data.projectPath] = data;
+        break;
+      }
+      case "skills": {
+        const data = env.data as unknown as SkillsData;
+        const prev = this.skillsByProject[data.projectPath];
+        this.skillsByProject[data.projectPath] = data.error && prev ? { ...prev, error: data.error } : data;
+        break;
+      }
+      case "skill_detail": {
+        const data = env.data as unknown as SkillDetailData;
+        this.skillDetails[data.dir] = data;
         break;
       }
       case "peer_list": {
@@ -2059,8 +2280,21 @@ export class ServerState {
         break;
       }
       case "remote_access_set": {
-        const data = env.data as { enabled: boolean };
+        const data = env.data as { enabled: boolean; addr?: string };
         this.remoteAccessEnabled = data.enabled;
+        this.remoteAddr = data.addr ?? "";
+        break;
+      }
+      case "remote_password_set":
+        this.app.toastAction(this.connectionId, "Remote password updated");
+        break;
+      case "runtime_settings": {
+        this.runtime = env.data as unknown as RuntimeSettings;
+        break;
+      }
+      case "default_provider_set": {
+        const data = env.data as { providerName?: string; model?: string };
+        this.defaultProvider = { providerName: data.providerName ?? "", model: data.model ?? "" };
         break;
       }
       case "model_roles_set": {
@@ -2076,6 +2310,8 @@ export class ServerState {
         const data = env.data as {
           sessionId: string;
           mode?: ChatMode;
+          context?: ContextData;
+          spend?: SpendData;
           messages: {
             id?: string;
             alternateIds?: string[];
@@ -2091,6 +2327,8 @@ export class ServerState {
           }[];
         };
         this.applySessionHistory(data.sessionId, data.messages ?? []);
+        if (data.context) this.contextBySession[data.sessionId] = data.context;
+        if (data.spend) this.spendBySession[data.sessionId] = data.spend;
         // Server is the source of truth for mode (§4c): adopt it, don't replay a cached value.
         if (isChatMode(data.mode)) this.modeBySession[data.sessionId] = data.mode;
         this.setSessionSyncing(data.sessionId, false);
@@ -2128,6 +2366,10 @@ export class ServerState {
         const msg = this.findAssistantMessage(sessionId, env.turnId);
         const data = env.data as unknown as Compaction;
         if (msg) msg.compactions = [...(msg.compactions ?? []), { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter }];
+        // The ring shouldn't wait for the turn to end to show the room it just made: tokensAfter is
+        // our own estimate, replaced by the provider's count at turn_completed.
+        const ctx = this.contextBySession[sessionId];
+        if (ctx) this.contextBySession[sessionId] = { ...ctx, estimatedTokens: data.tokensAfter, source: "estimated" };
         break;
       }
       case "plan_written": {
@@ -2142,6 +2384,7 @@ export class ServerState {
       case "error": {
         const data = env.data as { message: string; fatal?: boolean; projectPath?: string };
         this.app.log(`error: ${data.message}`);
+        if (sessionId && this.syncingSessions[sessionId]) this.setSessionSyncing(sessionId, false);
         if (data.projectPath && this.refreshingProjects[data.projectPath]) {
           delete this.refreshingProjects[data.projectPath];
           this.refreshingProjects = { ...this.refreshingProjects };
@@ -2320,6 +2563,16 @@ class AppState {
   /** The usage page, shown in the chat panel's place (UsagePanel.svelte);
    * opening any chat closes it. */
   showUsage = $state(false);
+  /** MCP servers and skills, a page in the chat panel's place like usage (ExtensionsPanel.svelte). */
+  showExtensions = $state(false);
+  /** A page is showing instead of the chat: the chat's own chrome steps aside. */
+  get fullPage() {
+    return this.showUsage || this.showExtensions;
+  }
+  openExtensions() {
+    this.showUsage = false;
+    this.showExtensions = true;
+  }
   settingsTab = $state("appearance");
 
   /** Opens straight to Settings > Providers (e.g. "no provider" prompts). */
@@ -2367,6 +2620,9 @@ class AppState {
   /** The drawer fills the chat panel (below its header). Not persisted. */
   terminalMaximized = $state(false);
 
+  /** themes.json entries, loaded by loadCustomThemes (ipc.ts). */
+  customThemes = $state<AppTheme[]>([]);
+
   settings = $state<AppSettings>(typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS });
 
   // Only one directory-browse flow (§3.1) is ever open at once, so these stay global rather
@@ -2376,10 +2632,14 @@ class AppState {
 
   // Each openPalette() is a fresh request: opens on that page, or pushes it if already open.
   paletteOpen = $state(false);
-  paletteRequest = $state<{ page: "root" | "projects" | "browse" | "servers"; at: number }>({ page: "root", at: 0 });
-  openPalette(page: "root" | "projects" | "browse" | "servers" = "root") {
-    this.paletteRequest = { page, at: performance.now() };
+  paletteRequest = $state<PaletteRequest>({ page: "root", at: 0 });
+  openPalette(page: "root" | "projects" | "browse" | "servers" = "root", pick?: PaletteRequest["pick"]) {
+    this.paletteRequest = { page, at: performance.now(), pick };
     this.paletteOpen = true;
+  }
+  /** The project picker, for an action that needs one project on one server instead of starting a chat in it. */
+  pickProject(connectionId: ConnectionId, title: string, run: (projectPath: string) => void) {
+    this.openPalette("projects", { title, connectionId, run });
   }
 
   // ModelPicker instances watch this to open on request; names which chat's picker.
@@ -2402,7 +2662,7 @@ class AppState {
 
   toasts = $state<(ServerNotification & { connectionId: ConnectionId; action?: { label: string; run: () => void } })[]>([]);
   /** A client-side toast with an action button (e.g. "Archived, Undo"). */
-  toastAction(connectionId: ConnectionId, title: string, action: { label: string; run: () => void }) {
+  toastAction(connectionId: ConnectionId, title: string, action?: { label: string; run: () => void }) {
     const id = `local-${Date.now()}`;
     this.toasts = [
       ...this.toasts.slice(-2),
@@ -2414,14 +2674,32 @@ class AppState {
   // Ticks periodically so relative times ("3m") re-render instead of freezing.
   now = $state(Date.now());
   private nowTimer = typeof window !== "undefined" ? setInterval(() => (this.now = Date.now()), 30_000) : undefined;
+  /** Only what needs you pops up (the bell keeps the rest), and never for the chat being viewed. */
   toast(connectionId: ConnectionId, n: ServerNotification) {
-    if (connectionId !== this.activeConnectionId || this.notificationsOpen) return;
+    if (n.priority && n.priority !== "urgent") return;
+    if (n.read || connectionId !== this.activeConnectionId || this.notificationsOpen) return;
     if (n.sessionId && n.sessionId === this.active?.currentSessionId && document.hasFocus()) return;
     this.toasts = [...this.toasts.slice(-2), { ...n, connectionId }];
     setTimeout(() => this.dropToast(n.id), n.level === "error" || n.level === "warning" ? 10_000 : 5_000);
   }
   dropToast(id: string) {
     this.toasts = this.toasts.filter((t) => t.id !== id);
+  }
+
+  /** Hands a notification to the desktop shell, which decides (window focus, priority, tag) whether
+   * it becomes an OS alert. Quiet, read and attended entries never do. */
+  osAlert(connectionId: ConnectionId, n: ServerNotification) {
+    if (this.settings.osNotifications === "off" || n.read || n.attended) return;
+    if (n.priority === "quiet" || (n.priority === "normal" && this.settings.osNotifications !== "all")) return;
+    void invoke("shell:notify", {
+      connectionId,
+      id: n.id,
+      priority: n.priority ?? "urgent",
+      title: n.count && n.count > 1 ? `${n.title} (×${n.count})` : n.title,
+      body: n.body ?? "",
+      sessionId: n.sessionId ?? "",
+      projectPath: n.projectPath ?? "",
+    }).catch(() => {}); // not the desktop shell (a browser tab), or the alert failed: the bell still has it
   }
 
   logs = $state<string[]>([]);
@@ -2488,6 +2766,25 @@ class AppState {
     }
   }
 
+  /** The theme in `mode`'s slot; undefined when unset, gone from the themes folder, or lacking that variant. */
+  themeFor(mode: "dark" | "light"): AppTheme | undefined {
+    const id = mode === "dark" ? this.settings.darkTheme : this.settings.lightTheme;
+    const t = id ? [...APP_THEME_PRESETS, ...this.customThemes].find((x) => x.id === id) : undefined;
+    return t?.[mode] ? t : undefined;
+  }
+
+  /** The theme in use right now. */
+  get appTheme(): AppTheme | undefined {
+    return this.themeFor(this.resolvedTheme);
+  }
+
+  /** Terminal and code-block palette: the app theme's own, else derived from the accent. */
+  get appTerminalColors(): TerminalColorTheme {
+    const mode = this.resolvedTheme;
+    const v = this.appTheme?.[mode];
+    return v ? terminalFromVariant(v, mode) : deriveTerminalTheme(this.settings.accent, mode);
+  }
+
   /** "system" resolved against the OS's live preference; "dark"/"light" pass straight through. */
   get resolvedTheme(): "dark" | "light" {
     if (this.settings.theme !== "system") return this.settings.theme;
@@ -2509,7 +2806,7 @@ class AppState {
     const root = document.documentElement;
     const resolved = this.resolvedTheme;
     root.style.colorScheme = resolved;
-    const tokens = deriveTheme(this.settings.accent, resolved);
+    const tokens = tokensFor(this.appTheme, this.settings.accent, resolved);
     root.style.setProperty("--orig-bg", tokens.bg);
     root.style.setProperty("--orig-panel-bg", tokens.panelBg);
     root.style.setProperty("--panel-border", tokens.panelBorder);
@@ -2536,7 +2833,7 @@ class AppState {
     // Code blocks borrow the terminal palette's ANSI slots for token colors.
     const code =
       (!this.settings.codeUseAppTheme && TERMINAL_THEME_PRESETS.find((p) => p.id === this.settings.codeColorTheme)?.colors) ||
-      deriveTerminalTheme(this.settings.accent, resolved);
+      this.appTerminalColors;
     root.style.setProperty("--orig-code-bg", code.background);
     applyQuietTokens();
     root.style.setProperty("--code-fg", code.foreground);
@@ -2549,6 +2846,9 @@ class AppState {
     root.style.setProperty("--syn-variable", code.red);
     // The frosted/opaque switch is entirely CSS via the --float-* tokens hanging off this attribute.
     root.dataset.surface = this.settings.surface;
+    const diff = DIFF_COLORS[this.settings.diffColors] ?? DIFF_COLORS.default;
+    root.style.setProperty("--diff-add", diff.add);
+    root.style.setProperty("--diff-del", diff.del);
     root.dataset.main = this.settings.mainArea;
     this.applyWindowChrome();
     syncNativeChrome();

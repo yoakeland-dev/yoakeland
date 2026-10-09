@@ -6,6 +6,8 @@ interface YoakeBridge {
   listen(event: string, cb: (payload: unknown) => void): () => void;
   pickFiles(opts: { title?: string; multiple?: boolean }): Promise<string[]>;
   openUrl(url: string): Promise<void>;
+  browserGuard(id: number, hosts: string[]): Promise<void>;
+  browserUnguard(id: number): Promise<string[]>;
   revealItemInDir(path: string): Promise<void>;
   readClipboard(): Promise<string>;
   writeClipboard(text: string): Promise<void>;
@@ -114,6 +116,9 @@ export const pickFiles = (opts: { title?: string; multiple?: boolean } = {}): Pr
   shell().pickFiles(opts);
 
 export const openUrl = (url: string): Promise<void> => shell().openUrl(url);
+/** Limit a browser panel's page-initiated navigation to hosts; unguard returns what it stopped. */
+export const browserGuard = (id: number, hosts: string[]): Promise<void> => shell().browserGuard(id, hosts);
+export const browserUnguard = (id: number): Promise<string[]> => shell().browserUnguard(id);
 export const revealItemInDir = (path: string): Promise<unknown> => shell().revealItemInDir(path);
 export const readClipboard = (): Promise<string> => shell().readClipboard();
 export const writeClipboard = (text: string): Promise<void> => shell().writeClipboard(text);

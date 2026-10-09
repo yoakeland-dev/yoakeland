@@ -17,6 +17,8 @@
   import LobeIcon from "./LobeIcon.svelte";
   import VersionCycle from "./VersionCycle.svelte";
   import DotMatrix from "./DotMatrix.svelte";
+  import CopyButton from "./CopyButton.svelte";
+  import { speech, toggleSpeech } from "../speech.svelte";
 
   let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
 
@@ -157,15 +159,6 @@
   const modelMeta = $derived(modelEntry ? vendorMetaFor(modelEntry) : null);
   const modelTitle = $derived(modelEntry ? titleFor(modelEntry) : "");
 
-  const contextPct = $derived.by(() => {
-    const ctx = message.finish?.context;
-    if (!ctx || !ctx.maxTokens) return null;
-    return Math.min(
-      100,
-      Math.round((ctx.estimatedTokens / ctx.maxTokens) * 100),
-    );
-  });
-
   // `inputTokens` is the full conversation resent with this request, so it
   // doubles as cumulative tokens-in; `outputTokens` is just this reply.
   const usage = $derived(message.usage ?? message.finish?.usage ?? null);
@@ -173,13 +166,19 @@
   // What the spinner in the model chip shows, and the elapsed time beside it.
   const activity = liveActivity(() => message);
 
+  const noRun = $derived(
+    message.finish?.finishReason === "cancelled" ||
+      message.finish?.finishReason === "budget_exceeded" ||
+      message.finish?.finishReason === "no_provider",
+  );
+
   const durationS = $derived.by(() => {
     const ms = message.finish?.durationMs ?? message.generationMs;
     return ms !== undefined ? (ms / 1000).toFixed(1) : null;
   });
 </script>
 
-<div class="assistant">
+<div class="assistant" class:idle={!message.streaming}>
   {#each segments as seg, i (seg.key)}
     {@const live = i === segments.length - 1 && message.streaming}
     {#if seg.kind === "toolgroup"}
@@ -217,7 +216,7 @@
       class:cancelled={message.finish?.finishReason === "cancelled" ||
         message.finish?.finishReason === "budget_exceeded" ||
         message.finish?.finishReason === "no_provider"}
-      class:truncated={message.finish?.finishReason === "length"}
+      class:truncated={message.finish?.finishReason === "length" || message.finish?.finishReason === "limit_reached"}
     >
       {#if modelMeta || message.streaming}
         <!-- While streaming the model's icon gives way to the spinner; hovering brings it back. -->
@@ -250,41 +249,16 @@
           and pick it from the toolbar below</span
         >
       {:else}
-        {#if usage}
+        {#if message.finish?.finishReason === "limit_reached"}
           {#if modelMeta}<span class="dot">·</span>{/if}
-          <span
-            class="stat"
-            {@attach tip("Tokens in — the full conversation sent with this reply")}
-          >
-            <Icon name="arrow-narrow-down" size={12} />{shortNum(
-              usage.inputTokens ?? 0,
-            )}
-          </span>
-          <span class="stat" {@attach tip("Tokens out — this reply only")}>
-            <Icon name="arrow-narrow-up" size={12} />{shortNum(
-              usage.outputTokens ?? 0,
-            )}
-          </span>
-          <span class="dot">·</span>
-          <span class="stat">${(usage.costUsd ?? 0).toFixed(4)}</span>
+          <span class="stat" {@attach tip("The turn reached the model-call or spend limit set in Settings, and you chose to stop")}>stopped at your limit</span>
         {/if}
-
         {#if message.streaming}
           {#if modelMeta || usage}<span class="dot">·</span>{/if}
           <span class="stat elapsed">{activity.elapsed}</span>
-        {:else}
-          {#if durationS !== null}
-            <span class="dot">·</span>
-            <span class="stat">{durationS}s</span>
-          {/if}
-          {#if contextPct !== null}
-            <span class="dot">·</span>
-            <span class="stat">{contextPct}% context</span>
-          {/if}
-          {#if message.finish?.finishReason === "length"}
-            <span class="dot">·</span>
-            <span class="stat">cut off at the output limit</span>
-          {/if}
+        {:else if message.finish?.finishReason === "length"}
+          <span class="dot">·</span>
+          <span class="stat">cut off at the output limit</span>
         {/if}
       {/if}
 
@@ -293,19 +267,56 @@
         <span class="stat" {@attach tip(new Date(message.createdAt).toLocaleString())}
           >{relTime(message.createdAt)}</span
         >
-        <span class="dot">·</span>
-        <VersionCycle {message} {sessionId} />
-        <button
-          class="action"
-          onclick={retry}
-          {@attach tip(message.toolCalls.length
-            ? "Retry — regenerates from here; doesn't undo the file changes this reply's tool calls made"
-            : "Retry — regenerates a fresh reply from here")}
-        >
-          <Icon name="refresh" size={12} />
-          Retry
-        </button>
+        {#if message.alternateIds?.length}
+          <span class="dot">·</span>
+          <VersionCycle {message} {sessionId} />
+        {/if}
       {/if}
+
+      <!-- Numbers and actions stay out of the way until the message is hovered or focused. -->
+      <span class="more">
+        {#if usage && !message.streaming && !noRun}
+          <span class="stat" {@attach tip("Tokens in — the full conversation sent with this reply")}>
+            <Icon name="arrow-narrow-down" size={12} />{shortNum(usage.inputTokens ?? 0)}
+          </span>
+          <span class="stat" {@attach tip("Tokens out — this reply only")}>
+            <Icon name="arrow-narrow-up" size={12} />{shortNum(usage.outputTokens ?? 0)}
+          </span>
+          {#if message.finish?.usage?.costUnknown && !usage.costUsd}
+            <span class="stat" {@attach tip("No price is known for this model, so the cost isn't counted")}>cost unknown</span>
+          {:else}
+            <span class="stat">${(usage.costUsd ?? 0).toFixed(4)}</span>
+          {/if}
+          {#if durationS !== null}<span class="stat">{durationS}s</span>{/if}
+        {/if}
+
+        {#if !message.streaming}
+          <span class="actions">
+            {#if message.text}
+              <CopyButton text={message.text} label="Copy reply" />
+              <button
+                class="action"
+                class:on={speech.id === message.id}
+                onclick={() => toggleSpeech(message.id, message.text)}
+                aria-label={speech.id === message.id ? "Stop reading" : "Read aloud"}
+                {@attach tip(speech.id === message.id ? "Stop reading" : "Read aloud")}
+              >
+                <Icon name={speech.id === message.id ? "player-stop" : "volume"} size={12} />
+              </button>
+            {/if}
+            <button
+              class="action"
+              onclick={retry}
+              aria-label="Retry"
+              {@attach tip(message.toolCalls.length
+                ? "Retry — regenerates from here; doesn't undo the file changes this reply's tool calls made"
+                : "Retry — regenerates a fresh reply from here")}
+            >
+              <Icon name="refresh" size={12} />
+            </button>
+          </span>
+        {/if}
+      </span>
     </div>
   {/if}
 </div>
@@ -435,7 +446,29 @@
     cursor: pointer;
     padding: 0;
   }
-  .action:hover {
+  .action:hover,
+  .action.on {
     color: var(--text);
+  }
+  .more,
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .more {
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .actions {
+    margin-left: 0.2rem;
+  }
+  .assistant.idle .more {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .assistant.idle:hover .more,
+  .assistant.idle:focus-within .more {
+    opacity: 1;
+    pointer-events: auto;
   }
 </style>

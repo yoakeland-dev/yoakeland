@@ -2,13 +2,15 @@
   import { onMount } from "svelte";
   import { app, RIGHT_SIDEBAR_MIN_WIDTH, TERMINAL_MIN_HEIGHT } from "$lib/state.svelte";
   import { windowControls } from "$lib/platform";
-  import { wireEvents, autoConnect } from "$lib/ipc";
+  import { wireEvents, autoConnect, loadCustomThemes } from "$lib/ipc";
+  import { startNotifications } from "$lib/notifications.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import RightSidebar from "$lib/components/RightSidebar.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import UsagePanel from "$lib/components/UsagePanel.svelte";
+  import ExtensionsPanel from "$lib/components/ExtensionsPanel.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import FirstServerPanel from "$lib/components/FirstServerPanel.svelte";
@@ -51,6 +53,10 @@
   // changes both the sidebar's width and the terminal's height at once. Only
   // makes sense when both are actually open; otherwise there's no
   // intersection to grab.
+  // The usage page and the extensions page share the chat panel's place; whichever was asked for last wins.
+  $effect(() => {
+    if (app.showUsage) app.showExtensions = false;
+  });
   let rightPanelEl = $state<HTMLElement | null>(null);
   let contentRowEl = $state<HTMLDivElement | null>(null);
   let cornerDragging = $state(false);
@@ -58,6 +64,7 @@
 
   const cornerVisible = $derived(
     linkedVisible &&
+      !app.fullPage &&
       !!app.active?.sidebarSessionId &&
       !!app.active.terminalOpenBySession[app.active.sidebarSessionId],
   );
@@ -153,7 +160,9 @@
   onMount(() => {
     wireEvents();
     app.applySettings();
+    void loadCustomThemes();
     void autoConnect();
+    const stopNotifications = startNotifications();
 
     // "System" theme (Settings > Appearance) tracks this live instead of only
     // resolving once at startup.
@@ -166,6 +175,7 @@
     window.addEventListener("keydown", dispatchKeybind, true);
     window.addEventListener("mouseup", dispatchMouseNav);
     return () => {
+      stopNotifications();
       media.removeEventListener("change", onSchemeChange);
       window.removeEventListener("keydown", dispatchKeybind, true);
       window.removeEventListener("mouseup", dispatchMouseNav);
@@ -202,9 +212,9 @@
       />
     </button>
   </div>
-  {#if app.active?.currentSessionId || (win && app.settings.windowChrome)}
-    <div class="chrome-surface right-island">
-      {#if chromeSessionId}
+  {#if (app.active?.currentSessionId && !app.fullPage) || (win && app.settings.windowChrome)}
+    <div class="chrome-surface right-island" class:bare={app.fullPage}>
+      {#if chromeSessionId && !app.fullPage}
         <button
           class="chrome-btn"
           class:active={app.active?.terminalOpenBySession[chromeSessionId]}
@@ -255,7 +265,9 @@
   <div class="main">
     <Sidebar />
     <div class="content-row" bind:this={contentRowEl}>
-      {#if app.showUsage}
+      {#if app.showExtensions}
+        <ExtensionsPanel />
+      {:else if app.showUsage}
         <UsagePanel />
       {:else if app.active?.currentSessionId}
         <ChatPanel
@@ -382,6 +394,11 @@
        must opt back in itself or become unclickable/undraggable whenever any
        dialog is open. */
     pointer-events: auto;
+  }
+
+  /* Usage page: only the window buttons are left, so the pill shrinks to fit them. */
+  .right-island.bare {
+    width: auto;
   }
 
   .right-island .chrome-btn.window-close:hover {

@@ -2,7 +2,7 @@
   import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app, modelKey } from "../state.svelte";
-  import { setProvider, listModels, setFavoriteModels } from "../ipc";
+  import { setProvider, ensureModels, setFavoriteModels } from "../ipc";
   import {
     type Entry,
     type Vendor,
@@ -13,6 +13,7 @@
     isCli,
     cliMeta,
     titleFor,
+    providerLabel,
     vendorMetaFor,
   } from "../modelVendor";
   import SlideText from "./SlideText.svelte";
@@ -70,6 +71,17 @@
       : undefined,
   );
 
+  // Which way the trigger label rolls: down when the model sits earlier in the picker's list than
+  // the last one did, up otherwise (the mode and effort pickers do the same along their scales).
+  let dir = $state(1);
+  let lastAt = -1;
+  $effect.pre(() => {
+    const at = currentEntry ? allEntries.indexOf(currentEntry) : -1;
+    if (at < 0) return;
+    dir = at >= lastAt ? 1 : -1;
+    lastAt = at;
+  });
+
   // A CLI agent gets a tab even before its models arrive: an ACP agent's
   // list_models opens a throwaway session and takes seconds.
   const cliProvidersPresent = $derived((server?.providers ?? []).filter(isCli));
@@ -123,8 +135,9 @@
     }
     // SPEC.md §3.2 isLegacy: sort below current models rather than
     // disappearing, so a session pinned to one can still re-select it.
+    // A CLI's own "default" model is the "Agent default" row above the list.
     return list
-      .slice()
+      .filter((e) => !(isCli(e.provider) && e.model.id === "default"))
       .sort((a, b) => Number(!!a.model.isLegacy) - Number(!!b.model.isLegacy));
   });
 
@@ -152,7 +165,7 @@
   $effect(() => {
     if (!cid || !server) return;
     for (const p of server.providers) {
-      if (!server.modelsByProvider[p.name]) listModels(cid, p.name);
+      if (!server.modelsByProvider[p.name]) ensureModels(cid, p.name);
     }
   });
 
@@ -265,12 +278,12 @@
     </span>
     <span class="trigger-label"
       ><SlideText
-        still
         text={currentEntry
           ? titleFor(currentEntry)
           : currentProvider
             ? currentModel || (isCli(currentProvider) ? `${cliMeta(currentProvider).title} · default` : currentProvider.name)
             : "Provider…"}
+        {dir}
       /></span
     >
   </Popover.Trigger>
@@ -462,7 +475,7 @@
                           fallback="openrouter"
                           size={12}
                         />
-                        {vendor.label} · {entry.provider.name}
+                        {vendor.label} · {providerLabel(entry.provider)}
                       </span>
                     </div>
                     <button
@@ -526,6 +539,7 @@
     padding-right: 0.57rem;
     border-right: 1px solid var(--panel-border);
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .tab {
     width: 2.14rem;
@@ -621,6 +635,7 @@
     gap: 0.29rem;
     padding: 0.29rem 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .hint {
     margin: 0.86rem 0.43rem;

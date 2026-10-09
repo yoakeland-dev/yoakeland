@@ -5,6 +5,7 @@
   import ChatHeader from "./ChatHeader.svelte";
   import MessageList from "./MessageList.svelte";
   import PromptInput from "./PromptInput.svelte";
+  import EmptyFeed from "./EmptyFeed.svelte";
   import PlanPanel from "./PlanPanel.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
   import ChatSidebar from "./ChatSidebar.svelte";
@@ -29,8 +30,10 @@
 
   const server = $derived(app.active);
   const messages = $derived(server?.messagesBySession[sessionId] ?? []);
-  const isEmpty = $derived(messages.length === 0);
   const isSyncing = $derived(server?.syncingSessions[sessionId] ?? false);
+  // A session still loading its history isn't a new chat: staying docked avoids the hero and
+  // wallpaper flashing in and morphing back out when the transcript lands.
+  const isEmpty = $derived(messages.length === 0 && !isSyncing);
 
   // The tools column (ChatSidebar.svelte). The header covers only the chat's own column, so the
   // tools' tab row can share the header band. `sbW` is the right-hand column's width as a share of
@@ -51,6 +54,35 @@
     lastSwapped = swapped;
     instant = true;
     requestAnimationFrame(() => requestAnimationFrame(() => (instant = false)));
+  });
+
+  // The composer's slide, the wallpaper and the header fade animate when a chat gets its first
+  // message or "New chat" makes one; moving between chats snaps them all. `snap` holds their
+  // transitions off for the frames after the session changes.
+  let snap = $state(false);
+  let lastSession = untrack(() => sessionId);
+  let bodyEl = $state<HTMLElement | null>(null);
+  // "New chat" from a chat with messages: a copy of the old transcript stays up and fades out
+  // with the wallpaper fading in, instead of vanishing the instant the session swaps.
+  function fadeOutTranscript(from: string) {
+    const live = bodyEl?.querySelector<HTMLElement>(":scope > .list");
+    if (!live || !bodyEl || !(server?.messagesBySession[from]?.length)) return;
+    const ghost = live.cloneNode(true) as HTMLElement;
+    ghost.inert = true;
+    ghost.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+    bodyEl.prepend(ghost);
+    ghost.scrollTop = live.scrollTop;
+    const speed = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--anim-speed")) || 1;
+    const fade = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200 * speed, easing: "ease" });
+    fade.onfinish = fade.oncancel = () => ghost.remove();
+  }
+  $effect.pre(() => {
+    if (sessionId === lastSession) return;
+    const from = lastSession;
+    lastSession = sessionId;
+    if (server?.freshChatId === sessionId) return fadeOutTranscript(from);
+    snap = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => (snap = false)));
   });
 
   let list = $state<MessageList>();
@@ -125,11 +157,13 @@
       <canvas
         class="wallpaper"
         class:visible={isEmpty}
+        class:snap
         use:wallpaperGL={{ src: app.settings.wallpaper, style: app.settings.wallpaperStyle, visible: isEmpty }}
       ></canvas>
     {/if}
     <ChatHeader
       {sessionId}
+      {snap}
       reserveToggle={!sidePanel && app.sidebarCollapsed}
       reserveChrome={!sbOpen || swapped}
       chatWidth={sbOpen ? sbW : undefined}
@@ -168,13 +202,15 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="body"
-        class:syncing={isSyncing}
+        bind:this={bodyEl}
+        class:syncing={isSyncing && messages.length > 0}
         inert={isSyncing}
         onkeydown={onChatKeydown}
         style:flex-basis={swapped ? sbW : null}
       >
         <MessageList bind:this={list} bind:scrolledUp {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
-        <PromptInput {sessionId} floating={isEmpty} {scrolledUp} onJump={() => list?.jumpToBottom()} />
+        {#if isEmpty && !sidePanel && app.settings.emptyFeed}<EmptyFeed {sessionId} />{/if}
+        <PromptInput {sessionId} {snap} floating={isEmpty} {scrolledUp} onJump={() => list?.jumpToBottom()} />
         {#if app.active?.openPlanSessionId === sessionId}
           <PlanPanel {sessionId} />
         {/if}
@@ -280,11 +316,14 @@
     height: 100%;
     z-index: 0;
     opacity: 0;
-    transition: opacity calc(0.4s * var(--anim-speed, 1)) ease;
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
     pointer-events: none;
   }
   .wallpaper.visible {
     opacity: 1;
+  }
+  .wallpaper.snap {
+    transition: none;
   }
   :global(.panel > :not(.wallpaper)) {
     position: relative;
@@ -310,7 +349,10 @@
   .body.syncing {
     opacity: 0.45;
     filter: grayscale(0.6);
-    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease, filter calc(0.15s * var(--anim-speed, 1)) ease;
+    /* Delayed going in (not out), like the badge: a quick project switch never dims the chat. */
+    transition:
+      opacity calc(0.15s * var(--anim-speed, 1)) ease calc(0.2s * var(--anim-speed, 1)),
+      filter calc(0.15s * var(--anim-speed, 1)) ease calc(0.2s * var(--anim-speed, 1));
   }
   .syncing-badge {
     position: absolute;
@@ -330,6 +372,13 @@
     font-size: 0.78rem;
     color: var(--text-dim);
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+    /* Held back so a quick local fetch never flashes it. */
+    animation: badgeIn calc(0.15s * var(--anim-speed, 1)) ease calc(0.2s * var(--anim-speed, 1)) backwards;
+  }
+  @keyframes badgeIn {
+    from {
+      opacity: 0;
+    }
   }
   .spinner {
     width: 11px;

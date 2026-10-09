@@ -51,6 +51,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 0 var(--space-1) var(--space-2);
   }
 </style>

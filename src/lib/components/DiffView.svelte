@@ -122,10 +122,10 @@
     opacity: 0.6;
   }
   .type-add {
-    background: rgba(88, 214, 141, 0.14);
+    background: color-mix(in srgb, var(--diff-add) 14%, transparent);
   }
   .type-del {
-    background: rgba(255, 107, 107, 0.14);
+    background: color-mix(in srgb, var(--diff-del) 14%, transparent);
   }
   .more {
     width: 100%;

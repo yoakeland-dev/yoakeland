@@ -1,15 +1,16 @@
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
-  import { Popover, Switch } from "bits-ui";
+  import { Popover } from "bits-ui";
   import { slide } from "svelte/transition";
   import { app } from "../state.svelte";
-  import { setWebToolsEnabled } from "../ipc";
+  import { setWebToolsEnabled, setRuntimeSettings } from "../ipc";
   import { LADDER, MODES, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable, getRunOnce, setRunOnce } from "../modes";
   import type { ChatMode } from "../types";
   import Icon from "./Icon.svelte";
   import ModeDetail from "./ModeDetail.svelte";
   import SlideText from "./SlideText.svelte";
-  import StopSlider from "./StopSlider.svelte";
+  import Slider from "./ui/Slider.svelte";
+  import Switch from "./ui/Switch.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -27,6 +28,12 @@
 
   const info = $derived(sessionModes(server, sessionId));
   const cliProvider = $derived(info.cli ? info.provider : undefined);
+  // Only yoakeland's own bash is affected: a CLI agent runs commands under its own sandbox and rules.
+  const unsandboxed = $derived(!cliProvider && !!server?.isUnsandboxed(projectPath));
+  const shellOff = $derived(unsandboxed && !!server?.shellDisabled(projectPath));
+  function toggleShellOff() {
+    if (cid) setRuntimeSettings(cid, { disableBashWhenUnsandboxed: !server?.runtime?.disableBashWhenUnsandboxed });
+  }
   const rungs = $derived(LADDER.filter((m) => info.available.includes(m.id)));
   const canPlan = $derived(info.available.includes("plan"));
 
@@ -86,6 +93,7 @@
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
     <span class="trigger-label"><SlideText text={currentMeta.label + (runOnceActive ? " · 1 turn" : "")} {dir} /></span>
+    {#if unsandboxed}<span class="danger-dot" class:off={shellOff} aria-label="No sandbox"></span>{/if}
   </Popover.Trigger>
 
   <Popover.Portal>
@@ -107,32 +115,50 @@
         {/if}
       </div>
 
-      <StopSlider
+      {#if unsandboxed}
+        <div class="danger" role="alert">
+          <Icon name="warning" size={14} />
+          <div>
+            <strong>{shellOff ? "No sandbox: bash is off" : "No sandbox: bash is unprotected"}</strong>
+            <p>
+              {#if shellOff}
+                This project has no isolation, so the model is not given bash or terminals here.
+              {:else}
+                This project has no isolation. Bash and terminals run straight on this machine and can read or change anything
+                the server's user can, and there is nothing to contain a mistake.
+              {/if}
+            </p>
+          </div>
+        </div>
+        <label class="line danger-line">
+          <span>Turn bash off <em>when there's no sandbox</em></span>
+          <Switch checked={shellOff} onchange={toggleShellOff} />
+        </label>
+      {/if}
+
+      <Slider
         {stops}
-        {index}
+        value={index}
         hot={rung === "autonomous"}
         dim={inPlan}
+        tone="neutral"
         label="Mode"
-        onchange={(i) => pick(rungs[i].id)}
+        oninput={(i) => pick(rungs[i].id)}
         onhover={(i) => (hovered = i === null ? null : rungs[i].id)}
       />
 
-      <ModeDetail mode={shown} spec={info.specs?.[shown]} cli={cliProvider} />
+      <ModeDetail mode={shown} spec={info.specs?.[shown]} cli={cliProvider} {unsandboxed} {shellOff} />
 
       {#if shown === "autonomous" || (currentMode === "autonomous" && !hovered)}
         <label class="line" transition:slide={{ duration: 160 * (app.settings.animationSpeed || 0) }}>
           <span>Just this turn</span>
-          <Switch.Root class="switch-root" checked={runOnce} onCheckedChange={toggleRunOnce}>
-            <Switch.Thumb class="switch-thumb" />
-          </Switch.Root>
+          <Switch checked={runOnce} onchange={toggleRunOnce} />
         </label>
       {/if}
       {#if !cliProvider && projectPath}
         <label class="line foot">
           <span>Web search <em>this project</em></span>
-          <Switch.Root class="switch-root" checked={webToolsEnabled} onCheckedChange={toggleWebTools}>
-            <Switch.Thumb class="switch-thumb" />
-          </Switch.Root>
+          <Switch checked={webToolsEnabled} onchange={toggleWebTools} />
         </label>
       {/if}
     </Popover.Content>
@@ -211,6 +237,37 @@
     font-size: 0.66rem;
     color: var(--text-dim);
     margin-left: 0.3rem;
+  }
+  .danger {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0.14rem 0.29rem 0.29rem;
+    padding: 0.5rem 0.57rem;
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-md, 0.5rem);
+    background: var(--danger-dim);
+    color: var(--danger);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+  .danger p {
+    margin: 0.14rem 0 0;
+    color: var(--text);
+  }
+  .danger-line {
+    color: var(--danger);
+  }
+  :global(.picker-trigger) .danger-dot {
+    width: 0.46rem;
+    height: 0.46rem;
+    border-radius: 50%;
+    background: var(--danger);
+    margin-left: 0.28rem;
+  }
+  :global(.picker-trigger) .danger-dot.off {
+    background: none;
+    border: 1.5px solid var(--danger);
+    box-sizing: border-box;
   }
   .line.foot {
     margin-top: 0.14rem;

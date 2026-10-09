@@ -112,6 +112,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 0.71rem;
     font-size: 0.85rem;
   }

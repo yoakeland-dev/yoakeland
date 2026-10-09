@@ -7,7 +7,11 @@ const TEXT = 3;
 const ELEMENT = 1;
 
 /** Attributes the renderer never emits but the UI sets on live nodes; a morph leaves them be. */
-const KEEP = new Set(["data-f", "data-collapsed", "data-streaming", "aria-expanded"]);
+const KEEP = new Set(["data-f", "data-collapsed", "data-streaming", "aria-expanded", "data-view", "data-rendered", "data-error"]);
+
+/** Typeset math is a tangle of spans that only ever changes whole: compared as a unit, never
+ * diffed into. */
+const isMath = (e: Element) => e.classList.contains("katex") || e.classList.contains("katex-display");
 
 // A text node, or one of our fade wrappers around appended text: together they're one run.
 const isTextish = (n: Node) =>
@@ -64,8 +68,13 @@ export function morph(el: Node, next: Node, fade: boolean) {
       o = end;
     } else if (o && o.nodeType === ELEMENT && o.nodeName === n.nodeName) {
       syncAttrs(o as Element, n as Element);
-      // Code is hidden while it streams and re-highlights into new token spans every frame.
-      morph(o, n, fade && o.nodeName !== "PRE");
+      if (isMath(n as Element)) {
+        if ((o as Element).innerHTML !== (n as Element).innerHTML) (o as Element).replaceChildren(...n.childNodes);
+      } else if (!(n as Element).hasAttribute("data-opaque")) {
+        // (A [data-opaque] element's children are filled in by script, e.g. a rendered diagram: left alone.)
+        // Code is hidden while it streams and re-highlights into new token spans every frame.
+        morph(o, n, fade && o.nodeName !== "PRE");
+      }
       o = o.nextSibling;
     } else if (o) {
       let end = o.nextSibling;

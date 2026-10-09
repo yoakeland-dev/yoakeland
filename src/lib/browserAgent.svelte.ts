@@ -5,7 +5,8 @@ import { app, type ConnectionId } from "./state.svelte";
 
 /** One chat's browser panel, as the agent drives it. */
 export interface BrowserController {
-  run(action: string, args: Record<string, unknown>): Promise<string>;
+  /** `guard.hosts`: stop any page-initiated navigation off these hosts while the action runs. */
+  run(action: string, args: Record<string, unknown>, guard?: { hosts: string[] }): Promise<string>;
 }
 
 const controllers = new Map<string, BrowserController>();
@@ -61,6 +62,9 @@ interface BrowserRequest {
   sessionId: string;
   action: string;
   args: Record<string, unknown>;
+  /** §3.2 browser_request: with blockCrossOrigin, only these (plus local) hosts may be reached. */
+  allowedHosts?: string[];
+  blockCrossOrigin?: boolean;
 }
 
 export async function handleBrowserRequest(connectionId: ConnectionId, req: BrowserRequest, send: (data: object) => void) {
@@ -85,7 +89,11 @@ export async function handleBrowserRequest(connectionId: ConnectionId, req: Brow
         error: "the browser panel couldn't open for this chat" + (app.activeConnectionId === connectionId ? "" : " (its server isn't the one open in the app)"),
       });
     }
-    reply({ output: await c.run(req.action, args) });
+    const serverHost = server.connectParams.mode === "remote" ? server.connectParams.host : null;
+    const guard = req.blockCrossOrigin
+      ? { hosts: [...LOCAL_HOSTS, ...(serverHost ? [serverHost] : []), ...(req.allowedHosts ?? [])] }
+      : undefined;
+    reply({ output: await c.run(req.action, args, guard) });
   } catch (e) {
     reply({ error: e instanceof Error ? e.message : String(e) });
   }

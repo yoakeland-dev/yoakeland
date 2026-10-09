@@ -37,6 +37,48 @@ export interface PermissionRequestData {
   diff?: FileDiff | null;
   /** A CLI agent asking to leave plan mode with the plan `plan_written` just showed (§3.2): answered with approve_plan. */
   plan?: boolean;
+  /** Rules the user may pick instead of a bare "always allow" (§3.2); answered with `ruleId`. */
+  suggestions?: PermissionSuggestion[];
+}
+
+/** One "stop asking about this" option on a permission_request. `native`: a CLI agent's own rule. */
+export interface PermissionSuggestion {
+  id: string;
+  label: string;
+  tool?: string;
+  pattern?: string[];
+  scope?: PermissionScope;
+  native?: boolean;
+}
+
+export type PermissionScope = "session" | "project" | "global";
+export type PermissionDecision = "allow" | "ask" | "deny";
+
+/** A permission rule as the server lists it (§3.1 "Permission rules"). */
+export interface PermissionRule {
+  id: string;
+  tool: string;
+  pattern: string[];
+  /** The pattern as a person types it (bash: shell-quoted argv). */
+  text: string;
+  decision: PermissionDecision;
+  scope: PermissionScope | "builtin";
+  modes?: string[];
+  source?: string;
+  createdAt?: string;
+  match?: string[];
+  notMatch?: string[];
+  readonly?: boolean;
+}
+
+/** `permission_rules` (§3.2): a project's rules in force, plus load problems. */
+export interface PermissionRulesData {
+  projectPath: string;
+  rules: PermissionRule[];
+  errors?: string[];
+  notes?: string[];
+  /** Why the request that produced this reply was refused. */
+  error?: string;
 }
 
 /** ACP's tool kinds: what a `cli_*` agent's native tool call does (§3.2). */
@@ -67,7 +109,7 @@ export interface ToolResultData {
 }
 
 export interface TurnCompletedData {
-  finishReason: "stop" | "length" | "cancelled" | "budget_exceeded" | "no_provider";
+  finishReason: "stop" | "length" | "cancelled" | "budget_exceeded" | "no_provider" | "limit_reached";
   sessionId: string;
   /** Server-assigned id of the prompt this turn was anchored to, no get_session_history round trip needed. Absent if the turn ended before any message existed. */
   userMessageId?: string;
@@ -78,16 +120,60 @@ export interface TurnCompletedData {
     outputTokens: number;
     totalTokens: number;
     costUsd: number;
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    /** No rate exists for the model: costUsd is 0 (or only the priced part), not free. */
+    costUnknown?: boolean;
   };
-  context: {
-    estimatedTokens: number;
-    maxTokens: number;
-  };
-  spend: {
-    sessionTotalUsd: number;
-    projectTotalUsd: number;
-  };
+  context: ContextData;
+  spend: SpendData;
   durationMs: number;
+}
+
+/** How full the context is (§3.2 `turn_completed.context`, also on `session_history`). */
+export interface ContextData {
+  /** Tokens held now: the provider's count of its last request, or our estimate (see `source`). */
+  estimatedTokens: number;
+  /** The meter's denominator: the model's window when known, else the compaction budget. */
+  maxTokens: number;
+  /** The model's real window; absent when nothing knows it. */
+  windowTokens?: number;
+  /** The size at which yoakeland compacts the chat (API providers only in practice). */
+  budgetTokens?: number;
+  /** "provider": counted by the provider; "estimated": a character heuristic; "unknown": nothing to measure yet. */
+  source?: "provider" | "estimated" | "unknown";
+}
+
+export interface SpendData {
+  sessionTotalUsd: number;
+  projectTotalUsd: number;
+  /** Some usage counted had no rate, so the true total is higher. */
+  sessionCostUnknown?: boolean;
+  projectCostUnknown?: boolean;
+}
+
+/** One slice of the context (§3.2 `context_breakdown`). `exact`: counted by the provider, not apportioned. */
+export interface ContextCategory {
+  key: string;
+  label: string;
+  tokens: number;
+  exact: boolean;
+}
+
+/** §3.2 `context_breakdown`, the answer to `get_context_breakdown`. */
+export interface ContextBreakdown {
+  sessionId: string;
+  model?: string;
+  totalTokens: number;
+  windowTokens?: number;
+  /** Where the chat compacts itself; absent when the agent does that on its own terms. */
+  autoCompactAt?: number;
+  source: "provider" | "estimated" | "unknown";
+  /** Used slices first, then `free` and `buffer`. */
+  categories: ContextCategory[];
+  cache?: { read: number; write: number; input: number };
+  spend?: SpendData;
+  error?: string;
 }
 
 export type CliKind =
@@ -154,13 +240,39 @@ export interface SessionSummary {
   messageCount: number;
   title?: string;
   archived?: boolean;
+  /** The root the session runs in (§4b); the only way to learn a chat's scratch directory. */
+  projectPath?: string;
+  /** A chat's scratch directory size, from the "@chat" listing (a lower bound for a huge tree). */
+  workspaceBytes?: number;
   /** Paired session for a split/sidebar layout: one-directional, set on the anchor session only. */
   linkedSessionId?: string | null;
   /** Server-persisted mode (§4c) so a sidebar badge doesn't need the session open to know it. */
   mode?: ChatMode;
 }
 
-export type SandboxTier = "bubblewrap" | "linux_namespaces" | "local_restricted_fallback";
+export type SandboxTier = "bubblewrap" | "linux_namespaces" | "macos_seatbelt" | "local_restricted_fallback";
+
+
+/** Server-wide tunables (`runtime_settings`, changed with `set_runtime_settings`, a partial update).
+ * 0 means the default, or unlimited where noted; the server echoes what it actually stored. */
+export interface RuntimeSettings {
+  /** Pause a turn to ask "continue?" after this many model calls (0 = unlimited). */
+  maxRoundsPerTurn: number;
+  /** Pause a turn once its chat has spent this much, in USD (0 = unlimited). */
+  maxSessionCostUsd: number;
+  /** Withhold bash and the terminal tools from the model in projects with no sandbox. */
+  disableBashWhenUnsandboxed: boolean;
+  execTimeoutSec: number;
+  execOutputMaxBytes: number;
+  terminalMemoryMaxMB: number;
+  terminalPidsMax: number;
+  terminalReadMaxChars: number;
+  terminalHistoryKB: number;
+  poolIdleMinutes: number;
+  poolMaxLive: number;
+  pricingRefreshHours: number;
+  browserBlockCrossOrigin: boolean;
+}
 
 export interface ProjectOpenedData {
   path: string;
@@ -185,12 +297,56 @@ export interface DirectoryEntry {
 export interface ServerNotification {
   id: string;
   level: "info" | "success" | "warning" | "error";
+  /** How loudly to raise it: urgent needs you, normal is worth knowing, quiet is bell-only. */
+  priority?: "urgent" | "normal" | "quiet";
   kind: string;
   title: string;
   body?: string;
+  /** How many times it happened while unread (a repeat within a minute folds in). */
+  count?: number;
   sessionId?: string;
   projectPath?: string;
+  toolCallId?: string;
+  /** Server-side, so it follows you across devices. */
+  read?: boolean;
+  /** A device was in use when it was raised: don't add an OS alert on top. */
+  attended?: boolean;
   createdAt: string;
+}
+
+/** One line of the server's audit log (SPEC.md §3.1 `list_audit`). */
+export interface AuditEvent {
+  seq: number;
+  at: string;
+  kind: string;
+  /** The device that did it, by name; "server" for something it did on its own. */
+  actor?: string;
+  ip?: string;
+  network?: string;
+  project?: string;
+  session?: string;
+  tool?: string;
+  target?: string;
+  outcome?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface AuditQuery {
+  before?: number;
+  limit?: number;
+  kinds?: string[];
+  sessionId?: string;
+  projectPath?: string;
+  since?: string;
+}
+
+/** SPEC.md §3.1 `set_notify_prefs`: the server-wide notification policy. */
+export interface NotifyPrefs {
+  urgent: boolean;
+  normal: boolean;
+  quiet: boolean;
+  minTurnSec: number;
+  muted: string[];
 }
 
 /** Health snapshot riding on every server-sent ping (SPEC.md §2a). */
@@ -364,6 +520,9 @@ export interface ModeSpec {
 export interface AskUserQuestionData {
   question: string;
   options?: string[];
+  /** 1-based place among the questions raised together, so "2 of 3" holds as they're answered. */
+  index?: number;
+  total?: number;
 }
 
 export interface ToolCallEntry extends NativeToolFields {
@@ -371,6 +530,8 @@ export interface ToolCallEntry extends NativeToolFields {
   name: string;
   args: Record<string, unknown>;
   status: "requested" | "awaiting_permission" | "awaiting_answer" | "running" | "done" | "denied" | "error";
+  /** Set between snapshot_capturing and snapshot_created: the file copy before this call's edit is still running. */
+  snapshotting?: boolean;
   output?: string;
   error?: string;
   diff?: FileDiff | null;
@@ -481,3 +642,132 @@ export interface GitChange {
 }
 
 export type SidebarPanel = "browser" | "snapshots" | "diffs" | "subagents" | "explorer" | "git";
+
+// ---- MCP servers and skills (SPEC.md §3.1 "MCP servers" and "Skills") ----
+
+export type McpScope = "user" | "project";
+export type McpState = "idle" | "disabled" | "pending" | "connecting" | "ready" | "needs_auth" | "failed";
+
+/** One server as a person writes it (the shape Claude Code's .mcp.json uses). Env and header values the
+ * server holds secret arrive as `redacted` from `mcp_servers`; send that back to keep the stored value. */
+export interface McpServerConfig {
+  type?: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+  /** Also hand the server to the coding-agent CLIs (Claude Code, ACP agents). */
+  agents?: boolean;
+  disabledTools?: string[];
+  timeoutMs?: number;
+  oauth?: { clientId: string; clientSecret?: string; scope?: string };
+}
+
+export interface McpToolInfo {
+  /** What the model sees (mcp__server__tool). */
+  name: string;
+  /** The server's own name for it. */
+  rawName: string;
+  title?: string;
+  description?: string;
+  readOnly?: boolean;
+  destructive?: boolean;
+  enabled: boolean;
+}
+
+export interface McpServerStatus {
+  name: string;
+  scope: McpScope;
+  config: McpServerConfig;
+  state: McpState;
+  error?: string;
+  stderr?: string;
+  /** Project servers only: what the user decided about this exact config. */
+  approval?: "approved" | "pending" | "changed" | "denied";
+  info?: { name?: string; title?: string; version?: string; instructions?: string; protocol?: string; tools?: boolean; resources?: boolean; prompts?: boolean };
+  tools?: McpToolInfo[];
+  truncated?: number;
+  signedIn?: boolean;
+  remote?: boolean;
+  resources?: boolean;
+}
+
+/** One server another tool already has (`mcp_import_candidates`, §3.2). `config` has every secret as `redacted`:
+ * the daemon copies the real values itself, file to file, when asked to import by `id`. */
+export interface McpImportCandidate {
+  id: string;
+  source: string;
+  file: string;
+  name: string;
+  suggestedName: string;
+  config: McpServerConfig;
+  alreadyAdded?: boolean;
+  nameTaken?: boolean;
+  /** Why it can't be imported, when it can't. */
+  unsupported?: string;
+}
+
+export interface McpImportData {
+  projectPath?: string;
+  candidates: McpImportCandidate[];
+  problems?: string[];
+  error?: string;
+}
+
+/** `mcp_servers` (§3.2): a project's MCP servers and where each stands. */
+export interface McpServersData {
+  projectPath: string;
+  servers: McpServerStatus[];
+  problems?: string[];
+  /** Why the request that produced this reply was refused. */
+  error?: string;
+  redacted: string;
+}
+
+export type SkillScope = "user" | "project";
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  dir: string;
+  file: string;
+  scope: SkillScope;
+  /** Which folder family it was found in: yoake, agents, claude, codex, … */
+  source: string;
+  /** The agents that load it themselves ("native" is yoakeland's own loop). */
+  agents: string[];
+  alsoIn?: string[];
+  shadowed?: boolean;
+  enabled: boolean;
+  license?: string;
+  compatibility?: string;
+  allowedTools?: string;
+  argumentHint?: string;
+  disableModelInvocation?: boolean;
+  userInvocable: boolean;
+  files: number;
+  bytes: number;
+  modified?: number;
+  warnings?: string[];
+}
+
+export interface SkillsData {
+  projectPath: string;
+  skills: SkillInfo[];
+  roots: { path: string; source: string; scope: SkillScope; exists: boolean }[];
+  problems?: string[];
+  error?: string;
+}
+
+export interface SkillDetailData {
+  projectPath: string;
+  dir: string;
+  name?: string;
+  body?: string;
+  files?: string[];
+  truncated?: boolean;
+  error?: string;
+}

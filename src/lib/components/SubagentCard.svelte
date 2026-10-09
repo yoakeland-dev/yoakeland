@@ -257,6 +257,7 @@
     word-break: break-word;
     max-height: 16rem;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .steps :global(.card),
   .steps :global(.subagent) {

@@ -2,9 +2,9 @@
   import { tip } from "../tooltip.svelte";
   import { fly, scale, slide } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
-  import { untrack } from "svelte";
+  import { setContext, untrack } from "svelte";
   import { DropdownMenu } from "bits-ui";
-  import { app } from "../state.svelte";
+  import { app, CHAT_PROJECT } from "../state.svelte";
   import {
     sendPrompt,
     steerPrompt,
@@ -12,8 +12,10 @@
     cancelEditingMessage,
     cancelTurn,
     selectProject,
+    newChat,
     uploadFile,
     listFiles,
+    listSkills,
     respondPermission,
   } from "../ipc";
   import { isDesktop, invoke, pickFiles, onFileDrop } from "../platform";
@@ -21,6 +23,7 @@
   import { fuzzyFilter, fuzzyIndices } from "../fuzzy";
   import { fileIconUrl } from "../fileIcons";
   import { mentionText, MENTION_RE } from "../mentions";
+  import { pickableSkills, skillKindOf, slashToSkill } from "../extensions";
   import { liveActivity } from "../activity.svelte";
   import { sessionModes } from "../modes";
   import Icon from "./Icon.svelte";
@@ -29,6 +32,9 @@
   import ModelPicker from "./ModelPicker.svelte";
   import ModePicker from "./ModePicker.svelte";
   import EffortPicker from "./EffortPicker.svelte";
+  import ContextRing from "./ContextRing.svelte";
+  import GitChip from "./GitChip.svelte";
+  import ChatNotices from "./ChatNotices.svelte";
   import Dropdown from "./Dropdown.svelte";
 
   // `scrolledUp`: the transcript is well above its tail (MessageList), so the composer goes
@@ -36,9 +42,10 @@
   let {
     sessionId,
     floating,
+    snap = false,
     scrolledUp = false,
     onJump,
-  }: { sessionId: string; floating: boolean; scrolledUp?: boolean; onJump?: () => void } = $props();
+  }: { sessionId: string; floating: boolean; snap?: boolean; scrolledUp?: boolean; onJump?: () => void } = $props();
 
   // Session/provider/project state lives on the active connection's ServerState; `cid` is
   // needed since ipc.ts calls are threaded per connection.
@@ -49,9 +56,13 @@
   let textarea: HTMLTextAreaElement;
   let boxEl: HTMLFormElement | undefined = $state();
   let stackEl: HTMLDivElement | undefined = $state();
+  // SlideText reads this: its text changes without rolling while the composer snaps between chats.
+  setContext("snap", () => snap);
+
   let cursorPos = $state(0);
   let mentionIndex = $state(0);
   let mentionDismissed = $state(false);
+  let skillIndex = $state(0);
 
   // Height only animates during the floating/docked layout morph; a content-driven resize
   // (typing) must snap instantly. `morphing` goes true when `floating` changes and back off
@@ -162,7 +173,10 @@
   const currentMode = $derived(server?.modeBySession[sessionId] ?? "read_write");
   const turnId = $derived(server?.activeTurnBySession[sessionId]);
   const projectPath = $derived(server?.projectBySession[sessionId]);
-  const projectName = $derived(projectPath ? basename(projectPath) : null);
+  const isChat = $derived(projectPath === CHAT_PROJECT);
+  // Where the @ picker's files live: a chat's scratch directory, once the server has told us.
+  const filesRoot = $derived(server?.rootOf(sessionId));
+  const projectName = $derived(projectPath && !isChat ? basename(projectPath) : null);
   const hasProvider = $derived(!!server?.providerBySession[sessionId]);
 
   // Unsent text follows its chat: switching chats stashes it on the server
@@ -369,28 +383,73 @@
   });
 
   const mentionMatches = $derived.by(() => {
-    if (!mentionQuery || !projectPath) return [];
-    return fuzzyFilter(server?.filesByProject[projectPath] ?? [], mentionQuery.query, 8);
+    if (!mentionQuery || !filesRoot) return [];
+    return fuzzyFilter(server?.filesByProject[filesRoot] ?? [], mentionQuery.query, 8);
   });
+
+  // The "$name" token before the cursor, or "/name" as the message's first word: a skill to name in this
+  // message (SPEC.md §3.1 "Skills"). Offered only the skills this chat's agent can load, and only once the
+  // sign starts a word, so "$5" stays a price and a path in the middle of a sentence isn't a command.
+  const agentKind = $derived(skillKindOf(server?.providers.find((p) => p.name === server?.providerBySession[sessionId])?.kind));
+  const allSkills = $derived(filesRoot ? server?.skillsByProject[filesRoot]?.skills : undefined);
+  const skillQuery = $derived.by(() => {
+    if (mentionDismissed) return null;
+    const m = /(?:^|\s)\$([A-Za-z][A-Za-z0-9._:-]{0,63}|)$/.exec(text.slice(0, cursorPos)) ?? /^\/([A-Za-z][A-Za-z0-9._:-]{0,63}|)$/.exec(text.slice(0, cursorPos));
+    return m ? { start: cursorPos - m[1].length - 1, query: m[1], sign: text[cursorPos - m[1].length - 1] } : null;
+  });
+  const skillMatches = $derived(skillQuery ? pickableSkills(allSkills, skillQuery.query, agentKind).slice(0, 8) : []);
+  const knownSkills = $derived(new Set(pickableSkills(allSkills, "", agentKind).map((s) => s.name)));
+  $effect(() => {
+    skillMatches;
+    skillIndex = 0;
+  });
+  // Opening the picker rescans, so a SKILL.md added since the project was first listed is offered.
+  const skillPickerOpen = $derived(!!skillQuery);
+  $effect(() => {
+    if (skillPickerOpen && filesRoot && cid && connected) untrack(() => listSkills(cid, filesRoot));
+  });
+  function pickSkill(name: string) {
+    if (!skillQuery) return;
+    const before = text.slice(0, skillQuery.start);
+    const after = text.slice(skillQuery.start + 1 + skillQuery.query.length);
+    text = `${before}${skillQuery.sign}${name} ${after.replace(/^ /, "")}`;
+    const pos = before.length + name.length + 2;
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(pos, pos);
+      cursorPos = pos;
+    });
+  }
 
   // The text split so mentions of known files draw as chips in a backdrop (.mirror) behind the
   // textarea, whose own text goes transparent while there are any. The chip can't pad or change
   // weight, or the backdrop's text would stop lining up with the caret.
-  const knownFiles = $derived(new Set(projectPath ? (server?.filesByProject[projectPath] ?? []) : []));
+  const knownFiles = $derived(new Set(filesRoot ? (server?.filesByProject[filesRoot] ?? []) : []));
   const composerRuns = $derived.by(() => {
-    const runs: { text: string; path?: string }[] = [];
-    if (!knownFiles.size) return runs;
-    let last = 0;
-    for (const m of text.matchAll(new RegExp(MENTION_RE.source, "g"))) {
-      // A trailing sentence period isn't part of the name, unless a line suffix follows it.
-      const path = m[2] ? m[1] : [m[1], m[1].replace(/\.+$/, "")].find((p) => knownFiles.has(p));
-      if (!path || !knownFiles.has(path)) continue;
-      const chip = m[2] ? m[0] : "@" + path;
-      if (m.index > last) runs.push({ text: text.slice(last, m.index) });
-      runs.push({ text: chip, path });
-      last = m.index + chip.length;
+    const runs: { text: string; path?: string; skill?: boolean }[] = [];
+    const chips: { index: number; text: string; path?: string; skill?: boolean }[] = [];
+    if (knownFiles.size) {
+      for (const m of text.matchAll(new RegExp(MENTION_RE.source, "g"))) {
+        // A trailing sentence period isn't part of the name, unless a line suffix follows it.
+        const path = m[2] ? m[1] : [m[1], m[1].replace(/\.+$/, "")].find((p) => knownFiles.has(p));
+        if (!path || !knownFiles.has(path)) continue;
+        chips.push({ index: m.index, text: m[2] ? m[0] : "@" + path, path });
+      }
     }
-    if (runs.length) runs.push({ text: text.slice(last) });
+    if (knownSkills.size && (text.includes("$") || text.startsWith("/"))) {
+      for (const m of text.matchAll(/(?<=^|\s)\$([A-Za-z][A-Za-z0-9._:-]{0,63})(?=$|[\s.,;:!?)])|^\/([A-Za-z][A-Za-z0-9._:-]{0,63})(?=$|[\s.,;:!?)])/g)) {
+        if (knownSkills.has(m[1] ?? m[2])) chips.push({ index: m.index, text: m[0], skill: true });
+      }
+    }
+    if (!chips.length) return runs;
+    let last = 0;
+    for (const c of chips.sort((a, b) => a.index - b.index)) {
+      if (c.index < last) continue;
+      if (c.index > last) runs.push({ text: text.slice(last, c.index) });
+      runs.push({ text: c.text, path: c.path, skill: c.skill });
+      last = c.index + c.text.length;
+    }
+    runs.push({ text: text.slice(last) });
     return runs;
   });
   let mirror = $state<HTMLDivElement>();
@@ -440,11 +499,12 @@
 
   // The @ picker and file links in replies read this project's file list; opening a chat doesn't load it.
   $effect(() => {
-    if (projectPath && cid && connected && !server?.filesByProject[projectPath]) listFiles(cid, projectPath);
+    if (filesRoot && cid && connected && !server?.filesByProject[filesRoot]) listFiles(cid, filesRoot);
   });
 
+  // Alphabetical, not recent-first: picking one would otherwise jump it to the top of the list.
   const projectItems = $derived(
-    (server?.recentProjects ?? []).map((p) => ({ value: p, label: basename(p) })),
+    (server?.recentProjects ?? []).map((p) => ({ value: p, label: basename(p) })).sort((a, b) => a.label.localeCompare(b.label)),
   );
   function setProject(value: string | undefined) {
     if (value && cid) selectProject(cid, value);
@@ -456,7 +516,38 @@
     Object.entries(app.servers).map(([scid, s]) => ({ value: scid, label: s.label })),
   );
   function setActiveServer(value: string | undefined) {
-    if (value) app.activeConnectionId = value;
+    if (!value || value === cid) return;
+    // A fresh chat on that remote, so the project list and the chat itself both follow it. It
+    // stays the kind you were in: a project chat lands in that remote's project (it has its own
+    // list), and only a remote with none falls back to a plain chat.
+    const next = app.servers[value];
+    const project = isChat ? undefined : (next?.currentProjectPath ?? next?.recentProjects[0]);
+    void newChat(value, project);
+  }
+
+  const animSpeed = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--anim-speed")) || 1;
+  // The hero line swaps under the composer: the old one drops behind the box's top edge while the
+  // new one rises out from it (same tuck as .hero.hidden).
+  function tuck(node: HTMLElement, { out = false } = {}) {
+    const speed = animSpeed();
+    const drop = (node.closest(".stack") as HTMLElement).getBoundingClientRect().top - node.getBoundingClientRect().top;
+    return {
+      duration: (out ? 160 : 200) * speed,
+      delay: out ? 0 : 60 * speed,
+      easing: cubicOut,
+      css: (t: number, u: number) => `transform: translateY(${u * drop}px); opacity: ${t}`,
+    };
+  }
+  // A picker that fades out while its sibling slides over into the gap (the gap between them
+  // closes with it, so nothing jumps when the node is finally removed).
+  function collapse(node: HTMLElement) {
+    const w = node.offsetWidth;
+    const gap = parseFloat(getComputedStyle(node.parentElement!).columnGap) || 0;
+    return {
+      duration: 200 * animSpeed(),
+      easing: cubicOut,
+      css: (t: number, u: number) => `overflow: hidden; width: ${t * w}px; margin-right: ${-u * gap}px; opacity: ${t * t}`,
+    };
   }
 
   // Permission requests and questions queue up; the oldest shows as a card above the composer
@@ -533,7 +624,7 @@
 
   function submit(e?: Event, steer = false) {
     e?.preventDefault();
-    const value = text.trim();
+    const value = slashToSkill(text.trim(), knownSkills);
     if (!cid || !canSubmit) return;
     if (planAsk && !asks.length) {
       // A plan waiting on approval: what's typed is what to change about it.
@@ -554,6 +645,10 @@
     text = "";
   }
 
+  // The $ picker reads this project's skills; the daemon rescans when asked, so a new SKILL.md shows up on the next chat.
+  $effect(() => {
+    if (filesRoot && cid && connected && !server?.skillsByProject[filesRoot]) listSkills(cid, filesRoot);
+  });
   let focused = $state(false);
 
   // The + menu: context to add. A double click on it attaches files straight away.
@@ -565,6 +660,23 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    if (skillMatches.length > 0) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        skillIndex = (skillIndex + (e.key === "ArrowDown" ? 1 : skillMatches.length - 1)) % skillMatches.length;
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        pickSkill(skillMatches[skillIndex].name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        mentionDismissed = true;
+        return;
+      }
+    }
     if (mentionMatches.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -604,13 +716,17 @@
   }
 </script>
 
-<div class="wrap" class:floating class:compact>
+<div class="wrap" class:floating class:compact class:snap>
   <div class="dim" class:shown={dragOver}></div>
   <div class="stack" class:morphing bind:this={stackEl}>
     <h2 class="hero" class:hidden={!floating}>
-      {#if projectName}What shall we build in <span class="hero-project"
-          >{projectName}</span
-        >?{:else}What shall we build?{/if}
+      <!-- Keyed, so moving between an empty chat and an empty project rolls the line over
+           instead of swapping it in one frame. Both lines share the grid cell while they cross. -->
+      {#key projectName ?? (isChat ? "chat" : "none")}
+        <span class="hero-text" in:tuck out:tuck={{ out: true }}>
+          {#if projectName}What shall we build in <span class="hero-project">{projectName}</span>?{:else if isChat}What's on your mind?{:else}What shall we build?{/if}
+        </span>
+      {/key}
     </h2>
 
     {#if asks.length}
@@ -618,6 +734,7 @@
     {/if}
 
     <div class="dock">
+      <ChatNotices {sessionId} />
       <!-- Only while scrolled up: what the running turn is doing, and a way back down. Tucks
            behind the box's top edge otherwise. -->
       <div class="status" class:shown={showStatus} inert={!showStatus} aria-hidden={!showStatus}>
@@ -694,7 +811,7 @@
 
         <div class="input-area">
           {#if composerRuns.length}
-            <div class="mirror" aria-hidden="true" bind:this={mirror}>{#each composerRuns as r}{#if r.path}<span class="m-chip"><span class="m-at" style:background-image={`url("${fileIconUrl(r.path.split("/").pop() ?? r.path)}")`}>@</span>{r.text.slice(1)}</span>{:else}{r.text}{/if}{/each}&#8203;</div>
+            <div class="mirror" aria-hidden="true" bind:this={mirror}>{#each composerRuns as r}{#if r.skill}<span class="m-chip m-skill">{r.text}</span>{:else if r.path}<span class="m-chip"><span class="m-at" style:background-image={`url("${fileIconUrl(r.path.split("/").pop() ?? r.path)}")`}>@</span>{r.text.slice(1)}</span>{:else}{r.text}{/if}{/each}&#8203;</div>
           {/if}
           <textarea
             bind:this={textarea}
@@ -718,7 +835,7 @@
               : !projectPath
                 ? "Pick a project in the sidebar to start chatting…"
                 : floating
-                  ? "Ask anything about this project…"
+                  ? isChat ? "Ask anything…" : "Ask anything about this project…"
                   : editingId
                     ? "Edit your message…"
                     : turnId
@@ -794,6 +911,8 @@
               <ModelPicker {sessionId} />
               <EffortPicker {sessionId} />
               <ModePicker {sessionId} />
+              <ContextRing {sessionId} />
+              <GitChip {sessionId} />
             </div>
           </div>
         </div>
@@ -820,7 +939,26 @@
 
       <!-- Sibling of the form, not a child: the form's own backdrop-filter is a backdrop root, so a
            blur inside it would have nothing to sample. -->
-      {#if mentionMatches.length > 0}
+      {#if skillMatches.length > 0}
+        <ul
+          class="mentions skills"
+          role="listbox"
+          aria-label="Skills"
+          in:fly={{ y: 8, duration: 160, easing: cubicOut }}
+          out:fly={{ y: 6, duration: 120, easing: cubicIn }}
+        >
+          {#each skillMatches as sk, i (sk.dir)}
+            <li role="option" aria-selected={i === skillIndex}>
+              <button type="button" class:active={i === skillIndex} onclick={() => pickSkill(sk.name)}>
+                <Icon name="sparkles" size={13} />
+                <span class="m-name">{skillQuery?.sign ?? "$"}{sk.name}{#if sk.argumentHint}<span class="m-arg"> {sk.argumentHint}</span>{/if}</span>
+                <span class="m-dir">{sk.description}</span>
+                {#if sk.scope === "project"}<span class="m-scope">project</span>{/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {:else if mentionMatches.length > 0}
         <ul
           class="mentions"
           in:fly={{ y: 8, duration: 160, easing: cubicOut }}
@@ -846,16 +984,20 @@
       inert={!floating}
       aria-hidden={!floating}
     >
-      <Dropdown
-        items={projectItems}
-        bind:value={() => projectPath, setProject}
-        placeholder="Select a project…"
-        triggerIcon="folder"
-        triggerTitle="Switch project"
-        searchable={(server?.recentProjects.length ?? 0) > 6}
-        searchPlaceholder="Search projects…"
-        triggerClass="fc-pill"
-      />
+      {#if projectPath !== CHAT_PROJECT}
+      <div class="fc-slot" transition:collapse>
+        <Dropdown
+          items={projectItems}
+          bind:value={() => projectPath, setProject}
+          placeholder="Select a project…"
+          triggerIcon="folder"
+          triggerTitle="Switch project"
+          searchable={(server?.recentProjects.length ?? 0) > 6}
+          searchPlaceholder="Search projects…"
+          triggerClass="fc-pill"
+        />
+      </div>
+      {/if}
       {#if Object.keys(app.servers).length > 1}
         <Dropdown
           items={serverItems}
@@ -907,10 +1049,15 @@
       transparent 70%
     );
     opacity: 0;
-    transition: opacity calc(0.3s * var(--anim-speed, 1)) ease;
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
+  }
+  /* Moving between chats: the layout change lands in one frame, not the slide. */
+  .wrap.snap :is(*, *::before, *::after) {
+    transition: none !important;
   }
   .wrap.floating::before {
-    opacity: 1;
+    /* Gone by the time the feed's cards are under it (EmptyFeed.svelte), or it would dim them. */
+    opacity: clamp(0, calc(1 - var(--feed-scroll, 0px) / 160px), 1);
   }
   /* Fades scrolled-under transcript text instead of a hard cut at the box's edge. Height
      matches MessageList's reserved bottom padding (--composer-height + 56px, see .rows there,
@@ -927,7 +1074,7 @@
     opacity: 0;
     /* Behind .stack: ::after otherwise paints after it in DOM order and would cover the box. */
     z-index: -1;
-    transition: opacity calc(0.3s * var(--anim-speed, 1)) ease;
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
   }
   .wrap:not(.floating)::after {
     opacity: 1;
@@ -946,9 +1093,17 @@
     transition:
       top var(--morph) ease,
       transform var(--morph) ease,
-      width var(--morph) ease;
+      width var(--morph) ease,
+      translate var(--morph) ease;
   }
   .wrap.floating .stack {
+    /* Carried off the top by the empty chat's feed as it scrolls (EmptyFeed.svelte). Left out of
+       the transition so it tracks the wheel; docking brings it back to 0 with the morph. */
+    translate: 0 calc(-1 * var(--feed-scroll, 0px));
+    transition:
+      top var(--morph) ease,
+      transform var(--morph) ease,
+      width var(--morph) ease;
     /* Centered on the visible body below the header, not the whole panel: .wrap spans behind
        the overlaid header, so a plain 50% would sit too high. */
     top: calc(50% + var(--header-height) / 2);
@@ -959,6 +1114,8 @@
     position: absolute;
     left: 50%;
     bottom: calc(100% + 1.7rem);
+    display: grid;
+    justify-items: center;
     transform: translateX(-50%) translateY(0);
     margin: 0;
     /* Shrinks off the panel's width (.body's container-type in ChatPanel.svelte) before it
@@ -971,10 +1128,38 @@
     z-index: -1;
     transition:
       opacity var(--morph, calc(0.2s * var(--anim-speed, 1))) ease,
-      transform var(--morph, calc(0.2s * var(--anim-speed, 1))) ease;
+      transform var(--morph, calc(0.2s * var(--anim-speed, 1))) ease,
+      bottom var(--morph, calc(0.2s * var(--anim-speed, 1))) ease;
+  }
+  .hero-text {
+    grid-area: 1 / 1;
+  }
+  /* The "No sandbox" tab sits over the box's top edge. While floating it's out of the stack's
+     flow, so it can't shift the box (which is centred on the stack) when you move between a
+     chat that has one and a chat that doesn't; the hero rises to clear it instead. */
+  .wrap.floating :global(.notices) {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+  }
+  .wrap.floating .stack:has(:global(.notices)) .hero {
+    bottom: calc(100% + 3.6rem);
+  }
+  .fc-slot {
+    display: flex;
+  }
+  /* Keeps its natural width while the slot collapses around it (see `collapse`), so the label is
+     clipped rather than squeezed into an ellipsis. */
+  .fc-slot > :global(.dropdown-trigger) {
+    flex: none;
   }
   /* Slides down into the box's own footprint (sits behind it, see z-index below) instead of
      fading in place, so it visibly tucks away under the composer. */
+  /* Fades as the feed carries it up, so it doesn't run under the header's pills. */
+  .wrap.floating .hero:not(.hidden) {
+    opacity: clamp(0, calc(1 - var(--feed-scroll, 0px) / 110px), 1);
+  }
   .hero.hidden {
     opacity: 0;
     transform: translateX(-50%) translateY(calc(1.7rem + 100%));
@@ -1289,6 +1474,23 @@
     box-shadow: 0 0 0 0.15em var(--accent-dim);
     border-radius: var(--radius-sm);
     box-decoration-break: clone;
+  }
+  .m-skill {
+    color: color-mix(in srgb, var(--success) 60%, var(--text));
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    box-shadow: 0 0 0 0.15em color-mix(in srgb, var(--success) 14%, transparent);
+  }
+  .m-arg {
+    font-weight: 400;
+    color: var(--text-dim);
+  }
+  .m-scope {
+    flex-shrink: 0;
+    font-size: 0.68rem;
+    color: var(--accent);
+  }
+  .skills .m-dir {
+    direction: ltr;
   }
   /* The file's icon over the @ it stands in for, so the text keeps its width. */
   .m-at {

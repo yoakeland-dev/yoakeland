@@ -158,10 +158,10 @@
     font-variant-numeric: tabular-nums;
   }
   .add {
-    color: var(--success, #58d68d);
+    color: var(--diff-add);
   }
   .del {
-    color: var(--danger);
+    color: var(--diff-del);
   }
   .badge {
     width: 1rem;
@@ -170,10 +170,10 @@
     font-family: ui-monospace, monospace;
   }
   .badge.added {
-    color: var(--success, #58d68d);
+    color: var(--diff-add);
   }
   .badge.deleted {
-    color: var(--danger);
+    color: var(--diff-del);
   }
   .badge.modified {
     color: var(--warning);

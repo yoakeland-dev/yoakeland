@@ -1,19 +1,18 @@
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
-  // Shared row shape for every sidebar list (Needs you, Running, Pinned,
+  // Shared row shape for every sidebar list (Pinned, filter chips,
   // project lists, search results, split pairs); `variant` only changes the
   // meta line and tint.
   import { tick, type Snippet } from "svelte";
   import { app, type ConnectionId } from "../state.svelte";
-  import { setSessionArchived, setSessionTitle, deleteSession, openInSidePanel, openChatSession } from "../ipc";
-  import { relTime, sessionTitle, shortNum } from "../format";
-  import { titleFor, vendorMetaFor } from "../modelVendor";
-  import LobeIcon from "./LobeIcon.svelte";
-  import { callActivity } from "../activity.svelte";
-  import { IN_FLIGHT } from "../subagents";
+  import { setSessionArchived, setSessionTitle, deleteSession, openInSidePanel, openChatSession, moveChatToProject } from "../ipc";
+  import { fileSize, relTime, sessionTitle } from "../format";
+  import { CHAT_PROJECT } from "../state.svelte";
+  import { STATUS_ICON } from "../liveChats";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
+  import ChatCard, { chatActivity } from "./ChatCard.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { matches } from "../keybinds.svelte";
 
@@ -22,6 +21,7 @@
     session: s,
     variant = "default",
     showServer = false,
+    kindBadge = false,
     snippet,
     query,
     compact = false,
@@ -31,6 +31,8 @@
     session: SessionSummary;
     variant?: "default" | "running" | "attention" | "archived";
     showServer?: boolean;
+    /** Marks whether this is a project's chat or a project-less one (search spans both). */
+    kindBadge?: boolean;
     /** Search hit from the chat's messages, shown as the meta line. */
     snippet?: string;
     /** Search query, highlighted in the title and snippet. */
@@ -51,25 +53,9 @@
   const unread = $derived(!!server?.isUnread(s));
   const hasDraft = $derived(!!server?.composerDraftBySession[s.sessionId]?.trim());
 
-  const STATUS_ICON = {
-    working: "loader-2",
-    action: "alert-circle",
-    finished: "circle-check",
-    idle: "message-circle",
-  } as const;
-
   const messages = $derived(server?.messagesBySession[s.sessionId] ?? []);
 
-  const activity = $derived.by(() => {
-    const ask = server?.pendingAsks.find((a) => a.sessionId === s.sessionId);
-    if (ask) return ask.kind === "question" ? ask.question : ask.description || "Needs your approval";
-    const last = messages.findLast((m) => m.role === "assistant");
-    // Any call still going, not just the last: parallel subagents outlast the calls after them.
-    const going = last?.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));
-    // Held under Running after the reply landed: show how it ended, to answer from the sidebar.
-    if (!server?.activeTurnBySession[s.sessionId]) return last?.text.replace(/[#*`>_\[\]]/g, "").trim().split("\n")[0] || "Done";
-    return going ? callActivity(going) : last?.toolCalls.length ? "Writing…" : "Thinking…";
-  });
+  const activity = $derived(chatActivity(server, s.sessionId));
   const live = $derived(variant === "running" || variant === "attention");
   // Unknown if the turn started on another device before this client saw the chat.
   const startedAt = $derived(
@@ -86,18 +72,6 @@
     server?.projectBySession[s.sessionId] ??
       Object.entries(server?.sessionsByProject ?? {}).find(([, list]) => list.some((x) => x.sessionId === s.sessionId))?.[0],
   );
-  const model = $derived.by(() => {
-    const m = messages.findLast((x) => x.role === "assistant" && x.model);
-    const providerName = m?.provider ?? server?.providerBySession[s.sessionId];
-    const modelId = m?.model ?? server?.modelBySession[s.sessionId];
-    if (!modelId) return undefined;
-    const provider = server?.providers.find((p) => p.name === providerName);
-    if (!provider) return { title: modelId, icon: undefined };
-    const entry = { provider, model: server?.modelsByProvider[provider.name]?.find((x) => x.id === modelId) ?? { id: modelId } };
-    return { title: titleFor(entry), icon: vendorMetaFor(entry).icon };
-  });
-  const context = $derived(messages.findLast((m) => m.role === "assistant" && m.finish?.context)?.finish?.context);
-
   function parts(text: string): { t: string; hit: boolean }[] {
     const q = query?.trim().toLowerCase();
     if (!q) return [{ t: text, hit: false }];
@@ -137,7 +111,10 @@
   }
 
   function remove() {
-    if (confirm(`Permanently delete "${sessionTitle(s)}"? This can't be undone.`)) deleteSession(connectionId, s.sessionId);
+    // A project-less chat's files live and die with it; a project's are never touched.
+    const chat = server?.projectBySession[s.sessionId] === CHAT_PROJECT;
+    const files = chat && s.workspaceBytes ? ` Its workspace (${fileSize(s.workspaceBytes)} of files) is deleted too.` : chat ? " Its workspace is deleted too." : "";
+    if (confirm(`Permanently delete "${sessionTitle(s)}"?${files} This can't be undone.`)) deleteSession(connectionId, s.sessionId);
   }
 
   const menuItems = $derived<ContextMenuItem[]>([
@@ -153,6 +130,16 @@
             onSelect: () => openInSidePanel(connectionId, s.sessionId),
           } satisfies ContextMenuItem,
         ]),
+    ...(server?.projectBySession[s.sessionId] === CHAT_PROJECT
+      ? [
+          {
+            label: "Move to project…",
+            icon: "folder-open",
+            disabled: !connected || !server?.recentProjects.length,
+            onSelect: () => app.pickProject(connectionId, "Move to", (path) => void moveChatToProject(connectionId, s.sessionId, path)),
+          } satisfies ContextMenuItem,
+        ]
+      : []),
     archived
       ? { label: "Unarchive", icon: "restore", onSelect: () => setSessionArchived(connectionId, s.sessionId, false) }
       : { label: "Archive", icon: "archive", onSelect: archive },
@@ -179,30 +166,13 @@
 </script>
 
 {#snippet sessionCard()}
-  <div class="tip-title">{sessionTitle(s)}</div>
-  <ul class="tip-list">
-    {#if projectPath}<li><span class="tip-icon"><Icon name="folder" size={13} /></span><span class="grow">{server?.projectLabel(projectPath)}</span></li>{/if}
-    {#if server}<li><span class="tip-icon"><ServerAvatar name={server.label} seed={server.serverId} size={13} /></span><span class="grow">{server.label}</span></li>{/if}
-    {#if model}
-      <li>
-        <span class="tip-icon">{#if model.icon}<LobeIcon name={model.icon} variant="mono" fallback="openrouter" size={13} />{:else}<Icon name="brain" size={13} />{/if}</span>
-        <span class="grow">{model.title}</span>
-      </li>
-    {/if}
-    {#if context?.maxTokens}
-      {@const pct = Math.min(100, Math.round((context.estimatedTokens / context.maxTokens) * 100))}
-      <li>
-        <span class="tip-icon"><span class="tip-ring" style="--pct: {pct}"></span></span>
-        <span class="grow">{pct}% context <span class="tip-dim">· {shortNum(context.estimatedTokens)} / {shortNum(context.maxTokens)}</span></span>
-      </li>
-    {/if}
-  </ul>
-  {#if syncing}<div class="tip-dim tip-foot">Syncing with the server…</div>{/if}
+  <ChatCard {connectionId} session={s} />
 {/snippet}
 
 <div
   class="row variant-{variant}"
   class:active={isCurrent}
+  class:compact
   class:offline={!connected}
   class:has-meta={!!metaLine}
 >
@@ -247,14 +217,18 @@
             <span class="label">
               {#each parts(sessionTitle(s)) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
             </span>
+            {#if kindBadge}
+              {@const chat = server?.projectBySession[s.sessionId] === CHAT_PROJECT}
+              <span class="badge" {@attach tip(chat ? "Chat" : "Project chat")}><Icon name={chat ? "message-circle" : "folder"} size={11} /></span>
+            {/if}
             {#if hasDraft}<span class="badge" {@attach tip("Unsent draft")}><Icon name="pencil" size={11} /></span>{/if}
             {#if pinned}<span class="badge" {@attach tip("Pinned")}><Icon name="pinned" size={11} /></span>{/if}
             {#if showServer && server && !live}<ServerAvatar name={server.label} seed={server.serverId} size={13} />{/if}
           </span>
           {#if live && projectPath}
             <span class="project-line">
-              {#if showServer && server}<ServerAvatar name={server.label} seed={server.serverId} size={11} />{:else}<Icon name="folder" size={11} />{/if}
-              {server?.projectName(projectPath)}
+              {#if showServer && server}<ServerAvatar name={server.label} seed={server.serverId} size={11} />{:else}<Icon name={projectPath === CHAT_PROJECT ? "message-circle" : "folder"} size={11} />{/if}
+              {projectPath === CHAT_PROJECT ? "Chat" : server?.projectName(projectPath)}
             </span>
           {/if}
           {#if metaLine}
@@ -309,6 +283,12 @@
   }
   .row.active {
     background: var(--sidebar-active);
+  }
+  /* Inside a pair the group paints the background (SplitEntry). */
+  .row.compact,
+  .row.compact:hover,
+  .row.compact.active {
+    background: none;
   }
   .row.offline .main {
     opacity: 0.55;
@@ -482,9 +462,11 @@
     opacity: 1;
     pointer-events: auto;
   }
+  /* Faded-out but still stacked above the actions (opacity < 1 makes a layer), so it would eat their clicks. */
   .row:hover .rest,
   .row:focus-within .rest {
     opacity: 0;
+    pointer-events: none;
   }
   /* Centered in the same 1.5rem column as the project rows' counts. */
   .time {

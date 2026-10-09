@@ -3,8 +3,7 @@
   // A saved pairing (splitPartnerFor, linkedSessionId, SPEC.md §3.1 set_session_layout):
   // `primary` keeps its normal position; `secondary` tags along underneath regardless of its own state.
   import { app, type ConnectionId } from "../state.svelte";
-  import { setSessionLayout, openChatSession } from "../ipc";
-  import { sessionTitle } from "../format";
+  import { setSessionLayout } from "../ipc";
   import Icon from "./Icon.svelte";
   import ChatRow from "./ChatRow.svelte";
   import type { SessionSummary } from "../types";
@@ -30,21 +29,9 @@
 
 <div class="split-entry" class:active>
   {#each [primary, secondary] as s, i (s.sessionId)}
-    <div class="half" class:secondary={i === 1}>
+    <div class="half">
       <ChatRow {connectionId} session={s} variant={i === 0 ? variant : "default"} compact>
         {#snippet actions()}
-          <button
-            type="button"
-            class="act"
-            {@attach tip("Maximize")}
-            aria-label={`Maximize ${sessionTitle(s)}`}
-            onclick={() => {
-              setSessionLayout(connectionId, primary.sessionId, null);
-              openChatSession(connectionId, s.sessionId);
-            }}
-          >
-            <Icon name="maximize" size={12} />
-          </button>
           {#if i === 0}
             <button
               type="button"
@@ -63,22 +50,32 @@
 </div>
 
 <style>
+  /* One chat drawn as two rows: the group takes the row background, a thin rail ties them together. */
   .split-entry {
+    position: relative;
     display: flex;
     flex-direction: column;
     width: 100%;
-    background: var(--accent-dim);
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
     margin: 0.14rem 0;
-    overflow: hidden;
+    border-radius: var(--radius-sm);
+    transition: background calc(0.12s * var(--anim-speed, 1)) ease;
+  }
+  .split-entry::before {
+    content: "";
+    position: absolute;
+    left: 0.25rem;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 2px;
+    border-radius: 1px;
+    background: color-mix(in srgb, var(--accent) 45%, transparent);
+    pointer-events: none;
+  }
+  .split-entry:hover {
+    background: var(--sidebar-hover);
   }
   .split-entry.active {
-    border-color: var(--accent);
-  }
-  .half.secondary {
-    border-top: 1px solid var(--panel-border);
-    opacity: 0.85;
+    background: var(--sidebar-active);
   }
   .act {
     display: flex;

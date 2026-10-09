@@ -6,7 +6,8 @@
   import { cliMeta } from "../modelVendor";
   import type { ChatMode, ModeSpec, ProviderInfo } from "../types";
 
-  let { mode, spec, cli }: { mode: ChatMode; spec?: ModeSpec; cli?: ProviderInfo } = $props();
+  // unsandboxed: this project has no isolation, so yoakeland's own bash is unprotected (shellOff: withheld).
+  let { mode, spec, cli, unsandboxed = false, shellOff = false }: { mode: ChatMode; spec?: ModeSpec; cli?: ProviderInfo; unsandboxed?: boolean; shellOff?: boolean } = $props();
 
   const CELLS = [
     ["read", "Read"],
@@ -31,7 +32,13 @@
   {#if spec && mode !== "plan"}
     <div class="strip">
       {#each CELLS as [key, label] (key)}
-        <span class={`cell ${spec.policy[key]}`} {@attach tip(`${label}: ${WORD[spec.policy[key]]}`)}><i></i>{label}</span>
+        {#if key === "run" && shellOff && spec.policy.run !== "deny"}
+          <span class="cell deny danger" {@attach tip("Run: turned off, this project has no sandbox")}><i></i>Run: off</span>
+        {:else if key === "run" && unsandboxed && spec.policy.run !== "deny"}
+          <span class="cell danger" {@attach tip(`Run: ${WORD[spec.policy.run]}, but with no sandbox it can touch anything on this machine`)}><i></i>Run: no sandbox</span>
+        {:else}
+          <span class={`cell ${spec.policy[key]}`} {@attach tip(`${label}: ${WORD[spec.policy[key]]}`)}><i></i>{label}</span>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -88,5 +95,13 @@
   }
   .cell.deny {
     opacity: 0.4;
+  }
+  /* Run with no sandbox around it: red, and not dimmed even when it would ask first. */
+  .cell.danger {
+    color: var(--danger);
+    font-weight: 600;
+  }
+  .cell.danger.deny {
+    opacity: 0.75;
   }
 </style>
