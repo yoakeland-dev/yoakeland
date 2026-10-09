@@ -1,11 +1,11 @@
 // Run with: node --test electron/
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { commands, loadCredential, storeCredential } from "./backend.js";
+import { commands, loadCredential, loadThemes, storeCredential, themesRevealPath } from "./backend.js";
 
 test("unix connect: auth frame, framing, oversized frame, disconnect event", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "yoake-"));
@@ -61,4 +61,19 @@ test("credentials: store, load, delete, 0600", async () => {
 test("tcp connect rejects a CA file with no certificate in it", async () => {
   const cmds = commands(() => {});
   await assert.rejects(cmds.connect_tcp({ host: "127.0.0.1", port: 1, token: "t", caPem: "garbage" }), /no certificate/);
+});
+
+test("themes folder: absent is empty, reveal seeds an example once, files come back as text", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "yoake-"));
+  assert.deepEqual(await loadThemes(dir), []);
+  const example = await themesRevealPath(dir);
+  assert.equal(path.basename(example), "example.json");
+  const seeded = await loadThemes(dir);
+  assert.deepEqual(seeded.map((f) => f.file), ["example.json"]);
+  assert.equal(JSON.parse(seeded[0].text).name, "My theme");
+  // Once the folder has a theme, revealing never adds another.
+  await writeFile(path.join(dir, "themes", "b.json"), "{}");
+  await writeFile(path.join(dir, "themes", "notes.txt"), "ignored");
+  assert.equal(path.basename(await themesRevealPath(dir)), "b.json");
+  assert.deepEqual((await loadThemes(dir)).map((f) => f.file), ["b.json", "example.json"]);
 });

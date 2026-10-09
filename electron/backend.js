@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -136,10 +136,13 @@ export function commands(emit, dataDir) {
     probe_tcp: ({ host, port }) => probe(net.connect({ host, port })),
     probe_unix: ({ path: p }) => probe(net.connect(expandTilde(p))),
     default_socket_path: () => defaultSocketPath(),
-    spawn_detached_server: ({ binPath, host, port, token }) =>
-      spawnDetached(dataDir, binPath, ["-listen", `${host}:${port}`, "-token", token]),
-    spawn_detached_unix_server: ({ binPath, socketPath }) =>
-      spawnDetached(dataDir, binPath, ["-listen", `unix:${expandTilde(socketPath)}`]),
+    // A bare daemon: it is configured at runtime over its socket (set_remote_access,
+    // set_runtime_settings, ...), never by launch flags. Only a non-default socket
+    // location is still a launch argument, because nothing can be told before it exists.
+    spawn_detached_unix_server: ({ binPath, socketPath }) => {
+      const wanted = expandTilde(socketPath);
+      return spawnDetached(dataDir, binPath, wanted === defaultSocketPath() ? [] : ["-listen", `unix:${wanted}`]);
+    },
 
     connect_tcp: async ({ host, port, token, caPem, ...rest }) => {
       const sock = tls.connect({
@@ -179,6 +182,10 @@ export function commands(emit, dataDir) {
       sock?.destroy();
     },
 
+    // User app themes, one file each, validated renderer-side (theme.ts parseThemeFiles).
+    load_themes: () => loadThemes(dataDir),
+    themes_reveal_path: () => themesRevealPath(dataDir),
+
     read_text_file: ({ path: p }) =>
       readFile(p, "utf8").catch((e) => {
         throw new Error(`failed to read ${p}: ${e.message}`);
@@ -195,6 +202,37 @@ export function disconnectAll() {
     connections.delete(id);
     sock.destroy();
   }
+}
+
+const THEME_EXAMPLE = {
+  name: "My theme",
+  dark: { bg: "#101014", panelBg: "#16161c", text: "#e6e6ef", accent: "#ff7a90" },
+  light: { bg: "#ece9ee", panelBg: "#faf8fb", text: "#1d1b22", accent: "#c4304f" },
+};
+
+/** Every themes/*.json as raw text; the renderer parses and reports per file. */
+export async function loadThemes(dir) {
+  const themes = path.join(dir, "themes");
+  let names;
+  try {
+    names = await readdir(themes);
+  } catch (e) {
+    if (e.code === "ENOENT") return [];
+    throw e;
+  }
+  const files = names.filter((n) => n.toLowerCase().endsWith(".json")).sort();
+  return Promise.all(files.map(async (file) => ({ file, text: await readFile(path.join(themes, file), "utf8") })));
+}
+
+/** A file in the themes folder to reveal, seeding an example when the folder has none. */
+export async function themesRevealPath(dir) {
+  const themes = path.join(dir, "themes");
+  await mkdir(themes, { recursive: true });
+  const [first] = (await readdir(themes)).filter((n) => n.toLowerCase().endsWith(".json")).sort();
+  if (first) return path.join(themes, first);
+  const example = path.join(themes, "example.json");
+  await writeFile(example, JSON.stringify(THEME_EXAMPLE, null, 2) + "\n");
+  return example;
 }
 
 // ponytail: tokens are plaintext JSON at 0600, not in the OS keychain, which

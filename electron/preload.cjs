@@ -9,7 +9,7 @@ async function call(cmd, args) {
 
 const chromeArg = process.argv.find((a) => a.startsWith("--yoake-chrome="));
 
-const EVENTS = ["yoake-event", "yoake-log", "yoake-disconnected"];
+const EVENTS = ["yoake-event", "yoake-log", "yoake-disconnected", "yoake-notification-open", "yoake-themes-changed"];
 
 contextBridge.exposeInMainWorld("yoake", {
   invoke: (cmd, args) => (cmd.startsWith("shell:") ? Promise.reject("unknown command") : call(cmd, args)),
@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("yoake", {
   },
   pickFiles: (opts) => call("shell:pick_files", opts),
   openUrl: (url) => call("shell:open_url", { url }),
+  browserGuard: (id, hosts) => call("shell:browser_guard", { id, hosts }),
+  browserUnguard: (id) => call("shell:browser_unguard", { id }),
   revealItemInDir: (path) => call("shell:reveal", { path }),
   readClipboard: () => call("shell:read_clipboard"),
   writeClipboard: (text) => call("shell:write_clipboard", { text }),
