@@ -33,6 +33,10 @@ import yaml from "highlight.js/lib/languages/yaml";
 import copyIcon from "@tabler/icons/outline/copy.svg?raw";
 import checkIcon from "@tabler/icons/outline/check.svg?raw";
 import chevronIcon from "@tabler/icons/outline/chevron-right.svg?raw";
+import codeIcon from "@tabler/icons/outline/code.svg?raw";
+import eyeIcon from "@tabler/icons/outline/eye.svg?raw";
+import downloadIcon from "@tabler/icons/outline/download.svg?raw";
+import expandIcon from "@tabler/icons/outline/arrows-maximize.svg?raw";
 
 for (const [name, lang] of Object.entries({
   bash, c, cpp, csharp, css, diff, dockerfile, go, ini, java, javascript, json, kotlin, lua, makefile,
@@ -46,6 +50,29 @@ hljs.registerAliases(["toml"], { languageName: "ini" });
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+const button = (cls: string, title: string, icons: string) =>
+  `<button type="button" class="${cls}" title="${title}" aria-label="${title}">${icons}</button>`;
+
+/** A ```mermaid fence: its source, exactly like any code block, plus a slot (.mermaid-out) that
+ * Markdown.svelte fills with the diagram once the fence is closed and the source parses. The
+ * view/save/expand buttons only show once it has (see the CSS there). data-opaque keeps morph
+ * out of the parts that script fills in. */
+function mermaidBlock(text: string): string {
+  const lines = text.split("\n").length;
+  return (
+    `<div class="code-block mermaid-block" data-mermaid><div class="code-head">` +
+    `<button type="button" class="code-toggle" title="Collapse or expand">${chevronIcon}` +
+    `<span class="code-lang">mermaid</span><span class="code-lines">${lines} line${lines === 1 ? "" : "s"}</span>` +
+    `<span class="mm-error" data-opaque></span></button>` +
+    button("mm-btn mm-view", "Show source or diagram", codeIcon + eyeIcon) +
+    button("mm-btn mm-save", "Save as SVG", downloadIcon) +
+    button("mm-btn mm-expand", "Expand", expandIcon) +
+    button("code-copy", "Copy source", copyIcon + checkIcon) +
+    `</div><div class="mermaid-out" data-opaque></div>` +
+    `<div class="code-body"><div class="code-clip"><pre><code class="hljs">${escapeHtml(text)}</code></pre></div></div></div>\n`
+  );
+}
+
 /** No highlightAuto: it re-guesses on every streamed token and guesses wrong on short snippets.
  * The toggle and copy clicks are handled by Markdown.svelte's delegated onClick, since this is raw HTML,
  * not a component. .code-clip is the grid row the collapse animates (see Markdown.svelte). */
@@ -53,6 +80,7 @@ export const highlightCode: MarkedExtension = {
   renderer: {
     code({ text, lang }: Tokens.Code) {
       const id = (lang ?? "").trim().split(/\s/)[0].toLowerCase();
+      if (id === "mermaid") return mermaidBlock(text);
       const known = !!id && !!hljs.getLanguage(id);
       const body = known ? hljs.highlight(text, { language: id, ignoreIllegals: true }).value : escapeHtml(text);
       const lines = text.split("\n").length;
