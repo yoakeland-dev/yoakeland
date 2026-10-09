@@ -1,0 +1,33 @@
+{
+  "name": "Claude",
+  "dark": {
+    "bg": "#1f1e1d",
+    "panelBg": "#262624",
+    "text": "#e8e6dc",
+    "accent": "#d97757",
+    "terminal": {
+      "black": "#3d3929",
+      "brightBlack": "#6b6858",
+      "red": "#e5705f",
+      "brightRed": "#f0897a",
+      "green": "#9cb36b",
+      "brightGreen": "#b3c987",
+      "yellow": "#e0b25c",
+      "brightYellow": "#ecc67a",
+      "blue": "#7ba3c9",
+      "brightBlue": "#9bbbdb",
+      "magenta": "#c58aa8",
+      "brightMagenta": "#d8a3bf",
+      "cyan": "#78b5a8",
+      "brightCyan": "#97cbc0",
+      "white": "#b8b5a6",
+      "brightWhite": "#faf9f5"
+    }
+  },
+  "light": {
+    "bg": "#f0eee6",
+    "panelBg": "#faf9f5",
+    "text": "#3d3929",
+    "accent": "#c96442"
+  }
+}

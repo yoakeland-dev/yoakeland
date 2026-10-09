@@ -1,0 +1,33 @@
+{
+  "name": "Codex",
+  "dark": {
+    "bg": "#0a0a0a",
+    "panelBg": "#161616",
+    "text": "#ececec",
+    "accent": "#8b95ff",
+    "terminal": {
+      "black": "#2a2a2a",
+      "brightBlack": "#5c5c5c",
+      "red": "#ff6b6b",
+      "brightRed": "#ff8e8e",
+      "green": "#5fd7a0",
+      "brightGreen": "#85e6b8",
+      "yellow": "#f0c674",
+      "brightYellow": "#f6d896",
+      "blue": "#7aa2ff",
+      "brightBlue": "#9bb9ff",
+      "magenta": "#b48cff",
+      "brightMagenta": "#c9a8ff",
+      "cyan": "#5fd3e0",
+      "brightCyan": "#85e0ea",
+      "white": "#c8c8c8",
+      "brightWhite": "#ffffff"
+    }
+  },
+  "light": {
+    "bg": "#f3f3f3",
+    "panelBg": "#ffffff",
+    "text": "#0d0d0d",
+    "accent": "#4f5bd5"
+  }
+}

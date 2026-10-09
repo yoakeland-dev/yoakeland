@@ -1,0 +1,51 @@
+{
+  "name": "Kanagawa",
+  "dark": {
+    "bg": "#18181f",
+    "panelBg": "#1f1f28",
+    "text": "#dcd7ba",
+    "accent": "#7e9cd8",
+    "terminal": {
+      "black": "#16161d",
+      "brightBlack": "#727169",
+      "red": "#c34043",
+      "brightRed": "#e82424",
+      "green": "#76946a",
+      "brightGreen": "#98bb6c",
+      "yellow": "#c0a36e",
+      "brightYellow": "#e6c384",
+      "blue": "#7e9cd8",
+      "brightBlue": "#7fb4ca",
+      "magenta": "#957fb8",
+      "brightMagenta": "#938aa9",
+      "cyan": "#6a9589",
+      "brightCyan": "#7aa89f",
+      "white": "#c8c093",
+      "brightWhite": "#dcd7ba"
+    }
+  },
+  "light": {
+    "bg": "#e9e3b7",
+    "panelBg": "#f2ecbc",
+    "text": "#545464",
+    "accent": "#4d699b",
+    "terminal": {
+      "black": "#1f1f28",
+      "brightBlack": "#8a8980",
+      "red": "#c84053",
+      "brightRed": "#d7474b",
+      "green": "#6f894e",
+      "brightGreen": "#6e915f",
+      "yellow": "#77713f",
+      "brightYellow": "#836f4a",
+      "blue": "#4d699b",
+      "brightBlue": "#6693bf",
+      "magenta": "#b35b79",
+      "brightMagenta": "#624c83",
+      "cyan": "#597b75",
+      "brightCyan": "#5e857a",
+      "white": "#545464",
+      "brightWhite": "#43436c"
+    }
+  }
+}

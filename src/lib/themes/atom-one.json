@@ -1,0 +1,33 @@
+{
+  "name": "Atom One",
+  "dark": {
+    "bg": "#21252b",
+    "panelBg": "#282c34",
+    "text": "#abb2bf",
+    "accent": "#61afef",
+    "terminal": {
+      "black": "#3f4451",
+      "brightBlack": "#4f5666",
+      "red": "#e05561",
+      "brightRed": "#ff616e",
+      "green": "#8cc265",
+      "brightGreen": "#a5e075",
+      "yellow": "#d18f52",
+      "brightYellow": "#f0a45d",
+      "blue": "#4aa5f0",
+      "brightBlue": "#4dc4ff",
+      "magenta": "#c162de",
+      "brightMagenta": "#de73ff",
+      "cyan": "#42b3c2",
+      "brightCyan": "#4cd1e0",
+      "white": "#d7dae0",
+      "brightWhite": "#e6e6e6"
+    }
+  },
+  "light": {
+    "bg": "#eaeaeb",
+    "panelBg": "#fafafa",
+    "text": "#383a42",
+    "accent": "#4078f2"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "Tokyo Night",
+  "dark": {
+    "bg": "#16161e",
+    "panelBg": "#1a1b26",
+    "text": "#a9b1d6",
+    "accent": "#7aa2f7",
+    "terminal": {
+      "black": "#363b54",
+      "brightBlack": "#363b54",
+      "red": "#f7768e",
+      "brightRed": "#f7768e",
+      "green": "#73daca",
+      "brightGreen": "#73daca",
+      "yellow": "#e0af68",
+      "brightYellow": "#e0af68",
+      "blue": "#7aa2f7",
+      "brightBlue": "#7aa2f7",
+      "magenta": "#bb9af7",
+      "brightMagenta": "#bb9af7",
+      "cyan": "#7dcfff",
+      "brightCyan": "#7dcfff",
+      "white": "#787c99",
+      "brightWhite": "#acb0d0"
+    }
+  },
+  "light": {
+    "bg": "#d0d5e3",
+    "panelBg": "#e1e2e7",
+    "text": "#3760bf",
+    "accent": "#2e7de9",
+    "terminal": {
+      "black": "#4c505e",
+      "red": "#f52a65",
+      "green": "#587539",
+      "yellow": "#8c6c3e",
+      "blue": "#2e7de9",
+      "magenta": "#9854f1",
+      "cyan": "#007197",
+      "white": "#6172b0",
+      "brightBlack": "#848cb5",
+      "brightRed": "#f52a65",
+      "brightGreen": "#587539",
+      "brightYellow": "#8c6c3e",
+      "brightBlue": "#2e7de9",
+      "brightMagenta": "#9854f1",
+      "brightCyan": "#007197",
+      "brightWhite": "#3760bf"
+    }
+  }
+}

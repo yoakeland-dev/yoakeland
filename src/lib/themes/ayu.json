@@ -1,0 +1,51 @@
+{
+  "name": "Ayu",
+  "dark": {
+    "bg": "#1f2430",
+    "panelBg": "#242936",
+    "text": "#cccac2",
+    "accent": "#ffcc66",
+    "terminal": {
+      "black": "#171b24",
+      "brightBlack": "#686868",
+      "red": "#f28273",
+      "brightRed": "#f28779",
+      "green": "#87d96c",
+      "brightGreen": "#d5ff80",
+      "yellow": "#fcca60",
+      "brightYellow": "#ffcd66",
+      "blue": "#6acdff",
+      "brightBlue": "#73d0ff",
+      "magenta": "#ddbbff",
+      "brightMagenta": "#dfbfff",
+      "cyan": "#93e2c8",
+      "brightCyan": "#95e6cb",
+      "white": "#c7c7c7",
+      "brightWhite": "#ffffff"
+    }
+  },
+  "light": {
+    "bg": "#f8f9fa",
+    "panelBg": "#fcfcfc",
+    "text": "#5c6166",
+    "accent": "#f29718",
+    "terminal": {
+      "black": "#000000",
+      "brightBlack": "#686868",
+      "red": "#f06b6c",
+      "brightRed": "#f07171",
+      "green": "#6cbf43",
+      "brightGreen": "#86b300",
+      "yellow": "#e7a100",
+      "brightYellow": "#eba400",
+      "blue": "#21a1e2",
+      "brightBlue": "#22a4e6",
+      "magenta": "#a176cb",
+      "brightMagenta": "#a37acc",
+      "cyan": "#4abc96",
+      "brightCyan": "#4cbf99",
+      "white": "#c7c7c7",
+      "brightWhite": "#d1d1d1"
+    }
+  }
+}

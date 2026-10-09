@@ -388,14 +388,136 @@ export function hslToHex(h: number, s: number, l: number): string {
   return `#${f(0)}${f(8)}${f(4)}`;
 }
 
-export const THEME_PRESETS: { name: string; accent: string }[] = [
-  { name: "Midnight", accent: "#7c9bff" },
-  { name: "Forest", accent: "#4ade80" },
-  { name: "Sunset", accent: "#fb923c" },
-  { name: "Rose", accent: "#fb7185" },
-  { name: "Violet", accent: "#a78bfa" },
-  { name: "Mono", accent: "#94a3b8" },
+/** Added/removed lines are their own tokens, not success/danger, so red/green can be swapped for
+ * a pair that survives the common color-vision deficiencies without recoloring errors. */
+export const DIFF_COLORS = {
+  default: { add: "#58d68d", del: "#ff6b6b" },
+  colorblind: { add: "#4aa3ff", del: "#ff9f43" },
+} as const;
+
+/** One side (dark or light) of an app theme. Four hex colors define it; every other token is
+ * mixed from them (tokensFromVariant), `tokens` overrides any one, and `terminal` sets ANSI slots. */
+export interface ThemeVariant {
+  bg: string;
+  panelBg: string;
+  text: string;
+  accent: string;
+  tokens?: Partial<ThemeTokens>;
+  /** Overrides on the terminal/code palette; slots left out come from deriveTerminalTheme. */
+  terminal?: Partial<TerminalColorTheme>;
+}
+
+/** A theme is one file holding whichever of the two variants it has. */
+export interface AppTheme {
+  id: string;
+  name: string;
+  dark?: ThemeVariant;
+  light?: ThemeVariant;
+}
+
+/** deriveTheme's hue-tinted lightness can't fit an arbitrary palette (Nord's bg would sit
+ * lighter than its derived statusbar), so the rest of the tokens are mixed from the palette. */
+export function tokensFromVariant(v: ThemeVariant, mode: "dark" | "light"): ThemeTokens {
+  const mix = (pct: number, into = "transparent") => `color-mix(in srgb, ${v.text} ${pct}%, ${into})`;
+  const textDim = mix(60, v.bg);
+  const border = mix(8);
+  return {
+    bg: v.bg,
+    panelBg: v.panelBg,
+    panelBorder: border,
+    panelBorderTop: mix(mode === "dark" ? 11 : 6),
+    panelBorderBottom: mix(mode === "dark" ? 5 : 12),
+    sidebarFg: v.text,
+    sidebarFgDim: textDim,
+    sidebarHover: mix(6),
+    sidebarActive: mix(10),
+    text: v.text,
+    textDim,
+    accent: v.accent,
+    bubbleUserBg: mix(8, v.panelBg),
+    bubbleBorder: border,
+    statusbarBg: mix(3, v.bg),
+    statusbarFg: textDim,
+    ...v.tokens,
+  };
+}
+
+/** The tokens a mode paints with: its theme's variant, or ones derived from the accent. */
+export const tokensFor = (t: AppTheme | undefined, accent: string, mode: "dark" | "light"): ThemeTokens => {
+  const v = t?.[mode];
+  return v ? tokensFromVariant(v, mode) : deriveTheme(accent, mode);
+};
+
+/** Terminal and code-block colors for a variant: its surfaces, its own ANSI slots where given. */
+export function terminalFromVariant(v: ThemeVariant, mode: "dark" | "light"): TerminalColorTheme {
+  return {
+    ...deriveTerminalTheme(v.accent, mode),
+    background: v.panelBg,
+    foreground: v.text,
+    cursor: v.accent,
+    cursorAccent: v.panelBg,
+    selectionBackground: `${v.accent}40`,
+    ...v.terminal,
+  };
+}
+
+const HEX = /^#[0-9a-f]{6}$/i;
+// These land in style.setProperty, so keep out anything that could fetch or smuggle a declaration.
+const cssColor = (v: unknown): v is string => typeof v === "string" && v.length < 120 && !/url\(|[;{}]|\/\*/i.test(v);
+
+const TOKEN_KEYS: (keyof ThemeTokens)[] = [
+  "bg", "panelBg", "panelBorder", "panelBorderTop", "panelBorderBottom", "sidebarFg", "sidebarFgDim",
+  "sidebarHover", "sidebarActive", "text", "textDim", "accent", "bubbleUserBg", "bubbleBorder",
+  "statusbarBg", "statusbarFg",
 ];
+const TERMINAL_KEYS = Object.keys(deriveTerminalTheme("#000000", "dark")) as (keyof TerminalColorTheme)[];
+
+function parseVariant(raw: any): ThemeVariant | string {
+  if (!raw || typeof raw !== "object") return "not an object";
+  for (const k of ["bg", "panelBg", "text", "accent"]) if (!HEX.test(raw[k])) return `${k} must be a #rrggbb color`;
+  const v: ThemeVariant = { bg: raw.bg, panelBg: raw.panelBg, text: raw.text, accent: raw.accent };
+  const tokens: Partial<ThemeTokens> = {};
+  for (const k of TOKEN_KEYS) if (cssColor(raw.tokens?.[k])) tokens[k] = raw.tokens[k];
+  if (Object.keys(tokens).length) v.tokens = tokens;
+  // xterm parses these itself, so literal hex only.
+  const terminal: Partial<TerminalColorTheme> = {};
+  for (const k of TERMINAL_KEYS) if (HEX.test(raw.terminal?.[k])) terminal[k] = raw.terminal[k];
+  if (Object.keys(terminal).length) v.terminal = terminal;
+  return v;
+}
+
+/** One theme file, hand-edited or generated: `{ name, dark?, light? }`. */
+export function parseThemeFile(id: string, raw: unknown): AppTheme | { error: string } {
+  const r = raw as any;
+  if (!r || typeof r !== "object") return { error: "not an object" };
+  const theme: AppTheme = { id, name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : id };
+  for (const mode of ["dark", "light"] as const) {
+    if (r[mode] == null) continue;
+    const v = parseVariant(r[mode]);
+    if (typeof v === "string") return { error: `${mode}: ${v}` };
+    theme[mode] = v;
+  }
+  return theme.dark || theme.light ? theme : { error: "needs a dark or light section" };
+}
+
+/** Folds the files themes/*.json holds into themes, reporting what was wrong with each reject. */
+export function parseThemeFiles(files: { file: string; text: string }[]): { themes: AppTheme[]; problems: string[] } {
+  const themes: AppTheme[] = [];
+  const problems: string[] = [];
+  for (const { file, text } of files) {
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      problems.push(`${file}: not valid JSON`);
+      continue;
+    }
+    const t = parseThemeFile(`custom:${file.replace(/\.json$/i, "")}`, json);
+    if ("error" in t) problems.push(`${file}: ${t.error}`);
+    else themes.push(t);
+  }
+  return { themes, problems };
+}
 
 // OKLab/OKLCH conversion (Björn Ottosson's formulas): bucketing by hue and weighting by chroma
 // picks the color the eye notices, instead of the flat gray-brown an sRGB mean produces.

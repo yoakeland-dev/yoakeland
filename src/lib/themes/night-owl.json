@@ -1,0 +1,51 @@
+{
+  "name": "Night Owl",
+  "dark": {
+    "bg": "#01111e",
+    "panelBg": "#011627",
+    "text": "#d6deeb",
+    "accent": "#82aaff",
+    "terminal": {
+      "black": "#011627",
+      "brightBlack": "#575656",
+      "red": "#ef5350",
+      "brightRed": "#ef5350",
+      "green": "#22da6e",
+      "brightGreen": "#22da6e",
+      "yellow": "#c5e478",
+      "brightYellow": "#ffeb95",
+      "blue": "#82aaff",
+      "brightBlue": "#82aaff",
+      "magenta": "#c792ea",
+      "brightMagenta": "#c792ea",
+      "cyan": "#21c7a8",
+      "brightCyan": "#7fdbca",
+      "white": "#ffffff",
+      "brightWhite": "#ffffff"
+    }
+  },
+  "light": {
+    "bg": "#f0f0f0",
+    "panelBg": "#fbfbfb",
+    "text": "#403f53",
+    "accent": "#4876d6",
+    "terminal": {
+      "black": "#403f53",
+      "brightBlack": "#403f53",
+      "red": "#de3d3b",
+      "brightRed": "#de3d3b",
+      "green": "#08916a",
+      "brightGreen": "#08916a",
+      "yellow": "#e0af02",
+      "brightYellow": "#daaa01",
+      "blue": "#288ed7",
+      "brightBlue": "#288ed7",
+      "magenta": "#d6438a",
+      "brightMagenta": "#d6438a",
+      "cyan": "#2aa298",
+      "brightCyan": "#2aa298",
+      "white": "#93a1a1",
+      "brightWhite": "#93a1a1"
+    }
+  }
+}

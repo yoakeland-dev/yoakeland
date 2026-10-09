@@ -1,0 +1,51 @@
+{
+  "name": "Rosé Pine",
+  "dark": {
+    "bg": "#14121c",
+    "panelBg": "#191724",
+    "text": "#e0def4",
+    "accent": "#c4a7e7",
+    "terminal": {
+      "black": "#26233a",
+      "brightBlack": "#908caa",
+      "red": "#eb6f92",
+      "brightRed": "#eb6f92",
+      "green": "#31748f",
+      "brightGreen": "#31748f",
+      "yellow": "#f6c177",
+      "brightYellow": "#f6c177",
+      "blue": "#9ccfd8",
+      "brightBlue": "#9ccfd8",
+      "magenta": "#c4a7e7",
+      "brightMagenta": "#c4a7e7",
+      "cyan": "#ebbcba",
+      "brightCyan": "#ebbcba",
+      "white": "#e0def4",
+      "brightWhite": "#e0def4"
+    }
+  },
+  "light": {
+    "bg": "#f0eae6",
+    "panelBg": "#faf4ed",
+    "text": "#575279",
+    "accent": "#907aa9",
+    "terminal": {
+      "black": "#f2e9e1",
+      "brightBlack": "#797593",
+      "red": "#b4637a",
+      "brightRed": "#b4637a",
+      "green": "#286983",
+      "brightGreen": "#286983",
+      "yellow": "#ea9d34",
+      "brightYellow": "#ea9d34",
+      "blue": "#56949f",
+      "brightBlue": "#56949f",
+      "magenta": "#907aa9",
+      "brightMagenta": "#907aa9",
+      "cyan": "#d7827e",
+      "brightCyan": "#d7827e",
+      "white": "#575279",
+      "brightWhite": "#575279"
+    }
+  }
+}
