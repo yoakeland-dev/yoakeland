@@ -1,0 +1,174 @@
+/* Shared pieces of the control set (src/lib/components/ui). Flat everywhere: the only gradient in the
+   set is the lamp on Slider. Controls are sunk wells with a lit hairline; the accent means "on".
+   A place that needs a different control height sets --ctrl-h around it (the settings panel, the
+   sidebar); everything here reads it with a 2rem fallback. */
+:root {
+  --well: rgba(255, 255, 255, 0.08);
+  --field-bg: rgba(255, 255, 255, 0.055);
+  --field-bg-focus: rgba(255, 255, 255, 0.08);
+  --field-border-hover: rgba(255, 255, 255, 0.16);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  --bead: #f2f3f7;
+  --ui-ease: cubic-bezier(0.25, 0.9, 0.35, 1);
+  --ui-spring: cubic-bezier(0.3, 1.35, 0.5, 1);
+}
+
+/* The box of a text field, number field, textarea and file drop. Focus lifts the fill and adds a
+   faint accent ring; it never recolors the border. */
+.ui-field {
+  display: flex;
+  align-items: center;
+  gap: 0.43rem;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--ctrl-h, 2rem);
+  padding: 0 0.64rem;
+  background: var(--field-bg);
+  border: 1px solid var(--panel-border);
+  border-block-color: var(--panel-border-top) var(--panel-border-bottom);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-body-size);
+  transition:
+    border-color calc(0.15s * var(--anim-speed, 1)) ease,
+    background calc(0.15s * var(--anim-speed, 1)) ease,
+    box-shadow calc(0.15s * var(--anim-speed, 1)) ease;
+}
+.ui-field:hover {
+  border-color: var(--field-border-hover);
+}
+.ui-field:focus-within {
+  border-color: var(--field-border-hover);
+  background: var(--field-bg-focus);
+  box-shadow: var(--focus-ring);
+}
+.ui-field.invalid,
+.ui-field.invalid:hover {
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.ui-field.invalid:focus-within {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.ui-field.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.ui-field :is(input, textarea) {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  caret-color: var(--accent);
+}
+.ui-field :is(input, textarea)::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+.ui-field textarea {
+  height: auto;
+  min-height: 4.7rem;
+  resize: vertical;
+  line-height: 1.45;
+}
+.ui-field.area {
+  height: auto;
+  align-items: stretch;
+  padding: 0.57rem 0.64rem;
+}
+.ui-field .affix {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: var(--text-label-size);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A small borderless icon button that lives inside a field or a chip. */
+.ui-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.57rem;
+  height: 1.57rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background calc(0.12s * var(--anim-speed, 1)) ease,
+    color calc(0.12s * var(--anim-speed, 1)) ease;
+}
+.ui-mini:hover:not(:disabled) {
+  background: var(--sidebar-active);
+  color: var(--text);
+}
+.ui-mini:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ui-mini:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+/* Checkbox: a sunk well, solid accent when checked, the tick pops in from its centre. Also dresses
+   the task-list boxes Markdown renders. */
+.ui-check,
+.markdown input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 1.29rem;
+  height: 1.29rem;
+  margin: 0;
+  cursor: pointer;
+  border-radius: 5px;
+  background: var(--well);
+  border: 1px solid var(--panel-border);
+  border-block-color: var(--panel-border-top) var(--panel-border-bottom);
+  color: #fff;
+  transition:
+    background calc(0.18s * var(--anim-speed, 1)) ease,
+    border-color calc(0.18s * var(--anim-speed, 1)) ease;
+}
+.ui-check:hover:not(:disabled),
+.markdown input[type="checkbox"]:hover:not(:disabled) {
+  background: var(--sidebar-active);
+}
+.ui-check::before,
+.markdown input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 0% 0% no-repeat;
+  transition: mask-size calc(0.24s * var(--anim-speed, 1)) var(--ui-spring);
+}
+.ui-check:checked,
+.markdown input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.ui-check:checked::before,
+.markdown input[type="checkbox"]:checked::before {
+  mask-size: 100% 100%;
+}
+.ui-check:disabled,
+.markdown input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ui-check:focus-visible,
+.markdown input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
