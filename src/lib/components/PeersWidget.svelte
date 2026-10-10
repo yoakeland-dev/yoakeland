@@ -5,6 +5,7 @@
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
   import { disconnectPeer, openChatSession, thisDeviceId } from "../ipc";
   import { basename, relTime, sessionTitle } from "../format";
+  import { isPhotoAvatar } from "../avatar";
   import type { PeerInfo } from "../types";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
@@ -72,7 +73,7 @@
 
 {#snippet avatar(p: PeerInfo, size: number)}
   <span class="avatar" style="width: {size / 14}rem; height: {size / 14}rem">
-    {#if p.avatar}<img src={p.avatar} alt="" />{:else}<Icon name={DEVICE[p.deviceType] ?? "user"} size={Math.round(size * 0.6)} />{/if}
+    {#if isPhotoAvatar(p.avatar ?? "")}<img src={p.avatar} alt="" />{:else}<Icon name={DEVICE[p.deviceType] ?? "user"} size={Math.round(size * 0.6)} />{/if}
   </span>
 {/snippet}
 

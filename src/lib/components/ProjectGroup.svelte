@@ -160,8 +160,7 @@
            shown higher up (Needs you / Running / Pinned). -->
       {#if sessions.length === 0 && !hasAnyChat}
         <p class="empty">
-          No chats yet{#if onNewChat && connected}&nbsp;
-            — <button class="link" onclick={onNewChat}>start one</button>{/if}
+          No chats yet{#if onNewChat && connected}.&nbsp;<button class="link" onclick={onNewChat}>Start one</button>{/if}
         </p>
       {/if}
       {#each visible as s (s.sessionId)}

@@ -284,11 +284,6 @@ export interface RuntimeSettings {
   compactInstructions: string;
 }
 
-export interface ProjectOpenedData {
-  path: string;
-  sandboxTier?: SandboxTier;
-}
-
 export interface SnapshotInfo {
   snapshotId: string;
   description: string;
@@ -447,10 +442,6 @@ export interface PeerInfo {
   /** The chat this connection last opened. */
   sessionId?: string;
   projectPath?: string;
-}
-
-export interface ProjectListData {
-  paths: string[];
 }
 
 /** A registered per-person TCP credential (§3.1 register_token/list_tokens):

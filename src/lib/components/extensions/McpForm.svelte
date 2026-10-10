@@ -79,7 +79,7 @@
     }
     const secs = Number(f.timeout);
     if (f.timeout.trim()) {
-      if (!Number.isFinite(secs) || secs <= 0) throw new Error("The timeout is a number of seconds");
+      if (!Number.isFinite(secs) || secs <= 0) throw new Error("Timeout must be a number of seconds");
       cfg.timeoutMs = Math.round(secs * 1000);
     } else delete cfg.timeoutMs;
     return cfg;
@@ -156,7 +156,7 @@
           </div>
           {#if form.transport === "stdio"}
             <label class="f">
-              {@render field("Command", "Runs on this server as you. Use quotes around anything with a space.")}
+              {@render field("Command", "Runs as you on this machine. Quote anything with a space.")}
               <TextField bind:value={form.command} placeholder="npx -y @modelcontextprotocol/server-github" spellcheck="false" autocomplete="off" aria-label="Command" />
             </label>
             <label class="f">
@@ -173,11 +173,11 @@
               <TextField bind:value={form.url} type="url" placeholder="https://mcp.example.com/mcp" spellcheck="false" autocomplete="off" aria-label="Address" />
             </label>
             <label class="f">
-              {@render field("Headers", "One Name: value per line, for a key the server wants. Kept on this server and shown hidden afterwards.")}
+              {@render field("Headers", "One Name: value per line. Stored here, shown hidden after saving.")}
               <TextArea bind:value={form.headers} rows={2} spellcheck="false" placeholder="Authorization: Bearer …" />
             </label>
             <details class="advanced">
-              <summary>Sign-in app (only when the server doesn't register apps itself)</summary>
+              <summary>Sign-in app (only if the server doesn't register one)</summary>
               <label class="f">
                 {@render field("Client ID")}
                 <TextField bind:value={form.clientId} spellcheck="false" autocomplete="off" aria-label="Client ID" />
@@ -193,7 +193,7 @@
             <Switch bind:checked={form.agents} label="Also give to coding agents" />
           </div>
           <label class="f short">
-            {@render field("Call timeout", "Seconds a single tool call may take. Leave empty for the default, 5 minutes.")}
+            {@render field("Call timeout", "Seconds one tool call may take. Empty means the default, 5 minutes.")}
             <TextField bind:value={form.timeout} placeholder="300" inputmode="numeric" aria-label="Call timeout in seconds" />
           </label>
         {/if}

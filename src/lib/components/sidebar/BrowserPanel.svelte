@@ -457,7 +457,7 @@
     {#if active.url === "about:blank" && !active.loading}
       <div class="hint">
         <EmptyState icon="world-www" title="Nothing loaded" body={isDesktop
-              ? "Type a URL, or just a port like 5173 for a local dev server."
+              ? "Type a URL, or a port like 5173 for a local dev server."
               : "Type a URL. Some sites refuse to be embedded; use Open in your browser for those."}
         />
       </div>

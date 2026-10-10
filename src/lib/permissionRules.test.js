@@ -46,8 +46,8 @@ test("legacy remember only for an older server: a cache key and no suggestions",
 });
 
 test("describeRule reads as a sentence", () => {
-  assert.equal(describeRule(rule({ text: "go test *", modes: ["read_write", "accept_edits", "auto"] })), "Allow Command go test * — Ask, Edit, Auto");
-  assert.equal(describeRule(rule({ decision: "deny", tool: "edit", text: ".env*" })), "Never allow Edit .env* — every mode");
+  assert.equal(describeRule(rule({ text: "go test *", modes: ["read_write", "accept_edits", "auto"] })), "Allow Command go test * · Ask, Edit, Auto");
+  assert.equal(describeRule(rule({ decision: "deny", tool: "edit", text: ".env*" })), "Never allow Edit .env* · every mode");
 });
 
 test("MCP rules: the form's tool name becomes the rule's tool, and they read as server: tool", () => {
@@ -56,5 +56,5 @@ test("MCP rules: the form's tool name becomes the rule's tool, and they read as 
   assert.equal(toolLabel("mcp__github__*"), "github: any tool");
   assert.equal(toolLabel("mcp__github__create_issue"), "github: Create issue");
   assert.equal(toolLabel("bash"), "Command");
-  assert.equal(describeRule(rule({ tool: "mcp__github__*", text: "mcp__github__*", pattern: ["*"] })), "Allow github: any tool — Ask, Edit, Auto");
+  assert.equal(describeRule(rule({ tool: "mcp__github__*", text: "mcp__github__*", pattern: ["*"] })), "Allow github: any tool · Ask, Edit, Auto");
 });

@@ -266,6 +266,13 @@
       setMedia(null);
       return void (notice = r.error);
     }
+    // The iframe below runs same-origin, so a server that types a .pdf as HTML
+    // must not get a document into the app origin.
+    if (kind === "pdf" && r.mime !== "application/pdf") {
+      URL.revokeObjectURL(r.url);
+      setMedia(null);
+      return void (notice = "Not a PDF.");
+    }
     if (kind === "font" && !font) {
       URL.revokeObjectURL(r.url);
       setMedia(null);

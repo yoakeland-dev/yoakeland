@@ -52,12 +52,6 @@ import { haptic } from "$lib/haptics";
     linkedVisible ? app.active!.sidebarSessionId! : app.active?.currentSessionId,
   );
 
-  // The corner handle where the right sidebar's own terminal drawer meets
-  // that sidebar's resize handle, bottom-left of the sidebar, once its
-  // terminal is open. Like VSCode's Panel/Auxiliary-bar corner, dragging it
-  // changes both the sidebar's width and the terminal's height at once. Only
-  // makes sense when both are actually open; otherwise there's no
-  // intersection to grab.
   // The usage page and the extensions page share the chat panel's place; whichever was asked for last wins.
   $effect(() => {
     if (app.showUsage) app.showExtensions = false;
@@ -67,6 +61,12 @@ import { haptic } from "$lib/haptics";
   let cornerDragging = $state(false);
   let cornerPos = $state({ top: 0, left: 0 });
 
+  // The corner handle where the right sidebar's own terminal drawer meets
+  // that sidebar's resize handle, bottom-left of the sidebar, once its
+  // terminal is open. Like VSCode's Panel/Auxiliary-bar corner, dragging it
+  // changes both the sidebar's width and the terminal's height at once. Only
+  // makes sense when both are actually open; otherwise there's no
+  // intersection to grab.
   const cornerVisible = $derived(
     linkedVisible &&
       !app.fullPage &&

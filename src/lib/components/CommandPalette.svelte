@@ -402,7 +402,7 @@
     list.push({
       id: "srv:remove",
       label: id ? "Remove" : "Forget",
-      detail: id ? "Disconnects and stops offering it" : "Stops offering it",
+      detail: id ? "Disconnect and stop offering it" : "Stops offering it",
       icon: "trash",
       run: () => removeRow(r),
     });
@@ -469,7 +469,7 @@
           {/if}
           {#if page.kind === "browse" && browsingServer && browsableServers.length > 1}
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger class="crumb server-switch" {@attach tip(`Browsing ${browsingServer.label} — switch server`)}>
+              <DropdownMenu.Trigger class="crumb server-switch" {@attach tip(`Switch server (browsing ${browsingServer.label})`)}>
                 <ServerAvatar name={browsingServer.label} seed={browsingServer.serverId} size={14} />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>

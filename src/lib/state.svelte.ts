@@ -94,7 +94,6 @@ const SESSION_SCOPED_EVENTS = new Set([
   "snapshot_capturing",
   "snapshot_created",
   "turn_completed",
-  "session_taken_over",
   "plan_written",
   "steer_accepted",
   "steer_rejected",
@@ -302,7 +301,6 @@ export function loadServerToken(serverId: string): Promise<string | null> {
   return invoke<string | null>("load_credential", { key: serverId }).catch(() => null);
 }
 
-/** Stable key for a (provider, model) pair, used as a Svelte `#each` key. */
 /** projectPath of a chat with no project (SPEC §4b): the server gives it a scratch directory. */
 export const CHAT_PROJECT = "@chat";
 /** localStorage key for the sidebar's Projects/Chats tab, also read at startup to pick where to land. */
@@ -664,7 +662,6 @@ export class ServerState {
   queuedBySession = $state<Record<string, QueuedPrompt[]>>({});
   /** Messages sent into the running turn (steer_turn) that the server hasn't answered yet (§3.1). */
   steeringBySession = $state<Record<string, string[]>>({});
-  takenOverSessions = $state<Record<string, boolean>>({});
   // Cleared the moment its session is opened, so "finished" means "done, and you haven't looked yet."
   finishedSessions = $state<Record<string, boolean>>({});
   // The server's word on how full each chat's context is and what it has cost: from turn_completed,
@@ -877,21 +874,6 @@ export class ServerState {
     return !s.archived && this.app.now - new Date(s.updatedAt).getTime() <= this.app.settings.autoArchiveDays * 86400000;
   }
 
-  get currentSessions(): SessionSummary[] {
-    if (!this.currentProjectPath) return [];
-    return this.sessionsByProject[this.currentProjectPath] ?? [];
-  }
-
-  get currentMessages(): ChatMessage[] {
-    if (!this.currentSessionId) return [];
-    return this.messagesBySession[this.currentSessionId] ?? [];
-  }
-
-  get isCurrentTurnActive(): boolean {
-    if (!this.currentSessionId) return false;
-    return !!this.activeTurnBySession[this.currentSessionId];
-  }
-
   get canGoBack(): boolean {
     return this.navBack.length > 0;
   }
@@ -901,7 +883,6 @@ export class ServerState {
   }
 
   sessionStatus(sessionId: string): "working" | "action" | "finished" | "idle" {
-    if (this.takenOverSessions[sessionId]) return "idle";
     if (this.pendingAsks.some((a) => a.sessionId === sessionId)) return "action";
     if (this.activeTurnBySession[sessionId]) return "working";
     if (this.finishedSessions[sessionId]) return "finished";
@@ -1096,7 +1077,6 @@ export class ServerState {
     } else {
       this.sidebarSessionId = null;
     }
-    this.takenOverSessions[sessionId] = false;
     if (this.finishedSessions[sessionId]) {
       delete this.finishedSessions[sessionId];
       this.finishedSessions = { ...this.finishedSessions };
@@ -1531,7 +1511,6 @@ export class ServerState {
     delete this.messagesBySession[sessionId];
     delete this.activeTurnBySession[sessionId];
     delete this.queuedBySession[sessionId];
-    delete this.takenOverSessions[sessionId];
     delete this.finishedSessions[sessionId];
     delete this.providerBySession[sessionId];
     delete this.modelBySession[sessionId];
@@ -1692,7 +1671,7 @@ export class ServerState {
     const list = this.messagesBySession[sessionId] ?? [];
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx === -1) {
-      this.app.log(`error: can't edit message ${messageId} — not found in this session's local history`);
+      this.app.log(`error: can't edit message ${messageId}: not found in this session's local history`);
       return;
     }
     // turnId (not the old message's own) so turn_completed's reconciliation can find this
@@ -1707,7 +1686,7 @@ export class ServerState {
     const list = this.messagesBySession[sessionId] ?? [];
     const idx = list.findIndex((m) => m.id === messageId);
     if (idx === -1) {
-      this.app.log(`error: can't retry message ${messageId} — not found in this session's local history`);
+      this.app.log(`error: can't retry message ${messageId}: not found in this session's local history`);
       return;
     }
     this.beginBranchTurn(sessionId, turnId, idx);
@@ -2078,12 +2057,6 @@ export class ServerState {
         this.saveChatHistory();
         break;
       }
-      case "session_taken_over": {
-        this.takenOverSessions[sessionId] = true;
-        delete this.activeTurnBySession[sessionId];
-        this.activeTurnBySession = { ...this.activeTurnBySession };
-        break;
-      }
       case "provider_registered":
       case "provider_list": {
         const data = env.data as { providers?: ProviderInfo[]; name?: string };
@@ -2445,7 +2418,7 @@ export class ServerState {
       }
       case "pairing_pending": {
         this.awaitingApproval = true;
-        this.app.toastAction(this.connectionId, "Waiting for the computer to approve this phone…");
+        this.app.toastAction(this.connectionId, "Waiting for approval on the computer…");
         break;
       }
       case "pairing_request": {
@@ -2524,7 +2497,7 @@ export class ServerState {
             msg.streaming = false;
             // A cli_* agent that isn't logged in fails with an error (§6b): say what to do instead of just echoing it.
             const note = /sign in|log ?in|not logged|unauthenticated|authenticat/i.test(data.message)
-              ? `⚠ This agent isn't signed in on the server. Run it once in a terminal there and sign in, then retry.\n\n> ${data.message}`
+              ? `⚠ This agent isn't signed in on the server. Sign in from a terminal there, then retry.\n\n> ${data.message}`
               : `⚠ ${data.message}`;
             msg.text = msg.text ? `${msg.text}\n\n${note}` : note;
           }

@@ -8,6 +8,7 @@
   import { answerPairing, registerToken, removeToken, setRemoteAccess } from "../ipc";
   import { pairInfo } from "../platform";
   import { pairingUrl } from "../pairing";
+  import { isPhotoAvatar } from "../avatar";
   import Button from "./ui/Button.svelte";
   import TextField from "./ui/TextField.svelte";
   import Icon from "./Icon.svelte";
@@ -42,7 +43,7 @@
         hosts = info.hosts;
         host = info.hosts[0] ?? "";
         blocked = !info.hosts.length;
-        if (!info.hosts.length) error = "No network address found. Connect this computer to the same network as the phone.";
+        if (!info.hosts.length) error = "No network address found. Put this computer on the same network as the phone.";
         // Points the server's own page at the built client (the fallback for a server with no
         // fingerprint); the listener keeps running.
         else if (info.webRoot) setRemoteAccess(cid, true, { webRoot: info.webRoot });
@@ -84,7 +85,7 @@
     registerToken(cid, n, undefined, true);
     timer = setTimeout(() => {
       phase = "form";
-      error = "The server didn't answer. Is remote access on?";
+      error = "No answer from the server. Is remote access on?";
     }, 6000);
   }
 
@@ -99,7 +100,7 @@
 
       {#if phase === "form" || phase === "waiting"}
         <Dialog.Description class="pair-hint">
-          The phone opens yoakeland in its browser and connects to this server directly. It gets its own token, named below, so revoke it from People if the phone is lost.
+          The phone opens yoakeland in its browser and connects to this server directly. It gets its own token, named below. Revoke it under People if the phone is lost.
         </Dialog.Description>
         {#if error}<p class="pair-error">{error}</p>{/if}
         <form class="pair-form" onsubmit={create}>
@@ -118,14 +119,14 @@
         </form>
       {:else if phase === "old"}
         <Dialog.Description class="pair-hint">
-          This server is too old to pair a phone: it doesn't report the fingerprint a phone needs to connect safely. Update the server (Settings → General), then try again.
+          This server is too old to pair a phone. It doesn't report the fingerprint a phone needs to connect safely. Update it in Settings → General, then try again.
         </Dialog.Description>
         <div class="pair-actions">
           <Button type="button" variant="primary" onclick={() => (open = false)}>Close</Button>
         </div>
       {:else}
         <Dialog.Description class="pair-hint">
-          Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. The first phone to scan it is the only one it works for, and it expires in 10 minutes. You'll be asked to allow it here.
+          Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. Only the first phone to scan it can use it, and it expires in 10 minutes. You'll be asked to allow it here.
         </Dialog.Description>
         <div class="qr"><QrCode text={pairingUrl([host, ...hosts.filter((h) => h !== host)], port, token, rtcFp || undefined)} label="Pairing code" /></div>
         {#if request}
@@ -138,7 +139,7 @@
           </div>
         {:else if joined}
           <p class="pair-joined">
-            {#if joined.avatar}<img src={joined.avatar} alt="" />{:else}<Icon name="check" size={13} />{/if}
+            {#if isPhotoAvatar(joined.avatar ?? "")}<img src={joined.avatar} alt="" />{:else}<Icon name="check" size={13} />{/if}
             <strong>{joined.name}</strong> connected
           </p>
         {:else}

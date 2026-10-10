@@ -119,7 +119,7 @@
       setTimeout(() => {
         if (orStatus !== "finishing") return;
         orStatus = "idle";
-        orError = "The server couldn't finish signing in. Its log has the reason.";
+        orError = "Sign-in failed. The server log has the reason.";
       }, 20_000);
     } catch (e) {
       // Cancel resets to idle first, so only a real failure still reads "waiting" here.
@@ -182,10 +182,10 @@
 
   // --- Model roles (SPEC.md §4f) ---
   const ROLE_ROWS = [
-    { key: "plan", label: "Planning", hint: "Runs every turn in Plan mode. Pick your strongest model." },
-    { key: "explore", label: "Exploring", hint: "Read-only subagents that search the code and report back. A small, fast model is enough." },
+    { key: "plan", label: "Planning", hint: "Every turn in Plan mode. Pick your strongest model." },
+    { key: "explore", label: "Exploring", hint: "Read-only subagents that search the code. A small, fast model is enough." },
     { key: "utility", label: "Titles & summaries", hint: "Names chats and summarizes long ones when they outgrow the context." },
-    { key: "advisor", label: "Advisor", hint: "A stronger Anthropic model the chat's model can consult mid-task (Anthropic chats only)." },
+    { key: "advisor", label: "Advisor", hint: "A stronger Anthropic model the chat's model can consult mid-task. Anthropic chats only." },
   ];
   const apiProviders = $derived((server?.providers ?? []).filter((p) => p.kind === "api_key"));
   // The role pickers list models the composer may not have fetched yet.
@@ -293,7 +293,7 @@
   }
 
   function onDisconnectPeer(peerId: string, name: string) {
-    if (cid && confirm(`Disconnect "${name}"? Any peer can disconnect any other — there's no extra permission check.`)) {
+    if (cid && confirm(`Disconnect "${name}"? Any peer can disconnect any other. There is no extra permission check.`)) {
       disconnectPeer(cid, peerId);
     }
   }
@@ -321,14 +321,14 @@
   /** The numeric runtime settings beyond the limits above: key, label, hint, unit, minimum. */
   const RESOURCE_SETTINGS = [
     { key: "execTimeoutSec", label: "Command timeout", hint: "How long one bash command may run.", unit: "s", min: 1 },
-    { key: "execOutputMaxBytes", label: "Command output kept", hint: "Output of one bash command past this is dropped.", unit: "bytes", min: 4096 },
-    { key: "terminalMemoryMaxMB", label: "Terminal memory cap", hint: "Per terminal opened from now on, where the system supports it.", unit: "MB", min: 64 },
-    { key: "terminalPidsMax", label: "Terminal process cap", hint: "Processes per terminal opened from now on.", unit: "", min: 16 },
+    { key: "execOutputMaxBytes", label: "Command output kept", hint: "Bash output past this is dropped.", unit: "bytes", min: 4096 },
+    { key: "terminalMemoryMaxMB", label: "Terminal memory cap", hint: "Per new terminal, where the system supports it.", unit: "MB", min: 64 },
+    { key: "terminalPidsMax", label: "Terminal process cap", hint: "Processes per new terminal.", unit: "", min: 16 },
     { key: "terminalReadMaxChars", label: "Terminal output the model sees", hint: "The tail of each terminal read.", unit: "chars", min: 500 },
     { key: "terminalHistoryKB", label: "Terminal scrollback replayed", hint: "What a client gets when it attaches.", unit: "KB", min: 16 },
-    { key: "poolIdleMinutes", label: "Keep idle coding agents for", hint: "An unused Claude/Codex/… process is closed after this.", unit: "min", min: 1 },
-    { key: "poolMaxLive", label: "Most coding agents alive at once", hint: "0 means no cap. The least recently used idle one is closed to make room; running turns are never stopped.", unit: "", min: 0 },
-    { key: "pricingRefreshHours", label: "Refresh model prices every", hint: "An unpriced model also triggers one refresh, at most hourly.", unit: "h", min: 1 },
+    { key: "poolIdleMinutes", label: "Keep idle coding agents for", hint: "Unused Claude/Codex/… processes close after this.", unit: "min", min: 1 },
+    { key: "poolMaxLive", label: "Most coding agents alive at once", hint: "0 means no cap. Closes the least recently used idle one to make room. Running turns are never stopped.", unit: "", min: 0 },
+    { key: "pricingRefreshHours", label: "Refresh model prices every", hint: "A model with no price also triggers a refresh, at most hourly.", unit: "h", min: 1 },
   ] as const;
   let compactInstructionsInput = $state("");
   $effect(() => {
@@ -691,7 +691,7 @@
   {#if scoped && !connected}
     <p class="notice">
       <Icon name="warning" size={13} />
-      {server ? `${server.label} isn't connected — reconnect it` : "No server connected — connect one"} under Servers to change these.
+      {server ? `${server.label} isn't connected. Reconnect it` : "No server connected. Connect one"} under Servers to change these.
     </p>
   {/if}
 {/snippet}
@@ -824,7 +824,7 @@
           {#if !viewport.narrow}{@render tab("keyboard", "Keyboard", "keyboard")}{/if}
           {@render tab("servers", "Servers", "server")}
 
-          <div class="tabs-group-label" {@attach tip("These apply to one server — pick which at the top of each page")}>
+          <div class="tabs-group-label" {@attach tip("These apply to one server. Pick which at the top of each page.")}>
             {server ? server.label : "Server"}
           </div>
           {@render tab("general", "General", "settings")}
@@ -859,7 +859,7 @@
                   <label class="profile-name">
                     <span class="row-label">Display name</span>
                     <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
-                    <span class="hint">How you appear to other people on the servers you connect to.</span>
+                    <span class="hint">Shown to other people on the servers you connect to.</span>
                   </label>
                   <div class="btn-row">
                     <Button type="button" onclick={() => avatarInput?.click()} disabled={uploadingAvatar}>
@@ -1047,7 +1047,7 @@
               <h3 class="section-heading">Window</h3>
               {#if !viewport.narrow}
                 <div class="setting-row">
-                  {@render rowText("Main area", "Floating insets the chat area as a rounded card; flat fills the window edge to edge.")}
+                  {@render rowText("Main area", "Floating: the chat area is a rounded card. Flat: fills the window edge to edge.")}
                   {@render segmented(
                     [
                       { value: "floating", label: "Floating" },
@@ -1060,7 +1060,7 @@
               {/if}
 
               <div class="setting-row">
-                {@render rowText("Surfaces", "Frosted glass blurs whatever floats over the UI — the composer, popups and dialogs.")}
+                {@render rowText("Surfaces", "Frosted blurs whatever floats over the UI: composer, popups and dialogs.")}
                 {@render segmented(
                   [
                     { value: "opaque", label: "Opaque" },
@@ -1146,7 +1146,7 @@
                 </div>
               </div>
               <div class="setting-row">
-                {@render rowText("Desktop alerts on this device", "While the window is in the background. Never for the chat you are reading, or when another of your devices is in use.")}
+                {@render rowText("Desktop alerts on this device", "Only while the window is in the background. Never for the chat you're reading, or while another of your devices is in use.")}
                 {@render segmented(
                   [
                     { value: "off", label: "Off" },
@@ -1252,7 +1252,7 @@
           <div class="tab-body" use:searchable={{ tab: "servers", query: settingsSearch }}>
             {@render pageHead("Servers", false)}
             <section class="settings-section">
-              <p class="hint">Every server this app has connected to. The pages under the server's name apply to one of these at a time.</p>
+              <p class="hint">Every server this app has connected to. Each settings page applies to one at a time.</p>
               <ul class="list">
                 {#each serverList as r (r.key)}
                   <li>
@@ -1305,7 +1305,7 @@
             {@render pageHead("General", true)}
             <section class="settings-section">
               <form class="setting-row" onsubmit={submitServerIdentity}>
-                {@render rowText("Server name", "What everyone connected to this server sees it called.")}
+                {@render rowText("Server name", "Shown to everyone connected to this server.")}
                 <div class="btn-row">
                   <TextField type="text" class="ctrl-wide" placeholder="this server's name" bind:value={serverIdentityInput} disabled={!connected} />
                   <Button type="submit" disabled={!connected || !serverIdentityInput.trim() || serverIdentityInput.trim() === server?.serverIdentity}>
@@ -1320,7 +1320,7 @@
               {/if}
               {#if server?.connectionMode === "local"}
                 <div class="setting-row">
-                  {@render rowText("Restart server", "Stops the server and starts it again, as the newest installed version. Chats that are running are stopped; you're asked first.")}
+                  {@render rowText("Restart server", "Stops and starts the server on the newest installed version. Running chats stop; you'll be asked first.")}
                   <Button type="button" onclick={() => restartServer(server.connectionId)} disabled={!connected}>Restart</Button>
                 </div>
               {/if}
@@ -1332,7 +1332,7 @@
             <section class="settings-section">
               <h3 class="section-heading">Context</h3>
               <div class="setting-row">
-                {@render rowText("Compact chats at", "When a chat's context grows past this, it is summarized to make room. 0 means the built-in 64,000. Never above 90% of the model's window. Claude Code is told this as its context window and compacts about 33,000 tokens below it; other coding agents compact on their own. Change it for one chat with /autocompact; /compact summarizes right now.")}
+                {@render rowText("Compact chats at", "Chats are summarized to make room once their context passes this. 0 means the built-in 64,000. Never above 90% of the model's window. Claude Code is told this as its context window and compacts about 33,000 tokens below that; other agents compact on their own. Change one chat with /autocompact. /compact summarizes now.")}
                 <span class="num-unit">
                   <NumberField
                     class="ctrl-num"
@@ -1346,7 +1346,7 @@
                 </span>
               </div>
               <div class="setting-row stacked">
-                {@render rowText("Summary instructions", "Added to every summary a chat on an API provider makes, automatic or from /compact: what to emphasize, what to leave out. Claude Code doesn't take it; give its /compact instructions after the command. They narrow the focus and never replace the base prompt, which still keeps every request, decision, changed file and the remaining work. A summary these make implausibly short is redone without them.")}
+                {@render rowText("Summary instructions", "Added to every summary a chat on an API provider makes, automatic or from /compact. It narrows the focus and never replaces the base prompt, which always keeps requests, decisions, changed files and remaining work. A summary these make implausibly short is redone without them. Claude Code doesn't take it; give its /compact instructions after the command.")}
                 <TextArea
                   bind:value={compactInstructionsInput}
                   rows={3}
@@ -1386,7 +1386,7 @@
             <section class="settings-section">
               <h3 class="section-heading">Limits</h3>
               <div class="setting-row">
-                {@render rowText("Model calls per turn", "After this many, the turn pauses and asks whether to continue. 0 means no limit. Coding agents like Claude Code run their own loop and are not limited.")}
+                {@render rowText("Model calls per turn", "The turn pauses and asks to continue after this many. 0 means no limit. Coding agents like Claude Code run their own loop and aren't limited.")}
                 <NumberField
 
                   class="ctrl-num"
@@ -1398,7 +1398,7 @@
                 />
               </div>
               <div class="setting-row">
-                {@render rowText("Spend per chat (USD)", "A chat that has spent this much pauses, mid-turn too, and asks whether to continue. 0 means no limit. Only priced usage counts.")}
+                {@render rowText("Spend per chat (USD)", "A chat pauses and asks to continue once it has spent this much, mid-turn too. 0 means no limit. Only priced usage counts.")}
                 <NumberField
 
                   class="ctrl-num"
@@ -1413,7 +1413,7 @@
                 <div class="setting-row">
                   {@render rowText(
                     "Turn bash off when a project has no sandbox",
-                    "Without bubblewrap or namespaces, bash and terminals run straight on the machine and can read or change anything the server's user can. This withholds them from the model in those projects. Off by default.",
+                    "Without bubblewrap or namespaces, bash and terminals run directly on the machine and can touch anything the server's user can. This hides them from the model in those projects. Off by default.",
                   )}
                   {@render toggle(runtime?.disableBashWhenUnsandboxed ?? false, (v) => patchRuntime({ disableBashWhenUnsandboxed: v }), !connected || !runtime)}
                 </div>
@@ -1426,7 +1426,7 @@
                 {/if}
               </div>
               <div class="setting-row">
-                {@render rowText("Keep the browser on approved sites", "While the agent drives the browser, a link or redirect to a site it has not been cleared to visit is stopped, and the agent has to ask. Your own navigation is never blocked.")}
+                {@render rowText("Keep the browser on approved sites", "While the agent drives the browser, links and redirects to sites it isn't cleared for are stopped, and it has to ask. Your own navigation is never blocked.")}
                 {@render toggle(runtime?.browserBlockCrossOrigin ?? true, (v) => patchRuntime({ browserBlockCrossOrigin: v }), !connected || !runtime)}
               </div>
             </section>
@@ -1441,7 +1441,7 @@
           <div class="tab-body" use:searchable={{ tab: "notifications", query: settingsSearch }}>
             {@render pageHead("Notifications", true)}
             <section class="settings-section">
-              <p class="hint">Only the first two are on by default. Nothing is raised for a chat you are looking at on any device, and each one is remembered on the server, so reading it on one device reads it on all of them.</p>
+              <p class="hint">Only the first two are on by default. Nothing alerts for a chat you're viewing on any device. Read state is kept on the server, so reading on one device counts on all of them.</p>
               <div class="setting-row">
                 {@render rowText("Needs you", "Permission requests, questions from the agent, failed turns, the spend cap.")}
                 {@render toggle(notifyPrefs.urgent, (v) => patchNotify({ urgent: v }), !connected)}
@@ -1485,7 +1485,7 @@
             {@render pageHead("Providers", true)}
             <section class="settings-section">
               <h3 class="section-heading">Accounts</h3>
-              <p class="hint">Coding agents run a CLI already signed in on the server, with its own tools — yoakeland never sees the credential. Sign in once in a terminal on the server first.</p>
+              <p class="hint">Coding agents run a CLI that's already signed in on the server, with its own tools. yoakeland never sees the credential. Sign in once in a terminal on the server first.</p>
               <div class="cli-cards">
                 {#each cliRows as c (c.kind)}
                   <div class="cli-card">
@@ -1522,11 +1522,11 @@
                       {:else if orAccount}
                         <span class="list-meta">Signed in</span>
                       {:else if orStatus === "waiting"}
-                        <span class="list-meta">Finish signing in in your browser…</span>
+                        <span class="list-meta">Finish in your browser…</span>
                       {:else if orStatus === "finishing"}
                         <span class="list-meta">Finishing…</span>
                       {:else}
-                        <span class="list-meta" {@attach tip("Opens openrouter.ai in your browser. The server stores the key it returns")}>Sign in with your account</span>
+                        <span class="list-meta" {@attach tip("Opens openrouter.ai in your browser. The server stores the key it returns.")}>Sign in with your account</span>
                       {/if}
                     </div>
                   </div>
@@ -1588,7 +1588,7 @@
 
             <section class="settings-section">
               <h3 class="section-heading">Model roles</h3>
-              <p class="hint">Hand parts of every chat's work on this server to other models — strong where it pays, cheap where it doesn't. Unset roles use the chat's own model. Coding agents route their own models and skip these.</p>
+              <p class="hint">Send parts of chat work to other models: strong where it pays, cheap where it doesn't. Unset roles use the chat's model. Coding agents pick their own models and skip these.</p>
               {#each ROLE_ROWS as r (r.key)}
                 {@const efforts = roleEfforts(r.key)}
                 <div class="setting-row">
@@ -1655,7 +1655,7 @@
             {@render pageHead("Access", true)}
             {#if server?.connectionStatus === "connected" && !isLocalConnection}
               <p class="notice">
-                <Icon name="warning" size={13} /> The server only accepts access changes over its local socket — connect from the server's machine to change them.
+                <Icon name="warning" size={13} /> Access changes only work over the server's local socket. Connect from the server's machine to change them.
               </p>
             {/if}
 
@@ -1692,13 +1692,13 @@
                   </Button>
                 {/if}
               </div>
-              <p class="hint">Each person gets their own token, and their chats and git commits carry its name. Names are fixed once registered, so revoke and re-register to rename.</p>
+              <p class="hint">Each person gets their own token. Their chats and git commits carry its name. Names can't change once registered; revoke and re-register to rename.</p>
 
               {#if server?.justRegisteredToken}
                 <div class="warning-card">
                   <p class="warning-heading"><Icon name="warning" size={12} /> Copy this now</p>
                   <p class="hint">
-                    Pairing code for <strong>{server.justRegisteredToken.name}</strong> — shown only this once. They paste
+                    Pairing code for <strong>{server.justRegisteredToken.name}</strong>. Shown only once. They paste
                     it into Add server; it carries the token{server.justRegisteredToken.caPem
                       ? " and this server's certificate"
                       : ""}.
@@ -1770,7 +1770,7 @@
                 <ul class="list">
                   {#each (server?.peers ?? []).filter((p) => p.peerId !== server?.selfPeerId) as peer (peer.peerId)}
                     <li>
-                      {#if peer.avatar}
+                      {#if isPhotoAvatar(peer.avatar ?? "")}
                         <img class="avatar-dot" src={peer.avatar} alt="" />
                       {:else}
                         <span class="avatar-dot"><Icon name={deviceIcon[peer.deviceType] ?? "laptop"} size={13} /></span>
@@ -1803,7 +1803,7 @@
           <div class="tab-body" use:searchable={{ tab: "audit", query: settingsSearch }}>
             {@render pageHead("Audit log", true)}
             <section class="settings-section">
-              <p class="hint">What was approved or refused, what ran, and which settings, credentials and devices changed on this server. Kept on the server (newest 15 MB), never containing a password, token or key.</p>
+              <p class="hint">Approvals, refusals, runs, and changes to settings, credentials and devices on this server. Kept on the server (newest 15 MB). Never holds a password, token or key.</p>
               <AuditPanel cid={cid ?? null} connected={!!connected} />
             </section>
           </div>

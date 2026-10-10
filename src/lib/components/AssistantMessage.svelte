@@ -224,13 +224,13 @@
         <span class="stat">cancelled</span>
       {:else if message.finish?.finishReason === "budget_exceeded"}
         {#if modelMeta}<span class="dot">·</span>{/if}
-        <span class="stat">session budget exceeded — turn not run</span>
+        <span class="stat">session budget exceeded, turn not run</span>
       {:else if message.finish?.finishReason === "no_provider"}
         {#if modelMeta}<span class="dot">·</span>{/if}
         <span class="stat"
-          >no provider configured yet —
+          >no provider configured yet.
           <button class="link" onclick={() => app.openProviderSettings()}
-            >add one</button
+            >Add one</button
           >
           and pick it from the toolbar below</span
         >
@@ -262,10 +262,10 @@
       <!-- Numbers and actions stay out of the way until the message is hovered or focused. -->
       <span class="more">
         {#if usage && !message.streaming && !noRun}
-          <span class="stat" {@attach tip("Tokens in — the full conversation sent with this reply")}>
+          <span class="stat" {@attach tip("Tokens in: the full conversation sent with this reply")}>
             <Icon name="arrow-narrow-down" size={12} />{shortNum(usage.inputTokens ?? 0)}
           </span>
-          <span class="stat" {@attach tip("Tokens out — this reply only")}>
+          <span class="stat" {@attach tip("Tokens out: this reply only")}>
             <Icon name="arrow-narrow-up" size={12} />{shortNum(usage.outputTokens ?? 0)}
           </span>
           {#if message.finish?.usage?.costUnknown && !usage.costUsd}
@@ -295,8 +295,8 @@
               onclick={retry}
               aria-label="Retry"
               {@attach tip(message.toolCalls.length
-                ? "Retry — regenerates from here; doesn't undo the file changes this reply's tool calls made"
-                : "Retry — regenerates a fresh reply from here")}
+                ? "Retry from here. File changes this reply made stay."
+                : "Retry from here")}
             >
               <Icon name="refresh" size={12} />
             </button>

@@ -12,25 +12,19 @@
   const project = $derived(server?.projectBySession[sessionId]);
   const unsandboxed = $derived(!!server?.isUnsandboxed(project));
   const shellOff = $derived(!!server?.shellDisabled(project));
-  const takenOver = $derived(!!server?.takenOverSessions[sessionId]);
 </script>
 
-{#if unsandboxed || takenOver}
+{#if unsandboxed}
   <div class="notices" role="status" transition:fade={{ duration: 120 }}>
-    {#if unsandboxed}
-      <div
-        class="notice"
-        {@attach tip(shellOff
-          ? "This project has no sandbox, so the model is not given bash or terminals here"
-          : "bash and terminals in this project have no sandbox isolation: they can read and change anything the server's user can")}
-      >
-        <Icon name="warning" size={13} />
-        <span>No sandbox{shellOff ? " · bash and terminals are off" : " · bash can reach anything on this machine"}</span>
-      </div>
-    {/if}
-    {#if takenOver}
-      <div class="notice"><Icon name="warning" size={13} /><span>Opened elsewhere</span></div>
-    {/if}
+    <div
+      class="notice"
+      {@attach tip(shellOff
+        ? "No sandbox here, so the model gets no bash or terminals"
+        : "Bash and terminals here have no sandbox. They can read and change anything the server's user can")}
+    >
+      <Icon name="warning" size={13} />
+      <span>No sandbox{shellOff ? " · bash and terminals are off" : " · bash can reach anything on this machine"}</span>
+    </div>
   </div>
 {/if}
 
@@ -56,9 +50,6 @@
     min-width: 0;
     padding: 0.36rem 0.71rem;
     font-size: var(--text-label-size);
-  }
-  .notice + .notice {
-    border-top: 1px solid var(--float-border);
   }
   .notice span {
     overflow: hidden;

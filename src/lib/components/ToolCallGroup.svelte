@@ -22,8 +22,8 @@
     if (!latest) return "";
     const label = metaFor(latest).label;
     const summary = summaryFor(latest);
-    const text = summary ? `${label} — ${summary}` : label;
-    return latest.snapshotting ? `Saving snapshot — ${text}` : text;
+    const text = summary ? `${label}: ${summary}` : label;
+    return latest.snapshotting ? `Saving snapshot: ${text}` : text;
   });
 
   // Only flash feedback at the moment a call finishes, not for a group already sitting done;

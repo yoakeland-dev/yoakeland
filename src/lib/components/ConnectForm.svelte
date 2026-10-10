@@ -66,7 +66,7 @@
   // The desktop shows the QR code (Pair a phone); scanning one is for the phone's browser.
   const canScan = !isDesktop && !!navigator.mediaDevices?.getUserMedia;
   // The hosted app can only reach a server by its WebRTC fingerprint, so a code without one is an old server.
-  const TOO_OLD = "This server is too old for a phone to connect to: it sends no WebRTC fingerprint. Update the server and pair again.";
+  const TOO_OLD = "Server too old for a phone: it sends no WebRTC fingerprint. Update the server and pair again.";
   const needsFingerprint = (fp?: string) => !fp && !isDesktop && location.origin === new URL(HOSTED_APP_URL).origin;
   let scanError = $state<string | null>(null);
   function onScan(text: string) {
@@ -152,7 +152,7 @@
     }
     const decoded = decodePairingCode(value);
     if (!decoded) {
-      pairingError = "Not a pairing code — use \"Enter manually instead\" below.";
+      pairingError = "Not a pairing code. Use \"Enter manually instead\" below.";
       return;
     }
     if (needsFingerprint(decoded.rtcFp)) {
@@ -243,11 +243,11 @@
 {#snippet remoteFormBody()}
   <form class="steps" onsubmit={submitRemote}>
     {#if step === "scan"}
-      <p class="hint">Point the camera at the QR code in Pair a phone on your computer, or the one the server prints when it starts.</p>
+      <p class="hint">Point the camera at the QR code from Pair a phone on your computer, or the one the server prints at startup.</p>
       <QrScanner onscan={onScan} onerror={fail} />
       <Button type="button" variant="ghost" onclick={() => (step = host.trim() ? "code" : "address")}>Cancel</Button>
     {:else if step === "address"}
-      <p class="hint">Where's the server? Paste "host:port" into either field to fill both at once.</p>
+      <p class="hint">Paste "host:port" into either field to fill both.</p>
       <div class="row">
         <label class="grow">
           Host
@@ -276,8 +276,8 @@
       {@render scanButton()}
     {:else if step === "code"}
       <p class="hint">
-        Always TLS, against a CA only the server operator has — paste the pairing code they gave you
-        (from their Settings › Access), it carries the token and CA in one piece.
+        Always TLS, with a CA only the server operator has. Paste the pairing code from their
+        Settings › Access. It carries the token and CA.
       </p>
       <label>
         Pairing code
@@ -306,7 +306,7 @@
         </Button>
       </div>
     {:else}
-      <p class="hint">Only needed if you don't have a pairing code — a bare token, or one from an operator-supplied real certificate that has no CA to bundle.</p>
+      <p class="hint">Only needed without a pairing code: a bare token, or a real certificate with no CA to bundle.</p>
       <label>
         Auth token
         <TextField bind:el={manualTokenEl} bind:value={token} onkeydown={onManualTokenKeydown} placeholder="shared secret from -token" type="password" />
@@ -319,7 +319,7 @@
               class="ca-input"
               bind:value={caPem}
               rows={3}
-              placeholder="Paste ca.pem contents, or import the file… — leave blank only if the server has a real, publicly-trusted certificate"
+              placeholder="Paste ca.pem contents or import the file. Leave blank only if the server has a publicly trusted certificate."
             />
             <Button class="ca-import" onclick={importCa} disabled={importingCa}>
               {importingCa ? "Importing…" : "Import…"}
@@ -330,7 +330,7 @@
           <p class="error"><Icon name="alert-circle" size={14} /> {caImportError}</p>
         {/if}
       {:else}
-        <p class="hint">Your browser checks the server's certificate itself. Trust the server's CA in your browser or OS once, or give the server a real certificate.</p>
+        <p class="hint">Your browser checks the certificate. Trust the server's CA in your browser or OS once, or give the server a real certificate.</p>
       {/if}
       <div class="step-actions">
         <button type="button" class="back-step" onclick={goToCode} {@attach tip("Back", "Backspace")}>
@@ -358,10 +358,10 @@
     <Tabs.Content value="local">
       <form onsubmit={submitLocal}>
         <p class="hint">
-          Connects to a yoakeland server already running on this machine over a local socket (a named pipe on Windows) — no
-          token needed, the OS already restricts this to your user account. Only if nothing answers
-          there do we launch one for you, as its own standalone process — closing this app won't
-          stop it. Which project(s) to work on is picked afterward, from the sidebar.
+          Connects to a yoakeland server already running on this machine, over a local socket (a named
+          pipe on Windows). No token needed: the OS limits it to your user account. If nothing answers,
+          launches one as its own process. Closing this app won't stop it. Pick projects afterward from
+          the sidebar.
         </p>
         <label>
           Socket path

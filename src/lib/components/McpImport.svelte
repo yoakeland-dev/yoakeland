@@ -69,8 +69,8 @@
     <Button size="sm" variant="ghost" onclick={onclose}>Cancel</Button>
   </div>
   <p class="hint">
-    These are set up in other tools on the machine yoakeland runs on. Importing copies a server into yours; the other tool's entry is left as it is.
-    An imported server runs as you once saved, so read what it runs first.
+    Found in other tools on this machine. Importing copies a server into yours and leaves the other entry alone.
+    Imported servers run as you once saved, so check what they run first.
   </p>
 
   {#if scanError}

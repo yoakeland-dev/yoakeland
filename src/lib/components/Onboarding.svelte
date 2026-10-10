@@ -184,7 +184,7 @@
       setTimeout(() => {
         if (orStatus !== "finishing") return;
         orStatus = "idle";
-        orError = "The server couldn't finish signing in.";
+        orError = "Sign-in failed. The server log has the reason.";
       }, 20_000);
     } catch (e) {
       if (orStatus === "waiting") orError = e instanceof Error ? e.message : String(e);
@@ -265,28 +265,28 @@
       icon: "brain",
       title: "Provider",
       ok: hasProvider,
-      text: hasProvider ? (server?.providers.map((p) => p.name).join(", ") ?? "") : "None yet, add one in Settings",
+      text: hasProvider ? (server?.providers.map((p) => p.name).join(", ") ?? "") : "None yet. Add one in Settings.",
       fix: "provider" as Step,
     },
     {
       icon: "folder-open",
       title: "Project",
       ok: hasProject,
-      text: chatOnly && !server?.recentProjects.length ? "Chat only" : server?.recentProjects[0] ? basename(server.currentProjectPath ?? server.recentProjects[0]) : "None yet, add one from the sidebar",
+      text: chatOnly && !server?.recentProjects.length ? "Chat only" : server?.recentProjects[0] ? basename(server.currentProjectPath ?? server.recentProjects[0]) : "None yet. Add one from the sidebar.",
       fix: "project" as Step,
     },
   ]);
 
   const TEXT: Record<Step, { title: string; sub: string }> = {
-    welcome: { title: "Welcome to yoakeland", sub: "Chat with coding agents that work inside your own projects. A minute of setup and you're coding." },
+    welcome: { title: "Welcome to yoakeland", sub: "Chat with coding agents that work inside your projects. About a minute of setup." },
     server: {
       title: "Connect a server",
-      sub: isDesktop ? "Yoakeland runs as its own process. We'll look for one on this computer." : "Connect to the yoakeland server this page belongs to.",
+      sub: isDesktop ? "Yoakeland runs as its own process. It looks for one on this computer." : "Connect to the yoakeland server this page belongs to.",
     },
     provider: { title: "Add a provider", sub: "Pick at least one: a coding agent already signed in on the server, or an API key." },
-    project: { title: "Open a project", sub: "A folder on the server for the agent to read and edit. You can add more any time." },
+    project: { title: "Open a project", sub: "A folder on the server for the agent to read and edit. Add more any time." },
     remotes: { title: "Other servers", sub: "Optional. Connect more machines and switch between them from the sidebar." },
-    done: { title: "You're all set", sub: "Here is where things stand." },
+    done: { title: "All set", sub: "Here's where things stand." },
   };
   const next = $derived(STEPS[Math.min(at + 1, STEPS.length - 1)]);
   const needed = $derived(step === "provider" ? hasProvider : step === "project" ? hasProject : true);
@@ -382,7 +382,7 @@
               </div>
               {#if status !== "connecting"}
                 {#if app.connectionError}
-                  <p class="error"><Icon name="alert-circle" size={14} /> {noBinary ? "The yoakeland server isn't installed, or isn't on your PATH. Download it from GitHub releases?" : app.connectionError}</p>
+                  <p class="error"><Icon name="alert-circle" size={14} /> {noBinary ? "The yoakeland server isn't installed or isn't on your PATH." : app.connectionError}</p>
                 {/if}
                 <div class="actions">
                   <Button onclick={tryLocal}><Icon name="refresh" size={14} /> Try again</Button>
@@ -411,7 +411,7 @@
               {/each}
               {#if isDesktop || orAccount}
                 <div class="row card">
-                  {@render row("brain", "openrouter", "OpenRouter", orError || (orAccount ? "Signed in" : orStatus === "waiting" ? "Finish signing in in your browser…" : orStatus === "finishing" ? "Finishing…" : "Sign in with your account"), !!orError)}
+                  {@render row("brain", "openrouter", "OpenRouter", orError || (orAccount ? "Signed in" : orStatus === "waiting" ? "Finish in your browser…" : orStatus === "finishing" ? "Finishing…" : "Sign in with your account"), !!orError)}
                   {#if orAccount}
                     <span class="state good"><Icon name="circle-check" size={18} /></span>
                   {:else if orStatus === "idle"}

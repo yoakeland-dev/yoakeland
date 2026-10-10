@@ -117,7 +117,7 @@
             class="action"
             onclick={edit}
             aria-label="Edit"
-            {@attach tip("Edit — regenerates from here; doesn't undo any file changes the discarded reply made")}
+            {@attach tip("Edit and regenerate from here. File changes the discarded reply made stay.")}
           >
             <Icon name="pencil" size={12} />
           </button>

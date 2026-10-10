@@ -8,7 +8,7 @@
   <div class="card">
     <h1>Connect a server</h1>
     <p class="sub">
-      Yoakeland runs as its own process — connect to one already running, or launch one locally.
+      Yoakeland runs as its own process. Connect to one already running, or launch one here.
     </p>
     <ConnectForm />
   </div>

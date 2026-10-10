@@ -81,9 +81,9 @@
       <Button type="submit" disabled={!text.trim()}>Add</Button>
     </form>
     <p class="hint">
-      A command rule matches the program and its arguments word by word; a final <code>*</code> means any more arguments
+      A command rule matches the program and its arguments word by word. A final <code>*</code> matches any more arguments
       (<code>go test *</code>). A command with <code>;</code> <code>|</code> <code>&amp;&amp;</code> or <code>$()</code> is never
-      allowed by a rule. “Never” beats “Allow”, whichever is broader. Edits use paths inside the project
+      allowed by a rule. “Never” beats “Allow”, whichever is broader. Edit rules match paths inside the project
       (<code>internal/**</code>, <code>docs/*.md</code>).
     </p>
     {#if data?.notes?.length}

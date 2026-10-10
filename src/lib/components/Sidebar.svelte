@@ -778,7 +778,7 @@ import { haptic } from "../haptics";
               transition:slide={{ duration: flat ? 0 : Math.round(180 * app.settings.animationSpeed) }}
             >
               {#if !connected && multiServer}
-                <p class="note">Showing cached chats — read-only until {sec.srv.label} reconnects.</p>
+                <p class="note">Cached chats, read-only until {sec.srv.label} reconnects.</p>
               {/if}
               {#each sec.groups as g (g.project)}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -820,15 +820,14 @@ import { haptic } from "../haptics";
                   </div>
                 {:else if !projectFilter}
                   <p class="empty">
-                    No projects on {sec.srv.label}{#if connected}&nbsp;
-                      — <button class="link" onclick={() => addProject(sec.cid)}>add one</button>{/if}
+                    No projects on {sec.srv.label}{#if connected}.&nbsp;<button class="link" onclick={() => addProject(sec.cid)}>Add one</button>{/if}
                   </p>
                 {/if}
               {/each}
             </div>
           {/if}
         {:else}
-          <p class="empty">No servers yet — connect one from the command palette.</p>
+          <p class="empty">No servers yet. Connect one from the command palette.</p>
         {/each}
         {/if}
       {/if}

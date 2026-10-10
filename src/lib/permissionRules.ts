@@ -85,5 +85,5 @@ export function legacyRemember(p: { suggestions?: PermissionSuggestion[]; cacheK
 export function describeRule(r: PermissionRule): string {
   const verb = { allow: "Allow", ask: "Always ask about", deny: "Never allow" }[r.decision];
   const what = r.text === r.tool ? toolLabel(r.tool) : `${toolLabel(r.tool)} ${r.text}`;
-  return `${verb} ${what} — ${modesLabel(r)}`;
+  return `${verb} ${what} · ${modesLabel(r)}`;
 }

@@ -72,7 +72,7 @@
   <div class="list">
     {#if error}
       {#if /not a git repository/i.test(error)}
-        <EmptyState icon="git-branch" title="Not a git repository" body="Changes are tracked against git; run git init in the project to see them here." />
+        <EmptyState icon="git-branch" title="Not a git repository" body="Run git init in the project to track changes here." />
       {:else}
         <EmptyState icon="alert-circle" tone="danger" title="Couldn't read git status" body={error}>
           <button type="button" onclick={load}><Icon name="refresh" size={12} /> Try again</button>

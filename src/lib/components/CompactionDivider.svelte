@@ -23,7 +23,7 @@
         <span class="chevron" class:open><Icon name="chevron-right" size={12} /></span>
       </button>
     {:else}
-      <span class="label" {@attach tip(c.kind === "clear" ? "Older tool results were cleared from what the model sees; it can run those tools again" : "The agent didn't report a summary")}>
+      <span class="label" {@attach tip(c.kind === "clear" ? "Older tool results cleared from the model's view. It can run those tools again." : "The agent didn't report a summary")}>
         <Icon name="arrows-minimize" size={12} />
         {c.kind === "clear" ? "Tool results cleared" : c.manual ? "Context compacted" : "Context auto-compacted"} · {shortNum(c.tokensBefore)} → {shortNum(c.tokensAfter)} tokens
       </span>

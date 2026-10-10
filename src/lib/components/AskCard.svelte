@@ -247,7 +247,7 @@
             </div>
           {/if}
           {#if canAcceptEdits}
-            <button type="button" class="btn" {@attach tip("Switch this chat to Edit: file edits go through without asking, commands still ask")} onclick={allowEdits}>Allow edits</button>
+            <button type="button" class="btn" {@attach tip("Switch this chat to Edit. File edits go through without asking; commands still ask.")} onclick={allowEdits}>Allow edits</button>
           {/if}
           <button type="button" class="btn primary" onclick={() => allow(false)}>Allow once <kbd>⏎</kbd></button>
         </div>

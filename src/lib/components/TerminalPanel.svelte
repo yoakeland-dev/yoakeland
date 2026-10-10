@@ -183,7 +183,7 @@
     <div class="empty-state">
       <Icon name="terminal-2" size={20} />
       <p>Terminal isn't available yet</p>
-      <span>This chat hasn't started — send a message first, then open a terminal here.</span>
+      <span>This chat hasn't started. Send a message first, then open a terminal.</span>
     </div>
   {:else if open}
     <div class="bar" {@attach swipe(() => pull)}>

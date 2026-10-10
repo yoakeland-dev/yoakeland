@@ -300,7 +300,7 @@
     >
       {#if (server?.providers.length ?? 0) === 0}
         <div class="empty">
-          <p>No providers configured yet.</p>
+          <p>No providers yet.</p>
           <button type="button" class="add-provider" onclick={manageProviders}>
             <Icon name="plus" size={13} /> Add a provider
           </button>
@@ -441,7 +441,7 @@
                     ? "No models match."
                     : activeTab === "favorites"
                       ? "Star a model to pin it here."
-                      : "No models registered for this provider."}
+                      : "No models for this provider."}
                 </p>
                 {/if}
               {:else}

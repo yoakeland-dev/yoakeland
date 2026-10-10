@@ -31,7 +31,7 @@
     if (!call) return "";
     const label = metaFor(call).label;
     const summary = summaryFor(call);
-    return summary ? `${label} — ${summary}` : label;
+    return summary ? `${label}: ${summary}` : label;
   });
 
   // Same held-label treatment as ToolCallGroup's header: momentary flash only, no persistent checkmark.

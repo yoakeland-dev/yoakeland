@@ -155,7 +155,7 @@
               {/each}
             </ul>
           {:else}
-            <div class="note">Nothing to measure yet. This fills in once the chat has something in it.</div>
+            <div class="note">Nothing to measure yet. Fills in after the first message.</div>
           {/if}
 
           <dl class="facts">
@@ -185,10 +185,10 @@
           </dl>
 
           {#if !data.windowTokens}
-            <div class="note">The model's window isn't known, so the bar is drawn against the point where the chat compacts.</div>
+            <div class="note">Window size unknown. The bar is drawn against the compaction point.</div>
           {/if}
           {#if data.source === "estimated"}
-            <div class="note">Estimated from the size of the text: the provider hasn't counted this yet.</div>
+            <div class="note">Estimated from text size. The provider hasn't counted it yet.</div>
           {:else if view?.anyEstimated}
             <div class="note">The total is the provider's count. Slices marked ~ are estimates, scaled to fit it.</div>
           {:else if data.source === "unknown"}

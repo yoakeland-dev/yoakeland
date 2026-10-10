@@ -620,7 +620,7 @@
       : asks.length
         ? "Tell it what to do instead"
         : !connected
-          ? "Connect to yoakeland to send this"
+          ? "Connect to a server first"
           : uploading
             ? "Waiting for uploads to finish"
             : !projectPath
@@ -629,12 +629,12 @@
                 ? "Pick a provider first"
                 : role === "confirm"
                   ? turnId
-                    ? "Wait for this turn to finish to send the edit"
+                    ? "Wait for this turn to finish"
                     : "Send the edit"
                   : role === "queue"
                     ? canSteer
-                      ? "Queue, sends when this turn ends (Ctrl+Enter sends it into this turn now)"
-                      : "Queue, sends when this turn ends"
+                      ? "Queue until this turn ends (Ctrl+Enter sends now)"
+                      : "Queue until this turn ends"
                     : "Send",
   );
 
@@ -879,7 +879,7 @@
                 ? `Or tell it what to do instead (answers all ${asks.length})…`
                 : "Or tell it what to do instead…"
               : !projectPath
-                ? "Pick a project in the sidebar to start chatting…"
+                ? "Pick a project in the sidebar to chat…"
                 : floating
                   ? isChat ? "Ask anything…" : "Ask anything about this project…"
                   : editingId

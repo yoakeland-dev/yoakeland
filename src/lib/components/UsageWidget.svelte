@@ -39,7 +39,7 @@
   <Popover.Root bind:open>
     <Popover.Trigger
       class="sb-trigger"
-      {@attach tip(`${focused.title} usage${focused.peak ? ` — ${focused.peak.label} ${focused.peak.pct}%` : ""}`)}
+      {@attach tip(`${focused.title} usage${focused.peak ? `: ${focused.peak.label} ${focused.peak.pct}%` : ""}`)}
       aria-label="Subscription usage"
     >
       {#if focused.icon}<LobeIcon name={focused.icon} size={12} />{/if}

@@ -16,7 +16,7 @@
   <EmptyState
     icon="robot"
     title="No subagents yet"
-    body="When the agent hands work to helpers, each one shows up here with its progress, the tools it used, and its report."
+    body="Each helper the agent starts shows up here with its progress, tools and report."
   />
 {:else}
   <div class="panel">

@@ -49,7 +49,7 @@
   const panels = $derived(
     isChat
       ? [
-          { ...PANELS.find((p) => p.id === "explorer")!, label: "Files", hint: "What this chat has made, and what you can add" },
+          { ...PANELS.find((p) => p.id === "explorer")!, label: "Files", hint: "Files this chat made, and anything you add" },
           ...PANELS.filter((p) => p.id !== "explorer" && p.id !== "git" && p.id !== "diffs"),
         ]
       : PANELS,
@@ -236,9 +236,9 @@
               <SubagentsPanel sessionId={sid} />
             {:else if !sidProject || !server}
               {#if server?.projectBySession[sid] === CHAT_PROJECT}
-                <EmptyState icon="folder" title="Nothing here yet" body="Files this chat makes show up here as it works." />
+                <EmptyState icon="folder" title="Nothing here yet" body="Files this chat makes appear here." />
               {:else}
-                <EmptyState icon="folder" title="No project yet" body="Pick a project for this chat and its files, changes and history show up here." />
+                <EmptyState icon="folder" title="No project yet" body="Pick a project to see its files, changes and history here." />
               {/if}
             {:else if p.id === "snapshots"}
               <SnapshotsPanel sessionId={sid} projectPath={sidProject} visible={here && open && p.id === sidPanel} />

@@ -144,6 +144,11 @@ async function redial(oldConnectionId: ConnectionId) {
             ...(!isDesktop && params.rtcFp ? { rtcFp: params.rtcFp } : {}),
             ...peerIdentity(),
           });
+    // Removed or disconnected while the connect was in flight: don't bring it back.
+    if (app.servers[oldConnectionId] !== server || server.connectionStatus !== "connecting") {
+      void invoke("disconnect", { connectionId: newConnectionId }).catch(() => {});
+      return;
+    }
     delete app.servers[oldConnectionId];
     stopLiveness(oldConnectionId); // oldConnectionId is retired, afterConnect(newConnectionId) starts fresh tracking
     server.connectionId = newConnectionId;
@@ -249,11 +254,7 @@ export async function send(connectionId: ConnectionId, envelope: Envelope) {
   }
 }
 
-export async function probeTcp(host: string, port: number): Promise<boolean> {
-  return invoke("probe_tcp", { host, port });
-}
-
-export async function probeUnix(path: string): Promise<boolean> {
+async function probeUnix(path: string): Promise<boolean> {
   return invoke("probe_unix", { path });
 }
 
@@ -856,20 +857,6 @@ export function deletePermissionRule(connectionId: ConnectionId, projectPath: st
   void send(connectionId, { type: "delete_permission_rule", data: { projectPath, id } });
 }
 
-/** Rejects a pending permission with an optional note on *why*, fed to the model as part of
- * this turn's denial message (§3.1 permission_response.feedback) so it can course-correct immediately. */
-export function denyPermissionWithFeedback(
-  connectionId: ConnectionId,
-  sessionId: string,
-  turnId: string,
-  toolCallId: string,
-  feedback: string,
-) {
-  respondPermission(connectionId, sessionId, turnId, toolCallId, false, false, feedback.trim() || undefined);
-  const server = app.servers[connectionId];
-  server?.removeAsk(toolCallId);
-}
-
 export function restoreSnapshot(connectionId: ConnectionId, sessionId: string, snapshotId: string, project?: string) {
   const projectPath = project ?? app.servers[connectionId]?.projectBySession[sessionId];
   void send(connectionId, { type: "restore_snapshot", sessionId, turnId: "", data: { snapshotId, projectPath } });
@@ -951,7 +938,7 @@ export function listDirectory(connectionId: ConnectionId, path?: string) {
 
 /** Opens (or reuses) a project on the server without starting a turn, e.g.
  * to validate a folder and list its threads before creating a new one. */
-export function openProject(connectionId: ConnectionId, path: string) {
+function openProject(connectionId: ConnectionId, path: string) {
   void send(connectionId, { type: "open_project", data: { path } });
 }
 
@@ -1091,7 +1078,7 @@ export async function startChatWith(connectionId: ConnectionId, projectPath: str
   if (server && id) server.restoredDraftBySession[id] = prompt;
 }
 
-export function listProjects(connectionId: ConnectionId) {
+function listProjects(connectionId: ConnectionId) {
   void send(connectionId, { type: "list_projects", data: {} });
 }
 
@@ -1101,7 +1088,7 @@ export function removeProject(connectionId: ConnectionId, path: string) {
   void send(connectionId, { type: "remove_project", data: { path } });
 }
 
-export function listSessionsForProject(connectionId: ConnectionId, projectPath: string) {
+function listSessionsForProject(connectionId: ConnectionId, projectPath: string) {
   const server = app.servers[connectionId];
   if (server) server.refreshingProjects[projectPath] = true;
   void send(connectionId, { type: "list_sessions", data: { projectPath } });
@@ -1125,11 +1112,11 @@ export function listFiles(connectionId: ConnectionId, projectPath: string) {
   void send(connectionId, { type: "list_files", data: { projectPath } });
 }
 
-export function listProviders(connectionId: ConnectionId) {
+function listProviders(connectionId: ConnectionId) {
   void send(connectionId, { type: "list_providers", data: {} });
 }
 
-export function detectCli(connectionId: ConnectionId) {
+function detectCli(connectionId: ConnectionId) {
   void send(connectionId, { type: "detect_cli", data: {} });
 }
 
@@ -1160,7 +1147,7 @@ export function compactContext(connectionId: ConnectionId, sessionId: string, in
 }
 
 /** Fetches one provider's available models (§3.1), called lazily per picker tab. */
-export function listModels(connectionId: ConnectionId, providerName: string) {
+function listModels(connectionId: ConnectionId, providerName: string) {
   void send(connectionId, { type: "list_models", data: { providerName } });
 }
 
@@ -1379,7 +1366,6 @@ export function setDefaultProvider(connectionId: ConnectionId, providerName: str
   void send(connectionId, { type: "set_default_provider", data: { providerName, model } });
 }
 
-/** Server-wide default for a first `user_prompt` that omits its own `autoGenerateTitle` (§3.1). */
 /** Replaces the server-wide model role table (SPEC.md §4f); a role left out runs on each chat's own model. */
 export function setModelRoles(connectionId: ConnectionId, roles: Record<string, ModelRole>) {
   void send(connectionId, { type: "set_model_roles", data: { roles } });
@@ -1413,7 +1399,7 @@ export function answerPairing(connectionId: ConnectionId, credential: string, al
   if (s) s.pairingRequests = s.pairingRequests.filter((r) => r.credential !== credential);
 }
 
-export function listTokens(connectionId: ConnectionId) {
+function listTokens(connectionId: ConnectionId) {
   void send(connectionId, { type: "list_tokens", data: {} });
 }
 
@@ -1489,13 +1475,13 @@ export function terminalClose(connectionId: ConnectionId, sessionId: string, ter
 
 /** Enumerates every open tab in one chat (§3.1); called whenever that chat opens, so the
  * tab strip/status icons are current even before the terminal drawer itself opens. */
-export function listTerminals(connectionId: ConnectionId, sessionId: string) {
+function listTerminals(connectionId: ConnectionId, sessionId: string) {
   void send(connectionId, { type: "list_terminals", sessionId, data: { sessionId } });
 }
 
 // ---- Notifications (§3.1 list_notifications/dismiss_notification) ----
 
-export function listNotifications(connectionId: ConnectionId) {
+function listNotifications(connectionId: ConnectionId) {
   void send(connectionId, { type: "list_notifications", data: {} });
 }
 

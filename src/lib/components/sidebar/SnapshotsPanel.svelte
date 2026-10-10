@@ -72,7 +72,7 @@
             type="button"
             class="restore"
             disabled={restoringId !== null}
-            {@attach tip("Restore the project to right before this snapshot")}
+            {@attach tip("Restore the project to just before this snapshot")}
             onclick={() => restore(snap.snapshotId, time(snap.createdAt))}
           >
             <Icon name="corner-up-left" size={13} />
@@ -93,7 +93,7 @@
       <EmptyState
         icon="history"
         title="No snapshots yet"
-        body="Each turn where yoakeland's own agent edits files saves one here, so you can rewind it. CLI agents (Claude, Codex, …) edit files directly; use git for those."
+        body="Each turn where yoakeland's own agent edits files saves one, so you can rewind. CLI agents (Claude, Codex, …) edit files directly; use git for those."
       />
     {/each}
   </div>

@@ -122,10 +122,9 @@
             <strong>{shellOff ? "No sandbox: bash is off" : "No sandbox: bash is unprotected"}</strong>
             <p>
               {#if shellOff}
-                This project has no isolation, so the model is not given bash or terminals here.
+                No isolation here, so the model gets no bash or terminals.
               {:else}
-                This project has no isolation. Bash and terminals run straight on this machine and can read or change anything
-                the server's user can, and there is nothing to contain a mistake.
+                This project has no isolation. Bash and terminals run directly on this machine and can read or change anything the server's user can. Nothing contains a mistake.
               {/if}
             </p>
           </div>

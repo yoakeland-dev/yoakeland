@@ -127,7 +127,7 @@
       fetched[k] = {
         ...fetched[k],
         loading: false,
-        error: msg.includes("no reply") ? "isn't reporting usage yet. Update yoakeland there to see it." : msg,
+        error: msg.includes("no reply") ? "Not reporting usage yet. Update yoakeland there." : msg,
       };
     }
   }
@@ -493,7 +493,7 @@
             { value: "yoake", label: "yoake only" },
           ]}
           bind:value={() => (yoakeOnly ? "yoake" : "all"), (v) => (yoakeOnly = v === "yoake")}
-          triggerTitle="All sources adds what Claude Code and Codex recorded on the server's machine outside yoakeland"
+          triggerTitle="Also counts what Claude Code and Codex recorded on the server's machine outside yoakeland"
         />
       {/if}
       {#if multiServer}
@@ -533,13 +533,13 @@
       <div class="empty">
         <span class="spin"><Icon name="loader-2" size={22} /></span>
         <p>Reading usage…</p>
-        <p class="hint">The first read goes through every chat and CLI transcript on the server.</p>
+        <p class="hint">The first read scans every chat and CLI transcript on the server.</p>
       </div>
     {:else if !hasData && status.errors.length === 0}
       <div class="empty">
         <Icon name="chart-bar" size={22} />
         <p>No usage recorded yet.</p>
-        <p class="hint">Each model request shows up here once a chat has run.</p>
+        <p class="hint">Each model request shows up here after a chat runs.</p>
       </div>
     {:else if hasData}
       <section class="cols" aria-label="Overview">

@@ -33,7 +33,7 @@
   {#snippet badges()}
     <Badge tone={s.scope === "project" ? "accent" : "neutral"}>{s.scope === "project" ? "Project" : "Yours"}</Badge>
     {#if s.argumentHint}<Badge mono>{s.argumentHint}</Badge>{/if}
-    {#if s.shadowed}<span {@attach tip("Another folder has a skill with this name that takes precedence")}><Badge>Shadowed</Badge></span>{/if}
+    {#if s.shadowed}<span {@attach tip("Another folder has a skill with this name, and it wins")}><Badge>Shadowed</Badge></span>{/if}
     {#if s.disableModelInvocation}<Badge tone="warning">Only when you name it</Badge>{/if}
     {#if !s.userInvocable}<Badge>Model only</Badge>{/if}
   {/snippet}

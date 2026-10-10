@@ -111,7 +111,7 @@
           paste(await readClipboard());
         },
       },
-      { label: "Select All", icon: "square", onSelect: () => term?.selectAll() },
+      { label: "Select all", icon: "square", onSelect: () => term?.selectAll() },
       {
         label: "Clear Scrollback",
         icon: "clear-all",
@@ -174,9 +174,17 @@
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
 
-    // OSC 52 clipboard read/write, so a remote tmux/vim inside the terminal
-    // can sync with the real system clipboard.
-    term.loadAddon(new ClipboardAddon());
+    // OSC 52 clipboard write, so a remote tmux/vim inside the terminal can
+    // copy to the real system clipboard. Reads are refused: any program's
+    // output could otherwise pull the clipboard (passwords, tokens) into the PTY.
+    term.loadAddon(
+      new ClipboardAddon(undefined, {
+        readText: async () => "",
+        writeText: async (selection, text) => {
+          if (selection === "c") await navigator.clipboard.writeText(text);
+        },
+      }),
+    );
 
     searchAddon = new SearchAddon();
     term.loadAddon(searchAddon);

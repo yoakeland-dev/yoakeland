@@ -272,8 +272,7 @@
           <Icon name="plug-connected" size={28} />
           <h2>MCP servers and skills</h2>
           <p>
-            MCP servers give the model tools beyond reading and editing files. Skills are folders of instructions it loads when a task fits.
-            Pick one on the left to see it in full.
+            MCP servers give the model tools beyond reading and editing files. Skills are instruction folders it loads when a task fits. Pick one on the left to see it in full.
           </p>
           {#if flat && ctxs[0]?.project}
             <div class="btns">

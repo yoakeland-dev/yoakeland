@@ -409,7 +409,7 @@
             </button>
           {:else}
             {#if allFiles}
-              <EmptyState icon="list-search" title="No matching files" body="Only file names are searched, not their contents." />
+              <EmptyState icon="list-search" title="No matching files" body="Searches file names only, not contents." />
             {:else}
               <EmptyState icon="loader-2" title="Listing files…" />
             {/if}
@@ -424,7 +424,7 @@
                 <button type="button" onclick={() => void load("")}><Icon name="refresh" size={12} /> Try again</button>
               </EmptyState>
             {:else if children[""] && !children[""].length && !naming}
-              <EmptyState icon="folder" title="This project is empty" body="Create a file to get started, or ask the agent to scaffold something.">
+              <EmptyState icon="folder" title="This project is empty" body="Create a file, or ask the agent to scaffold one.">
                 <button type="button" onclick={() => startNaming({ kind: "file", dir: "", value: "" })}><Icon name="file-plus" size={12} /> New file</button>
               </EmptyState>
             {/if}

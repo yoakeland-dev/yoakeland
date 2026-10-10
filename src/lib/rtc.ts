@@ -61,17 +61,26 @@ export async function openRtc(host: string, port: number, fingerprint: string, t
   const dc = pc.createDataChannel("", { negotiated: true, id: 0 });
   dc.binaryType = "arraybuffer";
 
-  const wire: Wire = {
-    async send(line) {
-      const bytes = new TextEncoder().encode(line);
-      for (let at = 0; at < bytes.length; at += MAX_MESSAGE) {
-        if (dc.readyState !== "open") throw new Error("connection closed");
-        if (dc.bufferedAmount > SEND_HIGH_WATER) {
-          dc.bufferedAmountLowThreshold = SEND_HIGH_WATER / 4;
-          await new Promise<void>((resolve) => dc.addEventListener("bufferedamountlow", () => resolve(), { once: true }));
-        }
-        dc.send(bytes.subarray(at, at + MAX_MESSAGE));
+  // A long line goes out as several slices with awaits between them; sends queue so one line's
+  // slices never interleave with another's (the server frames on newlines).
+  let tail: Promise<void> = Promise.resolve();
+  const write = async (line: string) => {
+    const bytes = new TextEncoder().encode(line);
+    for (let at = 0; at < bytes.length; at += MAX_MESSAGE) {
+      if (dc.readyState !== "open") throw new Error("connection closed");
+      if (dc.bufferedAmount > SEND_HIGH_WATER) {
+        dc.bufferedAmountLowThreshold = SEND_HIGH_WATER / 4;
+        await new Promise<void>((resolve) => dc.addEventListener("bufferedamountlow", () => resolve(), { once: true }));
       }
+      dc.send(bytes.subarray(at, at + MAX_MESSAGE));
+    }
+  };
+
+  const wire: Wire = {
+    send(line) {
+      const p = tail.then(() => write(line));
+      tail = p.catch(() => {});
+      return p;
     },
     close() {
       dc.onclose = null;
