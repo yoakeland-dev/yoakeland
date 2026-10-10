@@ -7,6 +7,15 @@ import path from "node:path";
 import test from "node:test";
 import { commands, loadCredential, loadThemes, storeCredential, themesRevealPath } from "./backend.js";
 
+// Waits for a condition instead of sleeping: a fixed delay is too short on a loaded machine.
+async function until(cond, what, ms = 10_000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 test("unix connect: auth frame, framing, oversized frame, disconnect event", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "yoake-"));
   const sockPath = path.join(dir, "s.sock");
@@ -17,7 +26,14 @@ test("unix connect: auth frame, framing, oversized frame, disconnect event", asy
     s.setEncoding("utf8").on("data", (d) => got.push(d));
   });
   await new Promise((r) => server.listen(sockPath, r));
+  try {
+    await unixConnectBody();
+  } finally {
+    peer?.destroy(); // a failed assertion must not leave the server holding the process open
+    server.close();
+  }
 
+  async function unixConnectBody() {
   const events = [];
   const cmds = commands((channel, payload) => events.push({ channel, payload }));
   assert.equal(await cmds.probe_unix({ path: sockPath }), true);
@@ -25,7 +41,7 @@ test("unix connect: auth frame, framing, oversized frame, disconnect event", asy
 
   const id = await cmds.connect_unix({ path: sockPath, name: "me" });
   await cmds.send_envelope({ connectionId: id, envelope: { type: "ping" } });
-  await new Promise((r) => setTimeout(r, 50));
+  await until(() => got.join("").trim().split("\n").length >= 2, "the auth and ping frames");
   assert.deepEqual(got.join("").trim().split("\n").map((l) => JSON.parse(l)), [
     { type: "auth", data: { name: "me" } },
     { type: "ping" },
@@ -33,9 +49,9 @@ test("unix connect: auth frame, framing, oversized frame, disconnect event", asy
 
   peer.write('{"a":1}\n\n{"b"');
   peer.write(':2}\nnot json\n' + "x".repeat(11 * 1024 * 1024) + 'tail\n{"c":3}\n');
-  await new Promise((r) => setTimeout(r, 200));
+  await until(() => events.filter((e) => e.channel === "yoake-event").length >= 3, "the three frames");
   peer.end();
-  await new Promise((r) => setTimeout(r, 50));
+  await until(() => events.some((e) => e.channel === "yoake-disconnected"), "the disconnect");
 
   const envs = events.filter((e) => e.channel === "yoake-event").map((e) => e.payload.envelope);
   assert.deepEqual(envs, [{ a: 1 }, { b: 2 }, { c: 3 }]);
@@ -45,7 +61,7 @@ test("unix connect: auth frame, framing, oversized frame, disconnect event", asy
   assert.match(logs[1], /oversized/);
   assert.deepEqual(events.at(-1), { channel: "yoake-disconnected", payload: { connectionId: id, reason: "connection closed" } });
   await assert.rejects(async () => cmds.send_envelope({ connectionId: id, envelope: {} }), /not connected/);
-  server.close();
+  }
 });
 
 test("credentials: store, load, delete, 0600", async () => {
