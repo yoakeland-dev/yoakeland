@@ -64,14 +64,12 @@
     // The hosted page pins the fingerprint instead of a CA, so only the fallback needs trusting.
     hasCa = !!t.caPem && !rtcFp;
     server.justRegisteredToken = null;
-    seen = new Set(server.peers.map((p) => p.peerId));
     phase = hasCa ? "trust" : "scan";
   });
 
-  // The phone's own name and picture arrive with its first peer_list; showing them confirms the
-  // right device paired and that it kept its identity.
-  let seen = new Set<string>();
-  const joined = $derived(phase === "scan" ? server?.peers.find((p) => !seen.has(p.peerId) && p.deviceType === "web") : undefined);
+  // The phone connects under the token just made, so match on that: its own name and picture then
+  // confirm the right device paired and kept its identity.
+  const joined = $derived(phase === "scan" ? server?.peers.find((p) => p.credential === name) : undefined);
 
   function create(e: Event) {
     e.preventDefault();

@@ -436,6 +436,8 @@ export type DeviceType = "web" | "desktop" | "server";
 export interface PeerInfo {
   peerId: string;
   name: string;
+  /** The token it signed in with (not chosen by the device); absent on the local socket. */
+  credential?: string;
   ip: string;
   deviceType: DeviceType;
   avatar?: string;

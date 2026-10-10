@@ -77,8 +77,9 @@
     if (seededName || name) return;
     const given = Object.values(app.servers)
       .filter((s) => s.connectionMode !== "local")
-      .map((s) => s.peers.find((p) => p.peerId === s.selfPeerId)?.name)
-      .find(Boolean);
+      .map((s) => s.peers.find((p) => p.peerId === s.selfPeerId))
+      // Only a name that came from pairing: not the shared token's, nor a generated placeholder.
+      .find((p) => p?.credential && p.credential !== "default" && p.name === p.credential)?.name;
     if (given) ((name = given), (seededName = true));
   });
   function saveProfile() {
