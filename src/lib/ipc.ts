@@ -128,6 +128,11 @@ async function redial(oldConnectionId: ConnectionId) {
   const params = server.connectParams;
   server.connectionStatus = "connecting";
   try {
+    // A daemon that stopped (a restart, a crash) is started again, as the app does at launch.
+    if (isDesktop && params.mode === "local" && !(await probeUnix(params.socketPath))) {
+      await spawnDetachedUnixServer({ binPath: "yoakeland", socketPath: params.socketPath });
+      for (let i = 0; i < 25 && !(await probeUnix(params.socketPath)); i++) await new Promise((r) => setTimeout(r, 200));
+    }
     const newConnectionId =
       params.mode === "local"
         ? await invoke<string>("connect_unix", { path: params.socketPath, ...peerIdentity() })
@@ -286,13 +291,21 @@ export async function installServer(): Promise<string> {
 async function updateServer(connectionId: ConnectionId) {
   try {
     const v = await installServer();
-    app.toastAction(connectionId, `Downloaded server v${v}. Restart the server to use it.`);
+    app.toastAction(connectionId, `Downloaded server v${v}. Restarting it…`);
+    restartServer(connectionId);
   } catch (err) {
     app.toastAction(connectionId, `Server update failed: ${err}`);
   }
 }
+
+/** Stops the local daemon so it comes back as the newest installed binary (redial starts it again).
+ * It refuses while chats are running unless forced; the server_restart answer says which. */
+export function restartServer(connectionId: ConnectionId, force = false) {
+  void send(connectionId, { type: "restart_server", data: { force: force || undefined } });
+}
 if (isDesktop) app.updateServer = (id) => void updateServer(id);
 app.answerPairing = (id, credential, allow) => answerPairing(id, credential, allow);
+app.restartServer = (id, force) => restartServer(id, force);
 
 function afterConnect(connectionId: ConnectionId) {
   const server = app.servers[connectionId];

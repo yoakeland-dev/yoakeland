@@ -2432,6 +2432,17 @@ export class ServerState {
         this.setSessionSyncing(data.sessionId, false);
         break;
       }
+      case "server_restart": {
+        const data = env.data as { status: "restarting" | "busy"; activeTurns?: number };
+        if (data.status === "busy") {
+          const n = data.activeTurns ?? 0;
+          this.app.toastAction(this.connectionId, `${n} chat${n === 1 ? " is" : "s are"} still running. Restarting stops them.`, {
+            label: "Restart anyway",
+            run: () => this.app.restartServer?.(this.connectionId, true),
+          });
+        } else this.app.toastAction(this.connectionId, "Restarting the server…");
+        break;
+      }
       case "pairing_pending": {
         this.awaitingApproval = true;
         this.app.toastAction(this.connectionId, "Waiting for the computer to approve this phone…");
@@ -2647,6 +2658,8 @@ class AppState {
   latestServerVersion = $state<string | null>(null);
   /** Set by ipc.ts on desktop, where the app can download the server itself. */
   updateServer: ((connectionId: ConnectionId) => void) | null = null;
+  /** Set by ipc.ts: restarts the local daemon. */
+  restartServer: ((connectionId: ConnectionId, force?: boolean) => void) | null = null;
   /** Set by ipc.ts: answers a pairing request (kept out of this file's imports, like updateServer). */
   answerPairing: ((connectionId: ConnectionId, credential: string, allow: boolean) => void) | null = null;
 

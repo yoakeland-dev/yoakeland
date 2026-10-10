@@ -11,7 +11,7 @@ test("every kind the server writes has a label (Go audit.Kinds)", () => {
     "perm_decision", "perm_auto", "tool_exec", "mode_change", "rule_add", "rule_remove", "limit_pause",
     "provider_add", "provider_remove", "settings_change", "remote_access", "remote_password", "token_add",
     "token_remove", "peer_join", "peer_leave", "peer_kick", "auth_fail", "snapshot_restore", "terminal_open",
-    "file_write", "fs_op", "session_delete", "project_remove", "mcp_server", "skill_change",
+    "file_write", "fs_op", "session_delete", "project_remove", "mcp_server", "skill_change", "server_restart",
   ];
   assert.deepEqual(AUDIT_KINDS.map((k) => k.kind), kinds);
   for (const k of kinds) assert.notEqual(auditKindLabel(k), k);

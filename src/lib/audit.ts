@@ -36,6 +36,7 @@ export const AUDIT_KINDS: AuditKind[] = [
   { kind: "project_remove", label: "Projects removed" },
   { kind: "mcp_server", label: "MCP servers", risky: true },
   { kind: "skill_change", label: "Skills" },
+  { kind: "server_restart", label: "Server restarts" },
 ];
 
 /** The filter row groups the kinds into a few chips; each one toggles all of its kinds. */
@@ -43,7 +44,7 @@ export const AUDIT_CATEGORIES: { label: string; kinds: string[] }[] = [
   { label: "Approvals", kinds: ["perm_decision", "perm_auto", "rule_add", "rule_remove", "mode_change", "limit_pause"] },
   { label: "Activity", kinds: ["tool_exec", "terminal_open", "file_write", "fs_op", "snapshot_restore", "session_delete", "project_remove"] },
   { label: "Access", kinds: ["remote_access", "remote_password", "token_add", "token_remove", "peer_join", "peer_leave", "peer_kick", "auth_fail"] },
-  { label: "Config", kinds: ["settings_change", "provider_add", "provider_remove", "mcp_server", "skill_change"] },
+  { label: "Config", kinds: ["settings_change", "provider_add", "provider_remove", "mcp_server", "skill_change", "server_restart"] },
 ];
 
 export const auditKindLabel = (kind: string) => AUDIT_KINDS.find((k) => k.kind === kind)?.label ?? kind;
@@ -95,6 +96,8 @@ export function describeAudit(e: AuditEvent): string {
       return `${who} created token${on}`;
     case "token_remove":
       return `${who} revoked token${on}`;
+    case "server_restart":
+      return `${who} restarted the server`;
     case "peer_join":
       return `${who} connected${e.ip ? ` from ${e.ip}` : ""}`;
     case "peer_leave":

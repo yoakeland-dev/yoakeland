@@ -16,6 +16,7 @@
     serverRows,
     type ServerRow,
     setPeerName,
+    restartServer,
     setPeerAvatar,
     disconnectPeer,
     removeServer,
@@ -1315,6 +1316,12 @@
               {#if server?.outdated}
                 <div class="setting-row">
                   {@render rowText("Server is out of date", `Running ${server.version ? "v" + server.version : "a version that doesn't report itself"}, the latest is v${app.latestServerVersion}.`)}
+                </div>
+              {/if}
+              {#if server?.connectionMode === "local"}
+                <div class="setting-row">
+                  {@render rowText("Restart server", "Stops the server and starts it again, as the newest installed version. Chats that are running are stopped; you're asked first.")}
+                  <Button type="button" onclick={() => restartServer(server.connectionId)} disabled={!connected}>Restart</Button>
                 </div>
               {/if}
               <div class="setting-row">
