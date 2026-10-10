@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as backend from "./backend.js";
 import { createOsAlerts } from "./osAlerts.js";
+import { lanHosts } from "./lanHosts.js";
 import { createGuards } from "./agentGuard.js";
 import { createOAuthListener } from "./oauthListener.js";
 
@@ -153,12 +154,9 @@ handle("shell:badge", ({ count }) => osAlerts.badge(count));
 
 // What "Pair a phone" needs: the built web client for yoakeland to serve (a Go process can't read
 // inside app.asar, hence asarUnpack) and this machine's LAN addresses for the QR code's URL.
-handle("shell:pair_info", () => {
+handle("shell:pair_info", async () => {
   const webRoot = BUILD_DIR.replace(/app\.asar(?=[\\/])/, "app.asar.unpacked");
-  const hosts = Object.values(os.networkInterfaces())
-    .flat()
-    .filter((a) => a && a.family === "IPv4" && !a.internal)
-    .map((a) => a.address);
+  const hosts = await lanHosts();
   return { webRoot: existsSync(path.join(webRoot, "index.html")) ? webRoot : "", hosts };
 });
 handle("shell:reveal", ({ path: p }) => shell.showItemInFolder(p));

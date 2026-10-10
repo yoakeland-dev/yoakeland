@@ -8,12 +8,15 @@ export interface PairingCode {
   /** Where the server is, when the code is opened on a page that isn't served by that server. */
   host?: string;
   port?: number;
+  /** Other addresses the server may be reachable at, tried alongside `host`. */
+  hosts?: string[];
   /** The server's DTLS certificate fingerprint: what a WebRTC connection pins (rtc.ts). */
   rtcFp?: string;
 }
 
-export function encodePairingCode(token: string, caPem?: string, where?: { host: string; port: number; rtcFp: string }): string {
-  const json = JSON.stringify({ t: token, ...(caPem ? { ca: caPem } : {}), ...(where ? { h: where.host, p: where.port, fp: where.rtcFp } : {}) });
+export function encodePairingCode(token: string, caPem?: string, where?: { host: string; port: number; rtcFp: string; hosts?: string[] }): string {
+  const more = where?.hosts?.length ? { hs: where.hosts } : {};
+  const json = JSON.stringify({ t: token, ...(caPem ? { ca: caPem } : {}), ...(where ? { h: where.host, ...more, p: where.port, fp: where.rtcFp } : {}) });
   return bytesToBase64(new TextEncoder().encode(json));
 }
 
@@ -30,6 +33,7 @@ export function decodePairingCode(code: string): PairingCode | null {
       host: where ? parsed.h : undefined,
       port: where ? parsed.p : undefined,
       rtcFp: typeof parsed.fp === "string" ? parsed.fp : undefined,
+      ...(where && Array.isArray(parsed.hs) && parsed.hs.length ? { hosts: parsed.hs.filter((h: unknown) => typeof h === "string").slice(0, 4) } : {}),
     };
   } catch {
     return null;
@@ -44,8 +48,10 @@ export const HOSTED_APP_URL = "https://app.yoake.land";
 /** What the QR code on the desktop encodes. Everything rides in the fragment, so it never reaches
  * any server or its logs. Without a fingerprint (an older server) it opens the server's own page,
  * which the phone must trust the server's CA to load. */
-export function pairingUrl(host: string, port: number, token: string, rtcFp?: string, appUrl = HOSTED_APP_URL): string {
-  if (rtcFp) return `${appUrl}/#pair=${encodePairingCode(token, undefined, { host, port, rtcFp })}`;
+export function pairingUrl(host: string | string[], port: number, token: string, rtcFp?: string, appUrl = HOSTED_APP_URL): string {
+  const [first, ...others] = Array.isArray(host) ? host : [host];
+  host = first;
+  if (rtcFp) return `${appUrl}/#pair=${encodePairingCode(token, undefined, { host, port, rtcFp, hosts: others })}`;
   return `https://${host}:${port}/#pair=${encodePairingCode(token)}`;
 }
 

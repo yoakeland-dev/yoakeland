@@ -128,3 +128,24 @@ export async function openRtc(host: string, port: number, fingerprint: string, t
   };
   return wire;
 }
+
+/** Opens whichever of the server's addresses answers first and closes the rest: a QR code made on
+ * a machine with several network interfaces can't know which one the phone can reach. */
+export async function openRtcAny(hosts: string[], port: number, fingerprint: string): Promise<{ wire: Wire; host: string }> {
+  let won = false;
+  const tries = hosts.map((host) =>
+    openRtc(host, port, fingerprint).then((wire) => {
+      if (won) {
+        wire.close();
+        throw new Error("another address answered first");
+      }
+      won = true;
+      return { wire, host };
+    }),
+  );
+  try {
+    return await Promise.any(tries);
+  } catch (e) {
+    throw e instanceof AggregateError ? e.errors[0] : e;
+  }
+}

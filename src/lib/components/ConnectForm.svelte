@@ -76,11 +76,12 @@
     token = scanned.token;
     if (scanned.caPem) caPem = scanned.caPem;
     rtcFp = scanned.rtcFp ?? "";
+    alternates = scanned.hosts ?? [];
     if (!scanned.host || !scanned.port) return goToAddress();
     host = scanned.host;
     port = scanned.port;
     step = "code";
-    void attempt(() => connectTcp(host, port, token, caPem, rtcFp || undefined));
+    void attempt(() => connectTcp(host, port, token, caPem, rtcFp || undefined, alternates));
   }
   function fail(message: string) {
     scanError = message;
@@ -141,6 +142,7 @@
   // one step. Purely a shortcut, no submit of its own.
   let pairingCode = $state("");
   let rtcFp = $state("");
+  let alternates = $state<string[]>([]);
   let pairingError = $state<string | null>(null);
   function applyPairingCode(value: string) {
     pairingCode = value;
@@ -165,6 +167,7 @@
       port = decoded.port;
     }
     rtcFp = decoded.rtcFp ?? "";
+    alternates = decoded.hosts ?? [];
   }
 
   // §2a: TLS is mandatory. Remembered per host:port so returning to a known
@@ -224,7 +227,7 @@
   }
   function submitRemote(e: Event) {
     e.preventDefault();
-    return attempt(() => connectTcp(host, port, token, caPem, rtcFp || undefined));
+    return attempt(() => connectTcp(host, port, token, caPem, rtcFp || undefined, alternates));
   }
 </script>
 

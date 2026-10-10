@@ -127,7 +127,7 @@
         <Dialog.Description class="pair-hint">
           Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. The first phone to scan it is the only one it works for, and it expires in 10 minutes. You'll be asked to allow it here.
         </Dialog.Description>
-        <div class="qr"><QrCode text={pairingUrl(host, port, token, rtcFp || undefined)} label="Pairing code" /></div>
+        <div class="qr"><QrCode text={pairingUrl([host, ...hosts.filter((h) => h !== host)], port, token, rtcFp || undefined)} label="Pairing code" /></div>
         {#if request}
           <div class="pair-request">
             <p><strong>{request.name || "A device"}</strong> scanned this{request.ip ? ` from ${request.ip}` : ""}. Let it in?</p>
@@ -142,7 +142,7 @@
             <strong>{joined.name}</strong> connected
           </p>
         {:else}
-          <p class="pair-url"><Icon name="device-mobile" size={13} /> {host}:{port}</p>
+          <p class="pair-url"><Icon name="device-mobile" size={13} /> {[host, ...hosts.filter((h) => h !== host)].join(" · ")}:{port}</p>
         {/if}
         <div class="pair-actions">
           <Button type="button" variant="primary" onclick={() => (open = false)}>Done</Button>

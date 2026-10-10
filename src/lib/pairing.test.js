@@ -37,3 +37,11 @@ test("a scanned QR is a hosted URL, a server URL or a bare code", () => {
   assert.equal(parseScanned(btoa(JSON.stringify({ t: "tok" }))).token, "tok");
   assert.equal(parseScanned("https://example.com/"), null);
 });
+
+test("a code carries every address and a phone gets them all back", async () => {
+  const { pairingUrl, parseScanned } = await import("./pairing.ts");
+  const got = parseScanned(pairingUrl(["192.168.1.5", "10.0.0.2", "100.64.1.1"], 7890, "tok", "AB:CD"));
+  assert.equal(got.host, "192.168.1.5");
+  assert.deepEqual(got.hosts, ["10.0.0.2", "100.64.1.1"]);
+  assert.equal(parseScanned(pairingUrl("192.168.1.5", 7890, "tok", "AB:CD")).hosts?.length ?? 0, 0);
+});

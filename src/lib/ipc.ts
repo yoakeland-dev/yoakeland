@@ -11,7 +11,7 @@ import {
 } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
 import { briefOf, continuationDraft } from "./chatBrief";
-import { isDesktop, invoke, listen, openUrl, pickFiles } from "./platform";
+import { connectedHost, isDesktop, invoke, listen, openUrl, pickFiles } from "./platform";
 import { bytesToBase64, base64ToBytes } from "./base64";
 import { decodePairingCode } from "./pairing";
 import { handleBrowserRequest } from "./browserAgent.svelte";
@@ -365,7 +365,7 @@ export async function importCaCertFile(): Promise<string | null> {
 
 /** `rtcFp` is only for the browser build: it picks WebRTC over a WebSocket (rtc.ts). The desktop
  * app speaks TLS to the server directly and pins `caPem` instead. */
-export async function connectTcp(host: string, port: number, token: string, caPem?: string, rtcFp?: string): Promise<ConnectionId> {
+export async function connectTcp(host: string, port: number, token: string, caPem?: string, rtcFp?: string, alternates?: string[]): Promise<ConnectionId> {
   app.setPendingConnect("connecting", "remote");
   try {
     const connectionId = await invoke<string>("connect_tcp", {
@@ -373,9 +373,11 @@ export async function connectTcp(host: string, port: number, token: string, caPe
       port,
       token,
       caPem: caPem || undefined,
-      ...(!isDesktop && rtcFp ? { rtcFp } : {}),
+      ...(!isDesktop && rtcFp ? { rtcFp, alternates } : {}),
       ...peerIdentity(),
     });
+    // Of several addresses the one that answered is the one to remember and redial.
+    host = connectedHost(connectionId) ?? host;
     const server = new ServerState(connectionId, app, { mode: "remote", host, port, token, caPem, rtcFp });
     app.servers[connectionId] = server;
     // A bad token isn't refused while connecting: it comes back as a fatal error. Left in place, the
@@ -467,7 +469,7 @@ async function connectFromUrl(): Promise<ConnectionId | null> {
   if (!code) return null;
   // A code with an address was made for a page that isn't served by the server (the hosted app);
   // one without opened the server's own page.
-  if (code.host && code.port && code.rtcFp) return connectTcp(code.host, code.port, code.token, undefined, code.rtcFp).catch(() => null);
+  if (code.host && code.port && code.rtcFp) return connectTcp(code.host, code.port, code.token, undefined, code.rtcFp, code.hosts).catch(() => null);
   return connectTcp(location.hostname, Number(location.port) || 443, code.token).catch(() => null);
 }
 

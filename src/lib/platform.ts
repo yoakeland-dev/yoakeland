@@ -1,7 +1,7 @@
 // Components reach Electron (window.yoake, electron/preload.cjs) only through
 // this file.
 
-import { canUseRtc, openRtc, type Wire } from "./rtc";
+import { canUseRtc, openRtc, openRtcAny, type Wire } from "./rtc";
 
 interface YoakeBridge {
   invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -80,20 +80,29 @@ async function openWebSocket(host: string, port: number): Promise<Wire> {
   return wire;
 }
 
+/** The address a web connection actually opened to (the first of several, for a QR code). */
+const webHosts = new Map<string, string>();
+export const connectedHost = (connectionId: string): string | undefined => webHosts.get(connectionId);
+
 async function webInvoke(cmd: string, args: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
     case "connect_tcp": {
-      const { host, port, token, caPem: _ca, rtcFp, ...identity } = args;
+      const { host, port, token, caPem: _ca, rtcFp, alternates, ...identity } = args;
       let wire: Wire;
+      let usedHost = String(host);
       if (rtcFp && canUseRtc(String(host))) {
-        wire = await openRtc(String(host), Number(port), String(rtcFp)).catch((e) => {
-          throw `couldn't reach ${host}:${port} over WebRTC (${e instanceof Error ? e.message : e}). Is remote access on, and is UDP port ${port} reachable from here?`;
+        const hosts = [String(host), ...((alternates as string[] | undefined) ?? [])].filter((h, i, all) => canUseRtc(h) && all.indexOf(h) === i);
+        const opened = await openRtcAny(hosts, Number(port), String(rtcFp)).catch((e) => {
+          throw `couldn't reach ${hosts.join(" or ")}:${port} over WebRTC (${e instanceof Error ? e.message : e}). Is remote access on, and is UDP port ${port} reachable from here?`;
         });
+        wire = opened.wire;
+        usedHost = opened.host;
       } else {
         wire = await openWebSocket(String(host), Number(port));
       }
       const connectionId = crypto.randomUUID();
       webWires.set(connectionId, wire);
+      webHosts.set(connectionId, usedHost);
       wire.onLine = (line) => {
         try {
           webEmit("yoake-event", { connectionId, envelope: JSON.parse(line) });
