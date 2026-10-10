@@ -48,3 +48,18 @@ export function pairingUrl(host: string, port: number, token: string, rtcFp?: st
   if (rtcFp) return `${appUrl}/#pair=${encodePairingCode(token, undefined, { host, port, rtcFp })}`;
   return `https://${host}:${port}/#pair=${encodePairingCode(token)}`;
 }
+
+/** What a scanned QR code holds: a pairing URL (the hosted app's, or the server's own page) or a
+ * bare code. The fallback URL has no address inside it, so it comes from the URL itself. */
+export function parseScanned(text: string): PairingCode | null {
+  const t = text.trim();
+  const i = t.indexOf("#pair=");
+  const code = decodePairingCode(i < 0 ? t : t.slice(i + "#pair=".length));
+  if (!code || code.host || i < 0) return code;
+  try {
+    const u = new URL(t);
+    return { ...code, host: u.hostname, port: Number(u.port) || 443 };
+  } catch {
+    return code;
+  }
+}

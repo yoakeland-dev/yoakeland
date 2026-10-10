@@ -14,6 +14,8 @@
   import ServerAvatar from "./ServerAvatar.svelte";
   import Dropdown from "./Dropdown.svelte";
   import AboutDialog from "./AboutDialog.svelte";
+  import { isDesktop } from "../platform";
+  import PairPhoneDialog from "./PairPhoneDialog.svelte";
   import SearchInput from "./SearchInput.svelte";
   import { matches } from "../keybinds.svelte";
   import { viewport, drawerWidth } from "../viewport.svelte";
@@ -111,6 +113,9 @@
 
   let userMenuOpen = $state(false);
   let showAbout = $state(false);
+  let showPair = $state(false);
+  // Pairing a phone needs the daemon on this machine: it makes the token and serves the page.
+  const localCid = $derived(connectedServers.find(([, srv]) => srv.connectionMode === "local")?.[0]);
   const THEMES = [
     { id: "light", label: "Light", icon: "sun-light" },
     { id: "dark", label: "Dark", icon: "half-moon" },
@@ -876,6 +881,11 @@
                 </DropdownMenu.SubContent>
               </DropdownMenu.Portal>
             </DropdownMenu.Sub>
+            {#if isDesktop}
+              <DropdownMenu.Item class="context-menu-item" disabled={!localCid} onSelect={() => (showPair = true)}>
+                <Icon name="qrcode" size={13} /><span>Pair a phone</span>
+              </DropdownMenu.Item>
+            {/if}
             <DropdownMenu.Item class="context-menu-item" onSelect={() => (showAbout = true)}>
               <Icon name="info-circle" size={13} /><span>About</span>
             </DropdownMenu.Item>
@@ -915,6 +925,7 @@
       </button>
     </div>
     <AboutDialog bind:open={showAbout} />
+    {#if localCid}<PairPhoneDialog bind:open={showPair} cid={localCid} />{/if}
 
     {#if !app.sidebarCollapsed || resizing}
       <!-- Also mounted mid-drag while collapsed, since unmounting it here

@@ -4,7 +4,6 @@
   // connects straight to this server (ipc.ts, rtc.ts); nothing to install. A server too old to
   // send a fingerprint falls back to its own page, which needs the phone to trust its CA first.
   import { Dialog } from "bits-ui";
-  import { renderSVG } from "uqr";
   import { app } from "../state.svelte";
   import { registerToken, setRemoteAccess } from "../ipc";
   import { pairInfo } from "../platform";
@@ -12,6 +11,7 @@
   import Button from "./ui/Button.svelte";
   import TextField from "./ui/TextField.svelte";
   import Icon from "./Icon.svelte";
+  import QrCode from "./QrCode.svelte";
 
   let { open = $bindable(false), cid }: { open?: boolean; cid: string } = $props();
 
@@ -81,7 +81,6 @@
     }, 6000);
   }
 
-  const qr = (text: string) => renderSVG(text, { ecc: "M", border: 2 });
   const caUrl = $derived(`https://${host}:${port}/ca.crt`);
 </script>
 
@@ -90,7 +89,7 @@
     <Dialog.Overlay class="dialog-overlay" />
     <Dialog.Content class="dialog-content pair">
       <Dialog.Close class="dialog-close pair-close"><Icon name="xmark" size={14} /></Dialog.Close>
-      <Dialog.Title class="pair-title">Pair a phone</Dialog.Title>
+      <Dialog.Title class="pair-title"><span class="pair-badge"><Icon name="qrcode" size={16} /></span> Pair a phone</Dialog.Title>
 
       {#if phase === "form" || phase === "waiting"}
         <Dialog.Description class="pair-hint">
@@ -115,7 +114,7 @@
         <Dialog.Description class="pair-hint">
           <strong>1. Trust this server.</strong> It signs its own certificate, so the phone needs it once. Scan, tap through the warning (this is only the public certificate) and install it.
         </Dialog.Description>
-        <div class="qr" aria-label="Certificate download link">{@html qr(caUrl)}</div>
+        <div class="qr"><QrCode text={caUrl} label="Certificate download link" /></div>
         <details>
           <summary>How to install it</summary>
           <p><strong>Android:</strong> Settings → Security → Encryption &amp; credentials → Install a certificate → CA certificate.</p>
@@ -129,8 +128,8 @@
         <Dialog.Description class="pair-hint">
           {#if hasCa}<strong>2. Sign in.</strong>{/if} Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. This code is shown once and works for anyone who scans it, so close this when you're done.
         </Dialog.Description>
-        <div class="qr" aria-label="Pairing code">{@html qr(pairingUrl(host, port, token, rtcFp || undefined))}</div>
-        <p class="pair-url">{host}:{port}</p>
+        <div class="qr"><QrCode text={pairingUrl(host, port, token, rtcFp || undefined)} label="Pairing code" /></div>
+        <p class="pair-url"><Icon name="device-mobile" size={13} /> {host}:{port}</p>
         <div class="pair-actions">
           <Button type="button" variant="primary" onclick={() => (open = false)}>Done</Button>
         </div>
@@ -152,6 +151,9 @@
     right: 0.57rem;
   }
   :global(.pair-title) {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     margin: 0;
     font-size: var(--text-title-size);
     font-weight: 600;
@@ -188,22 +190,32 @@
     padding: 0 0.5rem;
   }
   /* Scanners need dark on light with a quiet zone, whatever the theme. */
+  :global(.pair-badge) {
+    display: grid;
+    place-items: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 50%;
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
   .qr {
     align-self: center;
-    width: min(15rem, 100%);
+    width: min(16rem, 100%);
+    padding: 0.55rem;
     background: #fff;
-    color: #000;
-    border-radius: var(--radius-md, 0.5rem);
-    padding: 0.4rem;
+    border-radius: var(--radius-lg);
+    box-shadow:
+      0 0 0 1px var(--panel-border),
+      0 14px 40px -14px color-mix(in srgb, var(--accent) 70%, transparent);
     line-height: 0;
   }
-  .qr :global(svg) {
-    width: 100%;
-    height: auto;
-  }
   .pair-url {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
     margin: 0;
-    text-align: center;
     font-family: var(--font-mono, monospace);
     font-size: var(--text-label-size);
     color: var(--text-dim);

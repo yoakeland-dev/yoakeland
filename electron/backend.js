@@ -8,6 +8,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
+import { installedServer, installServer, latestRelease, managedBinPath } from "./serverInstall.js";
 
 const MAX_FRAME_BYTES = 10 * 1024 * 1024;
 const PROBE_TIMEOUT_MS = 400;
@@ -139,10 +140,16 @@ export function commands(emit, dataDir) {
     // A bare daemon: it is configured at runtime over its socket (set_remote_access,
     // set_runtime_settings, ...), never by launch flags. Only a non-default socket
     // location is still a launch argument, because nothing can be told before it exists.
-    spawn_detached_unix_server: ({ binPath, socketPath }) => {
+    spawn_detached_unix_server: async ({ binPath, socketPath }) => {
       const wanted = expandTilde(socketPath);
+      // The bare default means "whatever is installed": a downloaded copy wins over PATH.
+      if (binPath === "yoakeland" && (await installedServer(dataDir))) binPath = managedBinPath(dataDir);
       return spawnDetached(dataDir, binPath, wanted === defaultSocketPath() ? [] : ["-listen", `unix:${wanted}`]);
     },
+
+    server_installed: () => installedServer(dataDir),
+    server_latest_release: () => latestRelease(),
+    server_install: () => installServer(dataDir),
 
     connect_tcp: async ({ host, port, token, caPem, ...rest }) => {
       const sock = tls.connect({

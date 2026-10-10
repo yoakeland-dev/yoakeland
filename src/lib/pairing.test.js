@@ -1,7 +1,7 @@
 // @ts-nocheck: run by node --test, which needs the .ts import extension.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodePairingCode, pairingUrl } from "./pairing.ts";
+import { decodePairingCode, pairingUrl, parseScanned } from "./pairing.ts";
 
 test("the QR URL carries the token in the fragment and decodes back", () => {
   const url = new URL(pairingUrl("192.168.1.20", 7890, "tok+/en=="));
@@ -27,4 +27,13 @@ test("a code with a fingerprint opens the hosted app and carries the address", (
 test("a code from the server's console has a fingerprint but no address", () => {
   const code = decodePairingCode(btoa(JSON.stringify({ t: "tok", ca: "PEM", fp: "AB:CD" })));
   assert.deepEqual(code, { token: "tok", caPem: "PEM", host: undefined, port: undefined, rtcFp: "AB:CD" });
+});
+
+test("a scanned QR is a hosted URL, a server URL or a bare code", () => {
+  const hosted = parseScanned(pairingUrl("10.0.0.2", 7890, "tok", "AB:CD"));
+  assert.deepEqual([hosted.token, hosted.host, hosted.port, hosted.rtcFp], ["tok", "10.0.0.2", 7890, "AB:CD"]);
+  const own = parseScanned(pairingUrl("10.0.0.2", 7890, "tok"));
+  assert.deepEqual([own.token, own.host, own.port], ["tok", "10.0.0.2", 7890]);
+  assert.equal(parseScanned(btoa(JSON.stringify({ t: "tok" }))).token, "tok");
+  assert.equal(parseScanned("https://example.com/"), null);
 });

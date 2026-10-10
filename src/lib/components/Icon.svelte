@@ -129,6 +129,8 @@
   import arrowLeft from "@tabler/icons/outline/arrow-left.svg?raw";
   import arrowRight from "@tabler/icons/outline/arrow-right.svg?raw";
   import aspectRatio from "@tabler/icons/outline/aspect-ratio.svg?raw";
+  import qrcode from "@tabler/icons/outline/qrcode.svg?raw";
+  import scan from "@tabler/icons/outline/scan.svg?raw";
   import deviceMobile from "@tabler/icons/outline/device-mobile.svg?raw";
   import deviceTablet from "@tabler/icons/outline/device-tablet.svg?raw";
   import externalLink from "@tabler/icons/outline/external-link.svg?raw";
@@ -250,6 +252,8 @@
     "arrow-left": arrowLeft,
     "arrow-right": arrowRight,
     "aspect-ratio": aspectRatio,
+    qrcode,
+    scan,
     "device-mobile": deviceMobile,
     "device-tablet": deviceTablet,
     "external-link": externalLink,

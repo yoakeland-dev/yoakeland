@@ -39,7 +39,6 @@
   import { extractAccentFromImage, hexToHue, hslToHex, tokensFor, TERMINAL_THEME_PRESETS } from "../theme";
   import { APP_THEME_PRESETS } from "../themePresets";
   import { encodePairingCode } from "../pairing";
-  import PairPhoneDialog from "./PairPhoneDialog.svelte";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
   import type { CliKind, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
@@ -364,7 +363,6 @@
     setServerIdentity(cid, serverIdentityInput.trim());
   }
 
-  let pairingPhone = $state(false);
   let addingPerson = $state(false);
   let tokenNameInput = $state("");
   let tokenEmailInput = $state("");
@@ -1308,6 +1306,11 @@
                   </Button>
                 </div>
               </form>
+              {#if server?.outdated}
+                <div class="setting-row">
+                  {@render rowText("Server is out of date", `Running ${server.version ? "v" + server.version : "a version that doesn't report itself"}, the latest is v${app.latestServerVersion}.`)}
+                </div>
+              {/if}
               <div class="setting-row">
                 {@render rowText("Auto-generate chat titles", "Names new threads from their first message.")}
                 {@render toggle(server?.autoGenerateTitleEnabled ?? true, onAutoGenerateTitleToggle, !connected)}
@@ -1657,12 +1660,6 @@
                     <Button type="submit" disabled={!isLocalConnection || remoteAddrInput.trim() === (server?.remoteAddr ?? "")}>Save</Button>
                   </div>
                 </form>
-                {#if isDesktop}
-                  <div class="setting-row">
-                    {@render rowText("Pair a phone", "Scan a QR code to open yoakeland in the phone's browser, signed in with its own token.")}
-                    <Button type="button" disabled={!isLocalConnection || !server?.remoteAccessEnabled} onclick={() => (pairingPhone = true)}>Pair…</Button>
-                  </div>
-                {/if}
                 <form class="setting-row" onsubmit={submitRemotePassword}>
                   {@render rowText("Shared password", "One secret for everyone. Prefer per-person tokens below.")}
                   <div class="btn-row">
@@ -1803,10 +1800,6 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
-
-{#if cid}
-  <PairPhoneDialog bind:open={pairingPhone} {cid} />
-{/if}
 
 <style>
   /* Dims without blurring: the dialog card is the only thing that frosts (--float-blur below).

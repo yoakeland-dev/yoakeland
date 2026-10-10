@@ -1,4 +1,5 @@
 import { applyQuietTokens } from "./quietRoom";
+import { isOlder } from "./serverVersion";
 import type {
   AskUserQuestionData,
   ChatMessage,
@@ -486,6 +487,20 @@ export class ServerState {
 
   /** Null until server_identity's first reply lands on this connection. */
   serverId = $state<string | null>(null);
+  /** What the server says it is (server_identity); null from one that predates reporting it. */
+  version = $state<string | null>(null);
+  private outdatedToasted = false;
+  get outdated() {
+    return this.serverId != null && !!this.app.latestServerVersion && isOlder(this.version, this.app.latestServerVersion);
+  }
+  /** Once per connection, and only after both the identity and the newest release are known. */
+  announceOutdated() {
+    if (!this.outdated || this.outdatedToasted) return;
+    this.outdatedToasted = true;
+    const have = this.version ? `v${this.version}` : "an old version";
+    const title = `Server is out of date (${have}, latest v${this.app.latestServerVersion})`;
+    this.app.toastAction(this.connectionId, title, this.connectionMode === "local" && this.app.updateServer ? { label: "Update", run: () => this.app.updateServer?.(this.connectionId) } : undefined);
+  }
   connectionMode: ConnectionMode;
   connectionStatus = $state<ConnectionStatus>("connected");
   connectionError = $state<string | null>(null);
@@ -2347,12 +2362,14 @@ export class ServerState {
         break;
       }
       case "server_identity": {
-        const data = env.data as { identity: string; serverId?: string };
+        const data = env.data as { identity: string; serverId?: string; version?: string };
         this.serverIdentity = data.identity;
+        this.version = data.version ?? null;
         if (data.serverId && this.serverId !== data.serverId) {
           this.serverId = data.serverId;
           this.hydrateFromServerId(data.serverId);
         }
+        this.announceOutdated();
         break;
       }
       case "remote_access_set": {
@@ -2606,6 +2623,10 @@ class AppState {
   /** One entry per live connection. `active` is what every component renders. */
   servers = $state<Record<ConnectionId, ServerState>>({});
   activeConnectionId = $state<ConnectionId | null>(null);
+  /** Newest published server release; null until looked up (desktop only), or when there is none. */
+  latestServerVersion = $state<string | null>(null);
+  /** Set by ipc.ts on desktop, where the app can download the server itself. */
+  updateServer: ((connectionId: ConnectionId) => void) | null = null;
 
   get active(): ServerState | null {
     return this.activeConnectionId ? (this.servers[this.activeConnectionId] ?? null) : null;

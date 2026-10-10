@@ -8,14 +8,16 @@
   import {
     connectLocalUnix,
     connectTcp,
+    installServer,
     caServerKey,
     importCaCertFile,
     FALLBACK_SOCKET_PATH,
     getDefaultSocketPath,
   } from "../ipc";
-  import { decodePairingCode } from "../pairing";
+  import { decodePairingCode, parseScanned } from "../pairing";
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
+  import QrScanner from "./QrScanner.svelte";
   import Button from "./ui/Button.svelte";
   import TextArea from "./ui/TextArea.svelte";
   import TextField from "./ui/TextField.svelte";
@@ -48,7 +50,7 @@
   let port = $state(untrack(() => prefill?.port ?? pagePrefill?.port ?? 7890));
   let token = $state("");
   // An address that is already known (this page's own server, or one being re-paired) skips its step.
-  let step = $state<"address" | "code" | "manual">(untrack(() => (prefill?.host ?? pagePrefill?.host ? "code" : "address")));
+  let step = $state<"address" | "code" | "manual" | "scan">(untrack(() => (prefill?.host ?? pagePrefill?.host ? "code" : "address")));
   let hostInputEl = $state<HTMLInputElement | null>(null);
   let codeInputEl = $state<HTMLInputElement | null>(null);
   let manualTokenEl = $state<HTMLInputElement | null>(null);
@@ -60,6 +62,25 @@
   function goToAddress() {
     step = "address";
     void tick().then(() => hostInputEl?.focus());
+  }
+  // The desktop shows the QR code (Pair a phone); scanning one is for the phone's browser.
+  const canScan = !isDesktop && !!navigator.mediaDevices?.getUserMedia;
+  let scanError = $state<string | null>(null);
+  function onScan(text: string) {
+    const scanned = parseScanned(text);
+    if (!scanned) return fail("That QR code isn't from a yoakeland server.");
+    token = scanned.token;
+    if (scanned.caPem) caPem = scanned.caPem;
+    rtcFp = scanned.rtcFp ?? "";
+    if (!scanned.host || !scanned.port) return goToAddress();
+    host = scanned.host;
+    port = scanned.port;
+    step = "code";
+    void attempt(() => connectTcp(host, port, token, caPem, rtcFp || undefined));
+  }
+  function fail(message: string) {
+    scanError = message;
+    step = host.trim() ? "code" : "address";
   }
   function goToManual() {
     step = "manual";
@@ -181,6 +202,14 @@
       busy = false;
     }
   }
+  const noBinary = $derived(/failed to spawn/.test(submitError ?? ""));
+  async function download() {
+    await attempt(async () => {
+      await installServer();
+      binPath = "yoakeland";
+      await connectLocalUnix({ binPath, socketPath });
+    });
+  }
   function submitLocal(e: Event) {
     e.preventDefault();
     return attempt(() => connectLocalUnix({ binPath, socketPath }));
@@ -191,9 +220,22 @@
   }
 </script>
 
+{#snippet scanButton()}
+  {#if canScan}
+    <button type="button" class="menu-option" onclick={() => ((scanError = null), (step = "scan"))}>
+      <span class="scan-label"><Icon name="scan" size={14} /> Scan a QR code</span>
+      <Icon name="chevron-right" size={13} />
+    </button>
+  {/if}
+{/snippet}
+
 {#snippet remoteFormBody()}
   <form class="steps" onsubmit={submitRemote}>
-    {#if step === "address"}
+    {#if step === "scan"}
+      <p class="hint">Point the camera at the QR code in Pair a phone on your computer, or the one the server prints when it starts.</p>
+      <QrScanner onscan={onScan} onerror={fail} />
+      <Button type="button" variant="ghost" onclick={() => (step = host.trim() ? "code" : "address")}>Cancel</Button>
+    {:else if step === "address"}
       <p class="hint">Where's the server? Paste "host:port" into either field to fill both at once.</p>
       <div class="row">
         <label class="grow">
@@ -220,6 +262,7 @@
       <Button variant="primary" class="submit" disabled={!host.trim()} onclick={goToCode}>
         Next <Icon name="chevron-right" size={14} />
       </Button>
+      {@render scanButton()}
     {:else if step === "code"}
       <p class="hint">
         Always TLS, against a CA only the server operator has — paste the pairing code they gave you
@@ -238,6 +281,7 @@
       {#if pairingError}
         <p class="error"><Icon name="alert-circle" size={14} /> {pairingError}</p>
       {/if}
+      {@render scanButton()}
       <button type="button" class="menu-option" onclick={goToManual}>
         <span>Enter manually instead</span>
         <Icon name="chevron-right" size={13} />
@@ -335,8 +379,12 @@
   {@render remoteFormBody()}
 {/if}
 
+{#if scanError}
+  <p class="error"><Icon name="alert-circle" size={14} /> {scanError}</p>
+{/if}
 {#if submitError}
   <p class="error"><Icon name="alert-circle" size={14} /> {submitError}</p>
+  {#if noBinary && isDesktop}<Button onclick={download} disabled={busy}>Download server</Button>{/if}
 {/if}
 
 <style>
@@ -426,6 +474,11 @@
   .menu-option:hover {
     background: var(--sidebar-hover);
     color: var(--text);
+  }
+  .scan-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.43rem;
   }
   .step-actions {
     display: flex;

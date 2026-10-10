@@ -9,6 +9,7 @@
   import {
     cancelOpenRouterSignIn,
     connectLocalUnix,
+    installServer,
     getDefaultSocketPath,
     pickProjectFolder,
     registerProvider,
@@ -106,6 +107,19 @@
       await connectLocalUnix({ binPath, socketPath: await getDefaultSocketPath() });
     } catch {
       // The reason is app.connectionError, shown below.
+    }
+  }
+  let downloading = $state(false);
+  async function download() {
+    downloading = true;
+    try {
+      await installServer();
+      binPath = "yoakeland"; // the bare name resolves to the downloaded copy
+      await tryLocal();
+    } catch (err) {
+      app.setPendingConnect("error", "local", String(err));
+    } finally {
+      downloading = false;
     }
   }
   async function locateBinary() {
@@ -356,11 +370,14 @@
               </div>
               {#if status !== "connecting"}
                 {#if app.connectionError}
-                  <p class="error"><Icon name="alert-circle" size={14} /> {noBinary ? "The yoakeland server isn't installed, or isn't on your PATH." : app.connectionError}</p>
+                  <p class="error"><Icon name="alert-circle" size={14} /> {noBinary ? "The yoakeland server isn't installed, or isn't on your PATH. Download it from GitHub releases?" : app.connectionError}</p>
                 {/if}
                 <div class="actions">
                   <Button onclick={tryLocal}><Icon name="refresh" size={14} /> Try again</Button>
-                  {#if noBinary}<Button onclick={locateBinary}>Locate yoakeland…</Button>{/if}
+                  {#if noBinary}
+                    <Button variant="primary" onclick={download} disabled={downloading}>{downloading ? "Downloading…" : "Download server"}</Button>
+                    <Button onclick={locateBinary}>Locate yoakeland…</Button>
+                  {/if}
                   <Button variant="ghost" onclick={() => (remote = true)}>Use a remote server</Button>
                 </div>
               {/if}

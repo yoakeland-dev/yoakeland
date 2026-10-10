@@ -81,6 +81,7 @@
     }
   },
   "dependencies": {
-    "@replit/codemirror-lang-svelte": "^6.0.0"
+    "@replit/codemirror-lang-svelte": "^6.0.0",
+    "jsqr": "^1.4.0"
   }
 }

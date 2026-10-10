@@ -264,9 +264,39 @@ async function spawnDetachedUnixServer(opts: SpawnUnixServerOpts) {
   });
 }
 
+let latestLookup: Promise<void> | undefined;
+/** Looks the newest server release up once per run, then flags every connected server that is behind. */
+function checkServerUpdate() {
+  latestLookup ??= invoke<{ version: string }>("server_latest_release").then(
+    (r) => {
+      app.latestServerVersion = r.version;
+      for (const s of Object.values(app.servers)) s.announceOutdated();
+    },
+    () => {}, // offline or no release yet: nothing to flag
+  );
+}
+
+/** Downloads the newest server. A running daemon keeps its old binary until it is restarted. */
+export async function installServer(): Promise<string> {
+  const r = await invoke<{ version: string }>("server_install");
+  app.latestServerVersion = r.version;
+  return r.version;
+}
+
+async function updateServer(connectionId: ConnectionId) {
+  try {
+    const v = await installServer();
+    app.toastAction(connectionId, `Downloaded server v${v}. Restart the server to use it.`);
+  } catch (err) {
+    app.toastAction(connectionId, `Server update failed: ${err}`);
+  }
+}
+if (isDesktop) app.updateServer = (id) => void updateServer(id);
+
 function afterConnect(connectionId: ConnectionId) {
   const server = app.servers[connectionId];
   if (!server) return;
+  if (isDesktop) checkServerUpdate();
   startLiveness(connectionId);
   listProjects(connectionId);
   listProviders(connectionId);
