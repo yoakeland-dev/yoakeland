@@ -202,12 +202,10 @@
   .qr {
     align-self: center;
     width: min(16rem, 100%);
-    padding: 0.55rem;
+    padding: 0.4rem;
     background: #fff;
     border-radius: var(--radius-lg);
-    box-shadow:
-      0 0 0 1px var(--panel-border),
-      0 14px 40px -14px color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow: 0 0 0 1px var(--panel-border);
     line-height: 0;
   }
   .pair-url {
