@@ -1,0 +1,45 @@
+# Builds the web client and publishes it to GitHub Pages (custom domain: app.yoake.land, set under
+# Settings > Pages). The same build is what the desktop app and the daemon's web root serve.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Electron is only needed to package the desktop app; skip its ~100 MB binary download.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # The mock-server preview route is a dev tool; it doesn't ship.
+      - run: rm -rf src/routes/__preview
+      - run: npm run build
+      # Pages answers unknown paths with 404.html; the SPA's fallback is index.html.
+      - run: cp build/index.html build/404.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build
+      - id: deployment
+        uses: actions/deploy-pages@v4
