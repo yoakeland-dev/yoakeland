@@ -70,6 +70,17 @@
 
   // ---- Welcome ----
   let name = $state(app.settings.profileName);
+  // A phone paired from a desktop arrives with the name that was typed there; offer it as the
+  // starting point rather than an empty box. Once, so clearing the field sticks.
+  let seededName = false;
+  $effect(() => {
+    if (seededName || name) return;
+    const given = Object.values(app.servers)
+      .filter((s) => s.connectionMode !== "local")
+      .map((s) => s.peers.find((p) => p.peerId === s.selfPeerId)?.name)
+      .find(Boolean);
+    if (given) ((name = given), (seededName = true));
+  });
   function saveProfile() {
     app.settings.profileName = name.trim();
     app.applySettings();

@@ -1327,8 +1327,6 @@ export function getSkill(connectionId: ConnectionId, projectPath: string | undef
 
 /** Pushes this connection's display name live; every peer sees it on the next `peer_list` push. */
 export function setPeerName(connectionId: ConnectionId, name: string) {
-  // A remote connection signs in with a token, which fixes its name; the server refuses a rename.
-  if (app.servers[connectionId]?.connectionMode !== "local") return;
   void send(connectionId, { type: "set_peer_name", data: { name } });
 }
 

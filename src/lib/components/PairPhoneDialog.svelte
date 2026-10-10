@@ -64,8 +64,14 @@
     // The hosted page pins the fingerprint instead of a CA, so only the fallback needs trusting.
     hasCa = !!t.caPem && !rtcFp;
     server.justRegisteredToken = null;
+    seen = new Set(server.peers.map((p) => p.peerId));
     phase = hasCa ? "trust" : "scan";
   });
+
+  // The phone's own name and picture arrive with its first peer_list; showing them confirms the
+  // right device paired and that it kept its identity.
+  let seen = new Set<string>();
+  const joined = $derived(phase === "scan" ? server?.peers.find((p) => !seen.has(p.peerId) && p.deviceType === "web") : undefined);
 
   function create(e: Event) {
     e.preventDefault();
@@ -129,7 +135,14 @@
           {#if hasCa}<strong>2. Sign in.</strong>{/if} Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. This code is shown once and works for anyone who scans it, so close this when you're done.
         </Dialog.Description>
         <div class="qr"><QrCode text={pairingUrl(host, port, token, rtcFp || undefined)} label="Pairing code" /></div>
-        <p class="pair-url"><Icon name="device-mobile" size={13} /> {host}:{port}</p>
+        {#if joined}
+          <p class="pair-joined">
+            {#if joined.avatar}<img src={joined.avatar} alt="" />{:else}<Icon name="check" size={13} />{/if}
+            <strong>{joined.name}</strong> connected
+          </p>
+        {:else}
+          <p class="pair-url"><Icon name="device-mobile" size={13} /> {host}:{port}</p>
+        {/if}
         <div class="pair-actions">
           <Button type="button" variant="primary" onclick={() => (open = false)}>Done</Button>
         </div>
@@ -217,6 +230,21 @@
     font-family: var(--font-mono, monospace);
     font-size: var(--text-label-size);
     color: var(--text-dim);
+  }
+  .pair-joined {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin: 0;
+    font-size: var(--text-label-size);
+    color: var(--accent);
+  }
+  .pair-joined img {
+    width: 1.3rem;
+    height: 1.3rem;
+    border-radius: 50%;
+    object-fit: cover;
   }
   details {
     font-size: var(--text-label-size);
