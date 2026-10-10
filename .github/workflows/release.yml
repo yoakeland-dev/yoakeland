@@ -35,6 +35,9 @@ jobs:
       - run: npm ci
       # The mock-server preview route is a dev tool; it doesn't ship.
       - run: rm -rf src/routes/__preview
+      # The tests gate the release; once is enough, so only the Linux runner runs them.
+      - if: matrix.os == 'ubuntu-latest'
+        run: npm run check && node --test src/lib/*.test.js electron/*.test.js
       - run: npm run build
       - run: npx electron-builder ${{ matrix.args }} --publish never
       - uses: actions/upload-artifact@v4
