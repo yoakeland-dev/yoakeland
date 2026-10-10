@@ -256,14 +256,23 @@ export async function loadCredential(dir, key) {
   return (await readCredentials(dir))[key] ?? null;
 }
 
-/** An absent `value` deletes the entry. */
-export async function storeCredential(dir, key, value) {
+async function writeCredential(dir, key, value) {
   const all = await readCredentials(dir);
   if (value == null) delete all[key];
   else all[key] = value;
   await mkdir(dir, { recursive: true });
   // Temp file and rename, so a crash can't leave a truncated file.
   const file = path.join(dir, "credentials.json");
-  await writeFile(file + ".tmp", JSON.stringify(all), { mode: 0o600 });
-  await rename(file + ".tmp", file);
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  await writeFile(tmp, JSON.stringify(all), { mode: 0o600 });
+  await rename(tmp, file);
+}
+
+// Read-modify-write of one file: stores queue up so parallel ones (startup connects) don't read the same snapshot and drop each other's key.
+let credentialQueue = Promise.resolve();
+
+/** An absent `value` deletes the entry. */
+export function storeCredential(dir, key, value) {
+  credentialQueue = credentialQueue.catch(() => {}).then(() => writeCredential(dir, key, value));
+  return credentialQueue;
 }

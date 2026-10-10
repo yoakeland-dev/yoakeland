@@ -11,7 +11,7 @@ import { createGuards } from "./agentGuard.js";
 import { createOAuthListener } from "./oauthListener.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DEV_URL = process.env.YOAKE_DEV_URL; // set by `npm run electron:dev`
+const DEV_URL = app.isPackaged ? undefined : process.env.YOAKE_DEV_URL; // set by `npm run electron:dev`
 const APP_ORIGIN = DEV_URL ? new URL(DEV_URL).origin : "app://yoake";
 // Node's URL reports the origin of app:// URLs as "null", so compare prefixes.
 const isAppUrl = (url) => url.startsWith(APP_ORIGIN + "/");

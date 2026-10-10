@@ -74,6 +74,13 @@ test("credentials: store, load, delete, 0600", async () => {
   assert.equal(await readFile(path.join(dir, "credentials.json"), "utf8"), "{}");
 });
 
+test("credentials: parallel stores keep every key", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "yoake-"));
+  const keys = ["a", "b", "c", "d"];
+  await Promise.all(keys.map((k) => storeCredential(dir, k, `tok-${k}`)));
+  for (const k of keys) assert.equal(await loadCredential(dir, k), `tok-${k}`);
+});
+
 test("tcp connect rejects a CA file with no certificate in it", async () => {
   const cmds = commands(() => {});
   await assert.rejects(cmds.connect_tcp({ host: "127.0.0.1", port: 1, token: "t", caPem: "garbage" }), /no certificate/);
