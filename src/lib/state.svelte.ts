@@ -584,6 +584,10 @@ export class ServerState {
   modelRoles = $state<Record<string, ModelRole>>({});
   // `justRegisteredToken` holds the one-time raw token so Settings can show a "copy this now" reveal.
   tokens = $state<TokenInfo[]>([]);
+  /** Devices that scanned a pairing QR code and are waiting for this (local) client to let them in. */
+  pairingRequests = $state<{ credential: string; name?: string; deviceType?: string; ip?: string }[]>([]);
+  /** Set on a connection that is itself waiting to be let in by the desktop it scanned. */
+  awaitingApproval = $state(false);
   justRegisteredToken = $state<{ name: string; token: string; caPem?: string; rtcFp?: string } | null>(null);
 
   // Set while a session's transcript is being refetched; the chat view grays out and blocks
@@ -2364,6 +2368,7 @@ export class ServerState {
       case "server_identity": {
         const data = env.data as { identity: string; serverId?: string; version?: string };
         this.serverIdentity = data.identity;
+        this.awaitingApproval = false;
         this.version = data.version ?? null;
         if (data.serverId && this.serverId !== data.serverId) {
           this.serverId = data.serverId;
@@ -2425,6 +2430,21 @@ export class ServerState {
         // Server is the source of truth for mode (§4c): adopt it, don't replay a cached value.
         if (isChatMode(data.mode)) this.modeBySession[data.sessionId] = data.mode;
         this.setSessionSyncing(data.sessionId, false);
+        break;
+      }
+      case "pairing_pending": {
+        this.awaitingApproval = true;
+        this.app.toastAction(this.connectionId, "Waiting for the computer to approve this phone…");
+        break;
+      }
+      case "pairing_request": {
+        const data = env.data as { credential: string; name?: string; deviceType?: string; ip?: string };
+        this.pairingRequests = [...this.pairingRequests.filter((r) => r.credential !== data.credential), data];
+        // The pair dialog shows it inline when open; otherwise it needs to find the user.
+        this.app.toastAction(this.connectionId, `${data.name || "A device"} wants to pair${data.ip ? ` from ${data.ip}` : ""}`, {
+          label: "Allow",
+          run: () => this.app.answerPairing?.(this.connectionId, data.credential, true),
+        });
         break;
       }
       case "token_registered": {
@@ -2627,6 +2647,8 @@ class AppState {
   latestServerVersion = $state<string | null>(null);
   /** Set by ipc.ts on desktop, where the app can download the server itself. */
   updateServer: ((connectionId: ConnectionId) => void) | null = null;
+  /** Set by ipc.ts: answers a pairing request (kept out of this file's imports, like updateServer). */
+  answerPairing: ((connectionId: ConnectionId, credential: string, allow: boolean) => void) | null = null;
 
   get active(): ServerState | null {
     return this.activeConnectionId ? (this.servers[this.activeConnectionId] ?? null) : null;

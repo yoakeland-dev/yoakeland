@@ -5,7 +5,7 @@
   // send a fingerprint falls back to its own page, which needs the phone to trust its CA first.
   import { Dialog } from "bits-ui";
   import { app } from "../state.svelte";
-  import { registerToken, setRemoteAccess } from "../ipc";
+  import { answerPairing, registerToken, setRemoteAccess } from "../ipc";
   import { pairInfo } from "../platform";
   import { pairingUrl } from "../pairing";
   import Button from "./ui/Button.svelte";
@@ -69,6 +69,7 @@
 
   // The phone connects under the token just made, so match on that: its own name and picture then
   // confirm the right device paired and kept its identity.
+  const request = $derived(phase === "scan" ? server?.pairingRequests.find((r) => r.credential === name) : undefined);
   const joined = $derived(phase === "scan" ? server?.peers.find((p) => p.credential === name) : undefined);
 
   function create(e: Event) {
@@ -78,7 +79,7 @@
     for (let i = 2; taken.has(n); i++) n = `${name.trim()} ${i}`;
     name = n;
     phase = "waiting";
-    registerToken(cid, n);
+    registerToken(cid, n, undefined, true);
     timer = setTimeout(() => {
       phase = "form";
       error = "The server didn't answer. Is remote access on?";
@@ -130,10 +131,18 @@
         </div>
       {:else}
         <Dialog.Description class="pair-hint">
-          {#if hasCa}<strong>2. Sign in.</strong>{/if} Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. This code is shown once and works for anyone who scans it, so close this when you're done.
+          {#if hasCa}<strong>2. Sign in.</strong>{/if} Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. The first phone to scan it is the only one it works for, and it expires in 10 minutes. You'll be asked to allow it here.
         </Dialog.Description>
         <div class="qr"><QrCode text={pairingUrl(host, port, token, rtcFp || undefined)} label="Pairing code" /></div>
-        {#if joined}
+        {#if request}
+          <div class="pair-request">
+            <p><strong>{request.name || "A device"}</strong> scanned this{request.ip ? ` from ${request.ip}` : ""}. Let it in?</p>
+            <div class="pair-actions">
+              <Button type="button" variant="ghost" onclick={() => answerPairing(cid, request.credential, false)}>Decline</Button>
+              <Button type="button" variant="primary" onclick={() => answerPairing(cid, request.credential, true)}>Allow</Button>
+            </div>
+          </div>
+        {:else if joined}
           <p class="pair-joined">
             {#if joined.avatar}<img src={joined.avatar} alt="" />{:else}<Icon name="check" size={13} />{/if}
             <strong>{joined.name}</strong> connected
@@ -228,6 +237,16 @@
     font-family: var(--font-mono, monospace);
     font-size: var(--text-label-size);
     color: var(--text-dim);
+  }
+  .pair-request {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: var(--text-label-size);
+  }
+  .pair-request p {
+    margin: 0;
+    text-align: center;
   }
   .pair-joined {
     display: flex;

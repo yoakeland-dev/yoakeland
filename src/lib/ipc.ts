@@ -292,6 +292,7 @@ async function updateServer(connectionId: ConnectionId) {
   }
 }
 if (isDesktop) app.updateServer = (id) => void updateServer(id);
+app.answerPairing = (id, credential, allow) => answerPairing(id, credential, allow);
 
 function afterConnect(connectionId: ConnectionId) {
   const server = app.servers[connectionId];
@@ -389,7 +390,8 @@ export async function connectTcp(host: string, port: number, token: string, caPe
 
 /** The error a remote refused with, or null once it identified itself (or stayed quiet, as an old server may). */
 async function authVerdict(server: ServerState): Promise<string | null> {
-  for (let waited = 0; waited < 4000; waited += 50) {
+  // A pairing token waits for someone at the desktop to say yes, so that can take a minute.
+  for (let waited = 0; waited < (server.awaitingApproval ? 70_000 : 4000); waited += 50) {
     if (server.serverId) return null;
     if (server.connectionStatus === "error") return server.connectionError ?? "authentication failed";
     await new Promise((r) => setTimeout(r, 50));
@@ -1385,8 +1387,15 @@ export function setServerIdentity(connectionId: ConnectionId, name: string) {
 // ---- Per-person tokens (§3.1), local-socket-only, like remote-access ----
 
 /** Mints a new named TCP auth credential. The `token_registered` response carries the raw token once (§3.2). */
-export function registerToken(connectionId: ConnectionId, name: string, email?: string) {
-  void send(connectionId, { type: "register_token", data: { name, email: email || undefined } });
+export function registerToken(connectionId: ConnectionId, name: string, email?: string, pairing = false) {
+  void send(connectionId, { type: "register_token", data: { name, email: email || undefined, pairing: pairing || undefined } });
+}
+
+/** Lets a device that scanned a pairing QR code in (or turns it away). Local socket only. */
+export function answerPairing(connectionId: ConnectionId, credential: string, allow: boolean) {
+  void send(connectionId, { type: "approve_pairing", data: { credential, allow } });
+  const s = app.servers[connectionId];
+  if (s) s.pairingRequests = s.pairingRequests.filter((r) => r.credential !== credential);
 }
 
 export function listTokens(connectionId: ConnectionId) {
