@@ -16,7 +16,7 @@
 </button>
 <div class="accordion" class:open>
   <div class="accordion-inner">
-    <pre class="thinking selectable">{text}</pre>
+    <pre class="thinking selectable">{text.trimEnd()}</pre>
   </div>
 </div>
 

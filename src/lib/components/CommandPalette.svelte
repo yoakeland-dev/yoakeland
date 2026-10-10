@@ -892,4 +892,11 @@
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-xs);
   }
+
+  /* Phone: the footer is all keyboard hints. */
+  @media (max-width: 700px) {
+    .footer {
+      display: none;
+    }
+  }
 </style>

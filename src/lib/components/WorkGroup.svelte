@@ -77,9 +77,7 @@
              once nothing's left running. -->
         {#each steps as step (step.kind === "thought" ? `thought-${step.at}` : `cluster-${step.calls[0]?.toolCallId}`)}
           {#if step.kind === "thought"}
-            <p class="thought-text">
-              {step.text}
-            </p>
+            <p class="thought-text">{step.text.trimEnd()}</p>
           {:else}
             <ToolCallGroup calls={step.calls} />
           {/if}

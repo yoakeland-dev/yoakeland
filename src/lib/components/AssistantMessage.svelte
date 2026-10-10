@@ -196,20 +196,6 @@
     {/if}
   {/each}
 
-  {#each message.compactions ?? [] as c, i (i)}
-    <div
-      class="compacted"
-      {@attach tip(
-        c.kind === "summary"
-          ? "Everything before this point was summarized for the model to stay within its context budget"
-          : "Older tool results were cleared from what the model sees; it can run those tools again",
-      )}
-    >
-      <Icon name="arrows-minimize" size={12} />
-      Context compacted · {shortNum(c.tokensBefore)} → {shortNum(c.tokensAfter)} tokens
-    </div>
-  {/each}
-
   {#if message.streaming || modelMeta || message.finish || usage || durationS !== null}
     <div
       class="finish"
@@ -333,22 +319,6 @@
     line-height: 1.55;
   }
 
-  /* A quiet rule across the turn, not a bubble: it's about the context, not the reply. */
-  .compacted {
-    display: flex;
-    align-items: center;
-    gap: 0.43rem;
-    margin: 0.43rem 0;
-    font-size: var(--text-label-size);
-    color: var(--text-dim);
-  }
-  .compacted::before,
-  .compacted::after {
-    content: "";
-    flex: 1;
-    border-top: 1px dashed var(--panel-border);
-  }
-
   .finish {
     display: flex;
     flex-wrap: wrap;
@@ -470,5 +440,17 @@
   .assistant.idle:focus-within .more {
     opacity: 1;
     pointer-events: auto;
+  }
+
+  @media (max-width: 700px) {
+    .assistant.idle .more {
+      opacity: 0.8;
+      pointer-events: auto;
+    }
+    /* Finger-sized hit area around the 12px icons; negative margins keep the row's layout. */
+    .action {
+      padding: 0.55rem 0.45rem;
+      margin: -0.55rem -0.2rem;
+    }
   }
 </style>

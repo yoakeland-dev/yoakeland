@@ -298,4 +298,17 @@
   .chevron.open {
     transform: rotate(180deg);
   }
+
+  /* Phone: no hover, so the row's actions stay in view (quietly), with a finger-sized hit area
+     around the 12px icons; negative margins keep the footer's layout. */
+  @media (max-width: 700px) {
+    .row:not(:hover, :focus-within) .actions {
+      opacity: 0.8;
+      pointer-events: auto;
+    }
+    .action {
+      padding: 0.55rem 0.45rem;
+      margin: -0.55rem -0.2rem;
+    }
+  }
 </style>

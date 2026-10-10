@@ -13,6 +13,7 @@
   import FindBar from "./FindBar.svelte";
   import { matches } from "../keybinds.svelte";
   import { wallpaperGL } from "../wallpaperGL";
+  import { viewport } from "../viewport.svelte";
 
   // `panelEl` lets +page.svelte measure this panel: the corner handle where
   // the right sidebar meets the terminal needs it for its clamp math.
@@ -209,7 +210,7 @@
         style:flex-basis={swapped ? sbW : null}
       >
         <MessageList bind:this={list} bind:scrolledUp {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
-        {#if isEmpty && !sidePanel && app.settings.emptyFeed}<EmptyFeed {sessionId} />{/if}
+        {#if isEmpty && !sidePanel && app.settings.emptyFeed && !viewport.narrow}<EmptyFeed {sessionId} />{/if}
         <PromptInput {sessionId} {snap} floating={isEmpty} {scrolledUp} onJump={() => list?.jumpToBottom()} />
         {#if app.active?.openPlanSessionId === sessionId}
           <PlanPanel {sessionId} />
@@ -410,6 +411,46 @@
     100% {
       box-shadow: 0 0 0 2px transparent;
       border-radius: var(--radius-sm);
+    }
+  }
+
+  /* Phone: edge to edge; the tools page brings its own tab row, so the chat header steps aside. */
+  @media (max-width: 700px) {
+    .panel {
+      border-radius: 0;
+      border-color: transparent;
+      border-block-color: transparent;
+    }
+    .row {
+      position: relative;
+    }
+    .panel.sb-open > :global(.header) {
+      display: none;
+    }
+    .local-island {
+      display: none;
+    }
+    .syncing-badge {
+      background: none;
+      backdrop-filter: none;
+      border: 0;
+      box-shadow: none;
+      top: calc(var(--header-height) + 4px);
+    }
+  }
+  /* Phone: the find bar is a strip under the header. */
+  @media (max-width: 700px) {
+    :global(.chat-find-bar) {
+      top: var(--header-height) !important;
+      left: 0;
+      right: 0;
+      border-width: 0 0 1px !important;
+      border-radius: 0 0 var(--radius-lg) var(--radius-lg) !important;
+      box-shadow: none !important;
+    }
+    :global(.chat-find-bar input) {
+      flex: 1;
+      width: auto;
     }
   }
 </style>

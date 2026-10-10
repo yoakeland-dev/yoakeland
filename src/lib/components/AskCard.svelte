@@ -566,4 +566,29 @@
     color: var(--text);
     font: inherit;
   }
+
+  /* Phone: the composer is docked full width, so the card sits behind it, a little narrower, its
+     bottom tucked under the composer's rounded top. */
+  @media (max-width: 700px) {
+    .ask {
+      margin: 0 0.6rem -22px;
+      border-width: 1px 1px 0;
+      border-radius: 18px 18px 0 0;
+      box-shadow: none;
+    }
+    .inner {
+      padding-bottom: calc(var(--space-1) + 22px);
+    }
+    /* Tap targets: rows and buttons a thumb can hit; the number chips are keyboard shortcuts. */
+    .options button,
+    .other {
+      min-height: 2.7rem;
+    }
+    .btn {
+      min-height: 2.5rem;
+    }
+    .num {
+      display: none;
+    }
+  }
 </style>

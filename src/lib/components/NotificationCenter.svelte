@@ -181,7 +181,7 @@
     margin: 0;
     padding: 0.29rem;
     overflow-y: auto;
-    scrollbar-gutter: stable;
+    scrollbar-width: none;
     display: flex;
     flex-direction: column;
     gap: 2px;

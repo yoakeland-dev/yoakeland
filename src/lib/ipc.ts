@@ -13,6 +13,7 @@ import { outgoingAvatarDataUrl } from "./avatar";
 import { briefOf, continuationDraft } from "./chatBrief";
 import { isDesktop, invoke, listen, openUrl, pickFiles } from "./platform";
 import { bytesToBase64, base64ToBytes } from "./base64";
+import { decodePairingCode } from "./pairing";
 import { handleBrowserRequest } from "./browserAgent.svelte";
 import type { UsageReport } from "./usage";
 import { parseThemeFiles } from "./theme";
@@ -135,6 +136,7 @@ async function redial(oldConnectionId: ConnectionId) {
             port: params.port,
             token: params.token,
             caPem: params.caPem || undefined,
+            ...(!isDesktop && params.rtcFp ? { rtcFp: params.rtcFp } : {}),
             ...peerIdentity(),
           });
     delete app.servers[oldConnectionId];
@@ -317,7 +319,9 @@ export async function importCaCertFile(): Promise<string | null> {
   return invoke<string>("read_text_file", { path });
 }
 
-export async function connectTcp(host: string, port: number, token: string, caPem?: string): Promise<ConnectionId> {
+/** `rtcFp` is only for the browser build: it picks WebRTC over a WebSocket (rtc.ts). The desktop
+ * app speaks TLS to the server directly and pins `caPem` instead. */
+export async function connectTcp(host: string, port: number, token: string, caPem?: string, rtcFp?: string): Promise<ConnectionId> {
   app.setPendingConnect("connecting", "remote");
   try {
     const connectionId = await invoke<string>("connect_tcp", {
@@ -325,10 +329,19 @@ export async function connectTcp(host: string, port: number, token: string, caPe
       port,
       token,
       caPem: caPem || undefined,
+      ...(!isDesktop && rtcFp ? { rtcFp } : {}),
       ...peerIdentity(),
     });
-    const server = new ServerState(connectionId, app, { mode: "remote", host, port, token, caPem });
+    const server = new ServerState(connectionId, app, { mode: "remote", host, port, token, caPem, rtcFp });
     app.servers[connectionId] = server;
+    // A bad token isn't refused while connecting: it comes back as a fatal error. Left in place, the
+    // dead connection would keep the active slot and redial with the same token forever.
+    const refused = await authVerdict(server);
+    if (refused) {
+      await invoke("disconnect", { connectionId }).catch(() => {});
+      await removeServer(connectionId);
+      throw new Error(refused);
+    }
     // Only takes the active slot if nothing else holds it, so adding a background server doesn't steal focus.
     if (!app.activeConnectionId) app.activeConnectionId = connectionId;
     app.setPendingConnect("disconnected");
@@ -342,6 +355,16 @@ export async function connectTcp(host: string, port: number, token: string, caPe
     app.setPendingConnect("error", "remote", String(err));
     throw err;
   }
+}
+
+/** The error a remote refused with, or null once it identified itself (or stayed quiet, as an old server may). */
+async function authVerdict(server: ServerState): Promise<string | null> {
+  for (let waited = 0; waited < 4000; waited += 50) {
+    if (server.serverId) return null;
+    if (server.connectionStatus === "error") return server.connectionError ?? "authentication failed";
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return null;
 }
 
 /** Never assume the UI owns the server's lifecycle: connect if something's already listening
@@ -388,14 +411,32 @@ export async function getDefaultSocketPath(): Promise<string> {
   }
 }
 
+/** A phone scanning the desktop's QR code lands on `https://host:port/#pair=<code>` (pairing.ts).
+ * Connects with it and drops the fragment from the address bar and history so the token isn't left
+ * lying around. Returns the new connection, or null if there was nothing to do or it failed (the
+ * connect form then shows the error with the host filled in). */
+async function connectFromUrl(): Promise<ConnectionId | null> {
+  if (isDesktop || !location.hash.startsWith("#pair=")) return null;
+  const code = decodePairingCode(location.hash.slice("#pair=".length));
+  history.replaceState(null, "", location.pathname + location.search);
+  if (!code) return null;
+  // A code with an address was made for a page that isn't served by the server (the hosted app);
+  // one without opened the server's own page.
+  if (code.host && code.port && code.rtcFp) return connectTcp(code.host, code.port, code.token, undefined, code.rtcFp).catch(() => null);
+  return connectTcp(location.hostname, Number(location.port) || 443, code.token).catch(() => null);
+}
+
 /** Called once on startup. Default local socket connects first to win the active slot, then
  * every remembered server in parallel. A remote with no remembered token stays listed until
  * connected by hand; if nothing connects, FirstServerPanel takes over. */
 export async function autoConnect() {
   const socketPath = isDesktop ? await getDefaultSocketPath() : "";
   if (isDesktop) await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
+  const pairedId = await connectFromUrl();
+  const pairedServerId = pairedId ? app.servers[pairedId]?.serverId : undefined;
   await Promise.allSettled(
     loadKnownServers().map(async (k) => {
+      if (k.serverId === pairedServerId) return;
       if (k.mode === "local") {
         if (isDesktop && k.socketPath && k.socketPath !== socketPath) {
           await connectLocalUnix({ binPath: "yoakeland", socketPath: k.socketPath });
@@ -405,7 +446,7 @@ export async function autoConnect() {
       const token = await loadServerToken(k.serverId);
       if (!token || !k.host || !k.port) return;
       const ca = app.settings.trustedCaByServer[k.serverId] ?? app.settings.trustedCaByHostPort[caServerKey(k.host, k.port)];
-      await connectTcp(k.host, k.port, token, ca);
+      await connectTcp(k.host, k.port, token, ca, k.rtcFp);
     }),
   );
   // A failed background attempt shouldn't leave its error showing once something else connected.
@@ -501,7 +542,7 @@ export async function connectServerRow(row: ServerRow) {
   } else if (k.host && k.port) {
     const token = await loadServerToken(k.serverId);
     const ca = app.settings.trustedCaByServer[k.serverId] ?? app.settings.trustedCaByHostPort[caServerKey(k.host, k.port)];
-    const id = token ? await connectTcp(k.host, k.port, token, ca).catch(() => null) : null;
+    const id = token ? await connectTcp(k.host, k.port, token, ca, k.rtcFp).catch(() => null) : null;
     if (id) app.activeConnectionId = id;
     else app.openAddServer(k.host, k.port);
   }
@@ -1058,11 +1099,17 @@ export function setProvider(connectionId: ConnectionId, sessionId: string, provi
 export function setModelOptions(
   connectionId: ConnectionId,
   sessionId: string,
-  options: { reasoningEffort?: string; thinkingBudget?: number; contextWindow?: number; fastMode?: boolean },
+  options: { reasoningEffort?: string; thinkingBudget?: number; contextWindow?: number; fastMode?: boolean; autoCompactTokens?: number; autoCompact?: boolean },
 ) {
   // projectPath for the same reason setProvider sends it, see there.
   const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
   void send(connectionId, { type: "set_model_options", sessionId, data: { sessionId, ...options, projectPath } });
+}
+
+/** Summarizes the chat's conversation now (§3.1 compact_context); `context_compacted` answers, or `error`. */
+export function compactContext(connectionId: ConnectionId, sessionId: string, instructions = "") {
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "compact_context", sessionId, turnId: crypto.randomUUID(), data: { sessionId, instructions, projectPath } });
 }
 
 /** Fetches one provider's available models (§3.1), called lazily per picker tab. */

@@ -140,6 +140,46 @@
     };
   }
 
+  /** Web build: an <iframe> has no navigation API and its pages are cross-origin, so history is
+   * kept here and only the navigation the buttons and address bar cause is tracked. The agent's
+   * browser tool needs a real webview, so it stays desktop-only (registerBrowser below).
+   * ponytail: links followed inside the frame aren't seen; a server-side browser would fix that. */
+  function wireFrame(el: HTMLIFrameElement, tab: Tab) {
+    const hist = [tab.start];
+    let i = 0;
+    const sync = () => {
+      const url = hist[i];
+      tab.url = url;
+      tab.title = /^https?:/.test(url) ? new URL(url).host : "New tab";
+      tab.canBack = i > 0;
+      tab.canForward = i < hist.length - 1;
+    };
+    const show = () => {
+      tab.loading = hist[i] !== "about:blank";
+      tab.error = "";
+      el.src = hist[i];
+      sync();
+    };
+    const onLoad = () => (tab.loading = false);
+    el.addEventListener("load", onLoad);
+    views.set(tab.id, {
+      loadURL: async (url: string) => {
+        hist.splice(i + 1, hist.length, url);
+        i++;
+        show();
+      },
+      goBack: () => i > 0 && (i--, show()),
+      goForward: () => i < hist.length - 1 && (i++, show()),
+      reload: show,
+      stop: () => {
+        el.src = "about:blank";
+        tab.loading = false;
+      },
+      openDevTools: () => {},
+    } as unknown as Webview);
+    return { destroy: () => el.removeEventListener("load", onLoad) };
+  }
+
   // Viewport: "fit", "WxH" (scaled down to fit), "custom" (WxH from the inputs) or "W:H".
   let viewport = $state("fit");
   const VIEWPORTS: DropdownItem[] = [
@@ -299,119 +339,131 @@
   });
 </script>
 
-{#if !isDesktop}
-  <EmptyState icon="world-www" title="Desktop only" body="Previewing pages needs the desktop app." />
-{:else}
-  <div class="browser">
-    {#if tabs.length > 1}
-      <div class="tabs">
-        {#each tabs as tab (tab.id)}
-          <div class="tab" class:active={tab.id === activeId}>
-            <button type="button" class="tab-main" {@attach tip(tab.url)} onclick={() => (activeId = tab.id)}>
-              {#if tab.loading}<Icon name="loader-2" size={12} />{/if}
-              <span>{tab.title || tab.url}</span>
-            </button>
-            <button type="button" class="tab-x" {@attach tip("Close tab")} onclick={() => closeTab(tab.id)}>
-              <Icon name="xmark" size={11} />
-            </button>
-          </div>
-        {/each}
-      </div>
-    {/if}
+<div class="browser">
+  {#if tabs.length > 1}
+    <div class="tabs">
+      {#each tabs as tab (tab.id)}
+        <div class="tab" class:active={tab.id === activeId}>
+          <button type="button" class="tab-main" {@attach tip(tab.url)} onclick={() => (activeId = tab.id)}>
+            {#if tab.loading}<Icon name="loader-2" size={12} />{/if}
+            <span>{tab.title || tab.url}</span>
+          </button>
+          <button type="button" class="tab-x" {@attach tip("Close tab")} onclick={() => closeTab(tab.id)}>
+            <Icon name="xmark" size={11} />
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
-    <div class="bar">
-      <button type="button" class="btn" {@attach tip("Back")} disabled={!active.canBack} onclick={() => views.get(active.id)?.goBack()}>
-        <Icon name="arrow-left" size={14} />
-      </button>
-      <button type="button" class="btn" {@attach tip("Forward")} disabled={!active.canForward} onclick={() => views.get(active.id)?.goForward()}>
-        <Icon name="arrow-right" size={14} />
-      </button>
-      <button
-        type="button"
-        class="btn"
-        {@attach tip(active.loading ? "Stop" : "Reload")}
-        onclick={() => (active.loading ? views.get(active.id)?.stop() : views.get(active.id)?.reload())}
-      >
-        <Icon name={active.loading ? "xmark" : "refresh"} size={14} />
-      </button>
-      <input
-        class="address"
-        bind:value={address}
-        placeholder="localhost:5173 or a URL"
-        spellcheck="false"
-        onfocus={(e) => {
-          editing = true;
-          e.currentTarget.select();
-        }}
-        onblur={() => (editing = false)}
-        onkeydown={(e) => {
-          if (e.key === "Enter") go();
-          if (e.key === "Escape") {
-            editing = false;
-            e.currentTarget.blur();
-          }
-        }}
-      />
-      <button type="button" class="btn" {@attach tip("New tab")} onclick={addTab}><Icon name="plus" size={14} /></button>
-      <button
-        type="button"
-        class="btn"
-        {@attach tip("Open in your browser")}
-        disabled={!/^https?:/.test(active.url)}
-        onclick={() => void openUrl(active.url)}
-      >
-        <Icon name="external-link" size={14} />
-      </button>
+  <div class="bar">
+    <button type="button" class="btn" {@attach tip("Back")} disabled={!active.canBack} onclick={() => views.get(active.id)?.goBack()}>
+      <Icon name="arrow-left" size={14} />
+    </button>
+    <button type="button" class="btn" {@attach tip("Forward")} disabled={!active.canForward} onclick={() => views.get(active.id)?.goForward()}>
+      <Icon name="arrow-right" size={14} />
+    </button>
+    <button
+      type="button"
+      class="btn"
+      {@attach tip(active.loading ? "Stop" : "Reload")}
+      onclick={() => (active.loading ? views.get(active.id)?.stop() : views.get(active.id)?.reload())}
+    >
+      <Icon name={active.loading ? "xmark" : "refresh"} size={14} />
+    </button>
+    <input
+      class="address"
+      bind:value={address}
+      placeholder="localhost:5173 or a URL"
+      spellcheck="false"
+      onfocus={(e) => {
+        editing = true;
+        e.currentTarget.select();
+      }}
+      onblur={() => (editing = false)}
+      onkeydown={(e) => {
+        if (e.key === "Enter") go();
+        if (e.key === "Escape") {
+          editing = false;
+          e.currentTarget.blur();
+        }
+      }}
+    />
+    <button type="button" class="btn" {@attach tip("New tab")} onclick={addTab}><Icon name="plus" size={14} /></button>
+    <button
+      type="button"
+      class="btn"
+      {@attach tip("Open in your browser")}
+      disabled={!/^https?:/.test(active.url)}
+      onclick={() => void openUrl(active.url)}
+    >
+      <Icon name="external-link" size={14} />
+    </button>
+    {#if isDesktop}
       <button type="button" class="btn" {@attach tip("Developer tools")} onclick={() => views.get(active.id)?.openDevTools()}>
         <Icon name="code" size={14} />
       </button>
-      <Dropdown
-        items={VIEWPORTS}
-        bind:value={() => viewport, (v) => (viewport = v ?? "fit")}
-        triggerIcon="aspect-ratio"
-        triggerTitle="Viewport size"
-        triggerClass="viewport"
-      />
+    {/if}
+    <Dropdown
+      items={VIEWPORTS}
+      bind:value={() => viewport, (v) => (viewport = v ?? "fit")}
+      triggerIcon="aspect-ratio"
+      triggerTitle="Viewport size"
+      triggerClass="viewport"
+    />
+  </div>
+
+  {#if viewport === "custom"}
+    <div class="custom">
+      <input type="number" min="100" max="7680" bind:value={customW} aria-label="Width" />
+      <span>×</span>
+      <input type="number" min="100" max="7680" bind:value={customH} aria-label="Height" />
+      <button type="button" class="btn" {@attach tip("Swap width and height")} onclick={() => ([customW, customH] = [customH, customW])}>
+        <Icon name="arrows-exchange" size={13} />
+      </button>
     </div>
+  {/if}
+  {#if viewport !== "fit" && frame.w}
+    <div class="dims">{frame.w} × {frame.h}{frame.scale < 1 ? ` · ${Math.round(frame.scale * 100)}%` : ""}</div>
+  {/if}
+  {#if active.error}<div class="error">{active.error}</div>{/if}
 
-    {#if viewport === "custom"}
-      <div class="custom">
-        <input type="number" min="100" max="7680" bind:value={customW} aria-label="Width" />
-        <span>×</span>
-        <input type="number" min="100" max="7680" bind:value={customH} aria-label="Height" />
-        <button type="button" class="btn" {@attach tip("Swap width and height")} onclick={() => ([customW, customH] = [customH, customW])}>
-          <Icon name="arrows-exchange" size={13} />
-        </button>
-      </div>
-    {/if}
-    {#if viewport !== "fit" && frame.w}
-      <div class="dims">{frame.w} × {frame.h}{frame.scale < 1 ? ` · ${Math.round(frame.scale * 100)}%` : ""}</div>
-    {/if}
-    {#if active.error}<div class="error">{active.error}</div>{/if}
-
-    <div class="stage" class:framed={viewport !== "fit"} bind:clientWidth={stageW} bind:clientHeight={stageH}>
-      {#each tabs as tab (tab.id)}
-        <div
-          class="frame"
-          class:shown={tab.id === activeId}
-          style="width: {frame.w * frame.scale}px; height: {frame.h * frame.scale}px"
-        >
+  <div class="stage" class:framed={viewport !== "fit"} bind:clientWidth={stageW} bind:clientHeight={stageH}>
+    {#each tabs as tab (tab.id)}
+      <div
+        class="frame"
+        class:shown={tab.id === activeId}
+        style="width: {frame.w * frame.scale}px; height: {frame.h * frame.scale}px"
+      >
+        {#if isDesktop}
           <webview
             use:wire={tab}
             src={tab.start}
             partition="persist:yoake-browser"
             style="width: {frame.w}px; height: {frame.h}px; transform: scale({frame.scale})"
           ></webview>
-        </div>
-      {/each}
-      {#if active.url === "about:blank" && !active.loading}
-        <div class="hint">
-          <EmptyState icon="world-www" title="Nothing loaded" body="Type a URL, or just a port like 5173 for a local dev server." />
-        </div>
-      {/if}
-    </div>
+        {:else}
+          <!-- No allow-top-navigation: the previewed page can't take over this app. -->
+          <iframe
+            use:wireFrame={tab}
+            title={tab.title}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
+            referrerpolicy="no-referrer"
+            style="width: {frame.w}px; height: {frame.h}px; transform: scale({frame.scale})"
+          ></iframe>
+        {/if}
+      </div>
+    {/each}
+    {#if active.url === "about:blank" && !active.loading}
+      <div class="hint">
+        <EmptyState icon="world-www" title="Nothing loaded" body={isDesktop
+              ? "Type a URL, or just a port like 5173 for a local dev server."
+              : "Type a URL. Some sites refuse to be embedded; use Open in your browser for those."}
+        />
+      </div>
+    {/if}
   </div>
-{/if}
+</div>
 
 <style>
   .browser {
@@ -557,8 +609,10 @@
   .stage.framed .frame {
     box-shadow: 0 0 0 1px var(--panel-border);
   }
-  webview {
+  webview,
+  iframe {
     display: flex;
+    border: 0;
     transform-origin: 0 0;
     background: #fff;
   }

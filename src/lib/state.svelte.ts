@@ -57,6 +57,7 @@ import {
 } from "./theme";
 import { APP_THEME_PRESETS } from "./themePresets";
 import { invoke, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
+import { viewport } from "./viewport.svelte";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 import { scanShellEvents } from "./terminalShellIntegration";
@@ -72,7 +73,7 @@ export type ConnectionId = string;
  * same target under a fresh ConnectionId (never the token itself, see KnownServer). */
 export type ConnectParams =
   | { mode: "local"; socketPath: string; binPath: string }
-  | { mode: "remote"; host: string; port: number; token: string; caPem?: string };
+  | { mode: "remote"; host: string; port: number; token: string; caPem?: string; rtcFp?: string };
 
 const RECENT_PROJECTS_KEY = "yoake.recentProjects";
 const CHAT_HISTORY_KEY = "yoake.chatHistory";
@@ -237,6 +238,8 @@ export interface KnownServer {
   host?: string;
   port?: number;
   socketPath?: string;
+  /** DTLS fingerprint a browser pins to reach this server over WebRTC (rtc.ts). */
+  rtcFp?: string;
   /** Last-known display identity, so a remembered-servers list can show a
    * name before ever reconnecting. */
   label?: string;
@@ -414,6 +417,8 @@ export interface AppSettings {
   keybinds: Record<string, string[]>;
   /** OS alerts on this device while the window is unfocused: "urgent" = asks, errors and spend caps only. */
   osNotifications: "all" | "urgent" | "off";
+  /** The first-run setup (Onboarding.svelte) has been finished or skipped. */
+  onboarded: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -450,12 +455,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   usageFocus: "",
   keybinds: {},
   osNotifications: "all",
+  onboarded: false,
 };
 
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     const loaded = raw ? { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<AppSettings>) } : { ...DEFAULT_SETTINGS };
+    // Saved before this setting existed: an existing install, not a first run.
+    if (raw && !("onboarded" in JSON.parse(raw))) loaded.onboarded = true;
     // Older settings may have neither field as an object; guard against `map[key] = ...` throwing on undefined.
     if (!loaded.trustedCaByHostPort) loaded.trustedCaByHostPort = {};
     if (!loaded.trustedCaByServer) loaded.trustedCaByServer = {};
@@ -561,7 +569,7 @@ export class ServerState {
   modelRoles = $state<Record<string, ModelRole>>({});
   // `justRegisteredToken` holds the one-time raw token so Settings can show a "copy this now" reveal.
   tokens = $state<TokenInfo[]>([]);
-  justRegisteredToken = $state<{ name: string; token: string; caPem?: string } | null>(null);
+  justRegisteredToken = $state<{ name: string; token: string; caPem?: string; rtcFp?: string } | null>(null);
 
   // Set while a session's transcript is being refetched; the chat view grays out and blocks
   // input until session_history lands. Cleared wholesale on disconnect too.
@@ -1299,6 +1307,21 @@ export class ServerState {
       // Server's own createdAt (§3.2) is authoritative; fall back to a synthetic timestamp for older messages.
       const stored = m.createdAt ? Date.parse(m.createdAt) : NaN;
       const createdAt = Number.isFinite(stored) ? stored : base - (messages.length - turnIndex) * 1000;
+      if (m.role === "compaction") {
+        // A divider where the context was compacted (§4g); its content is the summary the model saw.
+        if (m.compaction) {
+          out.push({
+            id: m.id || `${sessionId}-hist-compact-${turnIndex}`,
+            role: "compaction",
+            text: m.content ?? "",
+            toolCalls: [],
+            streaming: false,
+            createdAt,
+            compaction: m.compaction,
+          });
+        }
+        continue;
+      }
       if (m.role === "user") {
         // No stored author means it predates the server persisting one, or came from a client
         // that doesn't send it; fall back to this client's own profile to match the live bubble.
@@ -1334,12 +1357,6 @@ export class ServerState {
             createdAt,
           };
           out.push(cur);
-        }
-        // A compaction (§4g) is a note on the turn, not model output: its content is the
-        // summary the model saw, not something to show as the reply.
-        if (m.role === "compaction") {
-          if (m.compaction) cur.compactions = [...(cur.compactions ?? []), m.compaction];
-          continue;
         }
         // "Retry" on a merged bubble targets its *last* round-trip's id, matching alternateIds.
         cur.id = m.id || cur.id;
@@ -1683,6 +1700,51 @@ export class ServerState {
     return this.messagesBySession[sessionId]?.findLast((m) => m.turnId === turnId && m.role === "assistant");
   }
 
+  /** Puts the divider for a compaction (§4g) where it happened: before the turn's reply when
+   * nothing of it has been said yet, else between what was said and what follows (the reply
+   * splits in two, as it does for a steered message). A /compact has no reply: it goes last. */
+  private addCompaction(sessionId: string, turnId: string | undefined, data: Compaction & { messageId?: string; summary?: string }) {
+    const list = this.messagesBySession[sessionId] ?? [];
+    const id = data.messageId || `${turnId ?? sessionId}-compact-${list.length}`;
+    if (list.some((m) => m.id === id)) return;
+    const row: ChatMessage = {
+      id,
+      role: "compaction",
+      turnId,
+      text: data.summary ?? "",
+      toolCalls: [],
+      streaming: false,
+      createdAt: Date.now(),
+      compaction: { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter, manual: data.manual },
+    };
+    const cur = this.findAssistantMessage(sessionId, turnId);
+    if (!cur) {
+      this.messagesBySession[sessionId] = [...list, row];
+    } else if (!cur.text && !cur.thinking && !cur.toolCalls.length) {
+      const at = list.indexOf(cur);
+      this.messagesBySession[sessionId] = [...list.slice(0, at), row, ...list.slice(at)];
+    } else {
+      cur.streaming = false;
+      const n = list.filter((m) => m.turnId === turnId && m.role === "assistant").length;
+      this.messagesBySession[sessionId] = [
+        ...list,
+        row,
+        {
+          id: `${turnId}-reply-${n + 1}`,
+          role: "assistant",
+          turnId,
+          text: "",
+          toolCalls: [],
+          streaming: true,
+          createdAt: Date.now(),
+          provider: this.providerBySession[sessionId],
+          model: this.modelBySession[sessionId],
+        },
+      ];
+    }
+    this.saveChatHistory();
+  }
+
   /** Runs once, the first time serverId becomes known: loads this server's namespaced
    * localStorage, running the legacy-flat-key migration first if needed. */
   private hydrateFromServerId(serverId: string) {
@@ -1721,6 +1783,7 @@ export class ServerState {
       host: this.connectParams.mode === "remote" ? this.connectParams.host : undefined,
       port: this.connectParams.mode === "remote" ? this.connectParams.port : undefined,
       socketPath: this.connectParams.mode === "local" ? this.connectParams.socketPath : undefined,
+      rtcFp: this.connectParams.mode === "remote" ? this.connectParams.rtcFp : undefined,
       label: this.serverIdentity ?? undefined,
     });
 
@@ -2047,6 +2110,19 @@ export class ServerState {
         if (data.thinkingBudget) merged.thinkingBudget = data.thinkingBudget;
         if (data.contextWindow) merged.contextWindow = data.contextWindow;
         if (data.fastMode !== undefined) merged.fastMode = data.fastMode;
+        if (data.autoCompactTokens !== undefined) {
+          if (data.autoCompactTokens > 0) merged.autoCompactTokens = data.autoCompactTokens;
+          else delete merged.autoCompactTokens;
+        }
+        if (data.autoCompact !== undefined) merged.autoCompact = data.autoCompact;
+        // Mirror it on the meter now; the server's own figure replaces this at the next report.
+        const ctx = this.contextBySession[data.sessionId];
+        if (ctx && (data.autoCompact !== undefined || data.autoCompactTokens !== undefined)) {
+          const off = data.autoCompact === undefined ? !!ctx.autoCompactOff : !data.autoCompact;
+          const at = data.autoCompactTokens;
+          const budget = at ? Math.max(8000, ctx.windowTokens ? Math.min(at, Math.floor(ctx.windowTokens * 0.9)) : at) : ctx.budgetTokens;
+          this.contextBySession[data.sessionId] = { ...ctx, autoCompactOff: off || undefined, budgetTokens: off ? undefined : budget };
+        }
         this.modelOptionsBySession = { ...this.modelOptionsBySession, [data.sessionId]: merged };
         break;
       }
@@ -2335,8 +2411,8 @@ export class ServerState {
         break;
       }
       case "token_registered": {
-        const data = env.data as { name: string; token: string; email?: string; caPem?: string };
-        this.justRegisteredToken = { name: data.name, token: data.token, caPem: data.caPem };
+        const data = env.data as { name: string; token: string; email?: string; caPem?: string; rtcFp?: string };
+        this.justRegisteredToken = { name: data.name, token: data.token, caPem: data.caPem, rtcFp: data.rtcFp };
         this.tokens = [...this.tokens.filter((t) => t.name !== data.name), { name: data.name, email: data.email, hasAvatar: false }];
         break;
       }
@@ -2363,9 +2439,8 @@ export class ServerState {
         break;
       }
       case "context_compacted": {
-        const msg = this.findAssistantMessage(sessionId, env.turnId);
-        const data = env.data as unknown as Compaction;
-        if (msg) msg.compactions = [...(msg.compactions ?? []), { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter }];
+        const data = env.data as unknown as Compaction & { messageId?: string; summary?: string };
+        this.addCompaction(sessionId, env.turnId, data);
         // The ring shouldn't wait for the turn to end to show the room it just made: tokensAfter is
         // our own estimate, replaced by the provider's count at turn_completed.
         const ctx = this.contextBySession[sessionId];
@@ -2567,7 +2642,11 @@ class AppState {
   showExtensions = $state(false);
   /** A page is showing instead of the chat: the chat's own chrome steps aside. */
   get fullPage() {
-    return this.showUsage || this.showExtensions;
+    return this.showUsage || this.showExtensions || this.onboarding;
+  }
+  /** First run: the setup flow takes the whole window. */
+  get onboarding() {
+    return !this.settings.onboarded;
   }
   openExtensions() {
     this.showUsage = false;
@@ -2591,7 +2670,9 @@ class AppState {
 
   // Both sidebars slide off-screen when collapsed rather than shrinking; their shared toggle
   // button is pinned top-left of the window, outside either sidebar.
-  sidebarCollapsed = $state(typeof localStorage !== "undefined" ? loadBool(SIDEBAR_COLLAPSED_KEY) : false);
+  sidebarCollapsed = $state(
+    viewport.narrow || (typeof localStorage !== "undefined" ? loadBool(SIDEBAR_COLLAPSED_KEY) : false),
+  );
   rightSidebarCollapsed = $state(
     typeof localStorage !== "undefined" ? loadBool(RIGHT_SIDEBAR_COLLAPSED_KEY) : false,
   );
@@ -2661,14 +2742,39 @@ class AppState {
   }
 
   toasts = $state<(ServerNotification & { connectionId: ConnectionId; action?: { label: string; run: () => void } })[]>([]);
+  // One timer per stack (a chat's toasts live and die together), restarted by each new arrival.
+  // Held stacks (open, or under the mouse) keep it parked; letting go gives a fresh few seconds.
+  private toastTimers = new Map<string, { timer?: ReturnType<typeof setTimeout>; ms: number; held: boolean }>();
+  toastKey(t: { id: string; connectionId: string; sessionId?: string }): string {
+    return t.sessionId ? `${t.connectionId}|${t.sessionId}` : t.id;
+  }
+  private armToast(key: string, ms: number) {
+    const e = this.toastTimers.get(key) ?? { ms, held: false };
+    clearTimeout(e.timer);
+    e.ms = Math.max(ms, 3_000);
+    e.timer = e.held ? undefined : setTimeout(() => this.dropToastGroup(key), e.ms);
+    this.toastTimers.set(key, e);
+  }
+  holdToast(key: string, held: boolean) {
+    const e = this.toastTimers.get(key);
+    if (!e || e.held === held) return;
+    e.held = held;
+    clearTimeout(e.timer);
+    e.timer = held ? undefined : setTimeout(() => this.dropToastGroup(key), e.ms);
+  }
+  private dropToastGroup(key: string) {
+    clearTimeout(this.toastTimers.get(key)?.timer);
+    this.toastTimers.delete(key);
+    this.toasts = this.toasts.filter((t) => this.toastKey(t) !== key);
+  }
   /** A client-side toast with an action button (e.g. "Archived, Undo"). */
   toastAction(connectionId: ConnectionId, title: string, action?: { label: string; run: () => void }) {
     const id = `local-${Date.now()}`;
     this.toasts = [
-      ...this.toasts.slice(-2),
+      ...this.toasts.slice(-5),
       { id, level: "info", kind: "local", title, createdAt: new Date().toISOString(), connectionId, action },
     ];
-    setTimeout(() => this.dropToast(id), 6_000);
+    this.armToast(id, 6_000);
   }
 
   // Ticks periodically so relative times ("3m") re-render instead of freezing.
@@ -2679,11 +2785,14 @@ class AppState {
     if (n.priority && n.priority !== "urgent") return;
     if (n.read || connectionId !== this.activeConnectionId || this.notificationsOpen) return;
     if (n.sessionId && n.sessionId === this.active?.currentSessionId && document.hasFocus()) return;
-    this.toasts = [...this.toasts.slice(-2), { ...n, connectionId }];
-    setTimeout(() => this.dropToast(n.id), n.level === "error" || n.level === "warning" ? 10_000 : 5_000);
+    this.toasts = [...this.toasts.slice(-5), { ...n, connectionId }];
+    this.armToast(this.toastKey({ ...n, connectionId }), n.level === "error" || n.level === "warning" ? 10_000 : 5_000);
   }
   dropToast(id: string) {
+    const gone = this.toasts.find((t) => t.id === id);
     this.toasts = this.toasts.filter((t) => t.id !== id);
+    const key = gone && this.toastKey(gone);
+    if (key && !this.toasts.some((t) => this.toastKey(t) === key)) this.dropToastGroup(key);
   }
 
   /** Hands a notification to the desktop shell, which decides (window focus, priority, tag) whether
@@ -2716,7 +2825,12 @@ class AppState {
   /** Sets (rather than flips) collapsed state; drag-to-collapse tracks the pointer live via this. */
   setSidebarCollapsed(collapsed: boolean) {
     this.sidebarCollapsed = collapsed;
-    saveBool(SIDEBAR_COLLAPSED_KEY, collapsed);
+    if (!viewport.narrow) saveBool(SIDEBAR_COLLAPSED_KEY, collapsed);
+  }
+
+  /** On a phone the sidebar is a drawer that starts shut and isn't remembered; leaving that width restores the saved choice. */
+  syncNarrow() {
+    this.sidebarCollapsed = viewport.narrow || loadBool(SIDEBAR_COLLAPSED_KEY);
   }
 
   /** Same reason setSidebarCollapsed exists, for the right sidebar's drag-to-collapse. */

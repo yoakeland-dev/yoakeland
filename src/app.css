@@ -586,7 +586,7 @@ pre {
   gap: 0.29rem;
   padding: var(--space-half);
   overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
 }
 .sb-cards {
   display: grid;
@@ -594,7 +594,7 @@ pre {
   gap: 0.43rem;
   padding: var(--space-half);
   overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
 }
 .sb-foot {
   display: flex;
@@ -793,7 +793,7 @@ button.sb-card.selected:hover {
   margin: 0;
   padding: 0.21rem;
   overflow-y: auto;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
   display: flex;
   flex-direction: column;
   gap: 1px;

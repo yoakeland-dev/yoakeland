@@ -15,6 +15,8 @@
   import ChatCard, { chatActivity } from "./ChatCard.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { matches } from "../keybinds.svelte";
+  import { viewport } from "../viewport.svelte";
+  import { swipe, commits } from "../gestures";
 
   let {
     connectionId,
@@ -117,6 +119,21 @@
     if (confirm(`Permanently delete "${sessionTitle(s)}"?${files} This can't be undone.`)) deleteSession(connectionId, s.sessionId);
   }
 
+  // Phone: drag a row right to archive it, like swiping a mail away. Shorter drags spring back.
+  let dragX = $state<number | null>(null);
+  const swipeArchive = $derived(viewport.narrow && !compact && !archived && connected && !renaming);
+  const REVEAL = 96;
+  const rowSwipe = {
+    axis: "x",
+    accept: (d: number) => d > 0,
+    onMove: (d: number) => (dragX = Math.min(d, REVEAL * 1.6)),
+    onEnd: (d: number, v: number) => {
+      dragX = null;
+      if (commits(d / REVEAL, v, 1) && d > REVEAL * 0.6) archive();
+    },
+    onCancel: () => (dragX = null),
+  } as const;
+
   const menuItems = $derived<ContextMenuItem[]>([
     { label: "Rename", icon: "pencil", onSelect: startRename },
     { label: pinned ? "Unpin" : "Pin", icon: pinned ? "pinned" : "pin", onSelect: () => server?.togglePin(s.sessionId) },
@@ -175,6 +192,10 @@
   class:compact
   class:offline={!connected}
   class:has-meta={!!metaLine}
+  class:swiping={dragX !== null}
+  style:transform={dragX ? `translateX(${dragX}px)` : null}
+  style:--swipe="{dragX ?? 0}px"
+  {@attach swipeArchive ? swipe(() => rowSwipe) : undefined}
 >
   {#if renaming}
     <div class="main">
@@ -503,5 +524,49 @@
   }
   .act.danger:hover {
     color: var(--danger);
+  }
+
+  @media (max-width: 700px) {
+    .main {
+      padding-block: 0.95rem;
+    }
+    .row {
+      touch-action: pan-y;
+      transition:
+        background calc(0.12s * var(--anim-speed, 1)) ease,
+        transform calc(0.2s * var(--anim-speed, 1)) var(--ui-ease);
+    }
+    .row.swiping {
+      transition: none;
+    }
+    /* What the row uncovers as it slides right. */
+    .row::before {
+      content: "Archive";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 100%;
+      width: var(--swipe, 0px);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 0.8rem;
+      overflow: hidden;
+      white-space: nowrap;
+      font-size: var(--text-label-size);
+      color: var(--accent);
+      background: var(--accent-dim);
+      border-radius: var(--radius-sm);
+      pointer-events: none;
+    }
+    /* No hover here: the time stays, and swipe or long-press replace the buttons. */
+    .hover-actions {
+      display: none;
+    }
+    .row:hover .rest,
+    .row:focus-within .rest {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
 </style>

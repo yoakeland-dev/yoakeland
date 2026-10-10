@@ -140,6 +140,8 @@ export interface ContextData {
   windowTokens?: number;
   /** The size at which yoakeland compacts the chat (API providers only in practice). */
   budgetTokens?: number;
+  /** Automatic compaction is turned off for this chat (`budgetTokens` is then absent). */
+  autoCompactOff?: boolean;
   /** "provider": counted by the provider; "estimated": a character heuristic; "unknown": nothing to measure yet. */
   source?: "provider" | "estimated" | "unknown";
 }
@@ -232,6 +234,10 @@ export interface ModelOptions {
   fastMode?: boolean;
   thinkingBudget?: number;
   contextWindow?: number;
+  /** This chat's own compaction size, over the server's setting; absent = follow it. */
+  autoCompactTokens?: number;
+  /** false = this chat doesn't compact itself. */
+  autoCompact?: boolean;
 }
 
 export interface SessionSummary {
@@ -272,6 +278,10 @@ export interface RuntimeSettings {
   poolMaxLive: number;
   pricingRefreshHours: number;
   browserBlockCrossOrigin: boolean;
+  /** Context size at which chats compact themselves (0 = the built-in 64,000). */
+  autoCompactTokens: number;
+  /** Added to every summary compaction's prompt; it narrows what the summary stresses, it can't replace the base prompt. */
+  compactInstructions: string;
 }
 
 export interface ProjectOpenedData {
@@ -568,8 +578,9 @@ export interface ChatMessage {
   id: string;
   /** Other edits/retries at this point in the conversation (§3.2 `alternateIds`), addressable via `switchBranch`. */
   alternateIds?: string[];
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "compaction";
   turnId?: string;
+  /** For a `compaction` row, the summary the model now sees (empty for a "clear"). */
   text: string;
   thinking?: string;
   toolCalls: ToolCallEntry[];
@@ -591,14 +602,17 @@ export interface ChatMessage {
   /** This round-trip's own token/cost accounting (§3.2 `usage`), not the whole turn's.
    * `inputTokens` is the full resent conversation, so it's cumulative; `outputTokens` is just this reply. */
   usage?: { inputTokens: number; outputTokens: number; costUsd: number };
-  /** Context compactions during this turn (§4g): "clear" stubbed old tool results, "summary" summarized everything before. */
-  compactions?: Compaction[];
+  /** On a `compaction` row (§4g): where the context was compacted. */
+  compaction?: Compaction;
 }
 
 export interface Compaction {
+  /** "clear" stubbed old tool results, "summary" summarized everything before. */
   kind: "clear" | "summary";
   tokensBefore: number;
   tokensAfter: number;
+  /** Asked for with /compact rather than the chat compacting itself. */
+  manual?: boolean;
 }
 
 /** A prompt sent while its chat was mid-turn: waits server-side until that turn ends (§3.1). */

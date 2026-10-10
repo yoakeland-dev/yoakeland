@@ -175,4 +175,10 @@
   .body {
     padding-top: 0.14rem;
   }
+
+  @media (max-width: 700px) {
+    .head {
+      min-height: 2.4rem;
+    }
+  }
 </style>

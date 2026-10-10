@@ -7,6 +7,7 @@
   import ChatCard from "./ChatCard.svelte";
   import { liveTabsFor } from "../liveChats";
   import LiveTabs from "./LiveTabs.svelte";
+  import { viewport } from "../viewport.svelte";
 
   let {
     sessionId,
@@ -133,7 +134,7 @@
     <div class="chrome-surface chat-island">
       {#if !sidePanel}
         <button
-          class="chrome-btn"
+          class="chrome-btn desk-only"
           {@attach tip("Previous chat", "chat.back")}
           aria-label="Previous chat"
           disabled={!server?.canGoBack}
@@ -142,7 +143,7 @@
           <Icon name="chevron-left" size={13} />
         </button>
         <button
-          class="chrome-btn"
+          class="chrome-btn desk-only"
           {@attach tip("Next chat", "chat.forward")}
           aria-label="Next chat"
           disabled={!server?.canGoForward}
@@ -180,7 +181,7 @@
       >
     </div>
   </div>
-  {#if liveTabs.length}<LiveTabs tabs={liveTabs} />{/if}
+  {#if liveTabs.length && !viewport.narrow}<LiveTabs tabs={liveTabs} />{/if}
 </header>
 
 <style>
@@ -335,5 +336,27 @@
      end; the title clips (ellipsis) before the tabs do. */
   .header.has-live {
     justify-content: flex-start;
+  }
+
+  @media (max-width: 700px) {
+    /* A docked bar, not a fade over the chat; an empty chat's wallpaper shows through instead. */
+    .header.overlay {
+      background: var(--panel-bg);
+      border-bottom: 1px solid var(--panel-border);
+    }
+    .header.overlay::before,
+    .header.overlay::after {
+      display: none;
+    }
+    .header.overlay.empty {
+      background: none;
+      border-bottom-color: transparent;
+    }
+    .desk-only {
+      display: none;
+    }
+    .chat-island .session-id {
+      max-width: none;
+    }
   }
 </style>

@@ -3,6 +3,7 @@
   import { Popover } from "bits-ui";
   import { app, modelKey } from "../state.svelte";
   import { setProvider, ensureModels, setFavoriteModels } from "../ipc";
+  import { viewport } from "../viewport.svelte";
   import {
     type Entry,
     type Vendor,
@@ -189,7 +190,8 @@
         : firstAvailableTab();
       search = "";
       requestAnimationFrame(() => {
-        searchInput?.focus();
+        // On a phone focusing opens the keyboard over the list you came to look at.
+        if (!viewport.narrow) searchInput?.focus();
         if (currentEntry) {
           document
             .getElementById(entryDomId(currentEntry))
@@ -539,7 +541,7 @@
     padding-right: 0.57rem;
     border-right: 1px solid var(--panel-border);
     overflow-y: auto;
-    scrollbar-gutter: stable;
+    scrollbar-width: none;
   }
   .tab {
     width: 2.14rem;
@@ -731,5 +733,18 @@
   }
   .add-provider:hover {
     color: var(--text);
+  }
+
+  @media (max-width: 700px) {
+    .picker-body {
+      height: min(26rem, 58dvh);
+    }
+    .tabs {
+      width: 3.4rem;
+    }
+    .tab {
+      width: 2.6rem;
+      height: 2.6rem;
+    }
   }
 </style>

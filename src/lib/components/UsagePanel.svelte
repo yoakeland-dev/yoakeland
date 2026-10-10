@@ -1298,4 +1298,12 @@
   .icon-btn:disabled :global(svg) {
     opacity: 0.35;
   }
+
+  @media (max-width: 700px) {
+    .panel {
+      border-radius: 0;
+      border-color: transparent;
+      border-block-color: transparent;
+    }
+  }
 </style>

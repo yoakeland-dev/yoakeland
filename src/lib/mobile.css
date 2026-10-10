@@ -1,0 +1,195 @@
+/* Phone layout. The breakpoint is mirrored by NARROW_QUERY in viewport.svelte.ts.
+   Same tokens and surfaces as the desktop UI; what changes is the shape: edge-to-edge chat, the
+   sidebar a drawer, tools a full page, every popover and menu a bottom sheet. Component-level
+   rules (drawer, tools page, terminal) live next to their components. */
+
+@keyframes sheetIn {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes sheetOut {
+  to {
+    transform: translateY(100%);
+  }
+}
+/* Pages (settings, tools) cross-fade; only sheets and the drawer slide. */
+@keyframes pageIn {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pageOut {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  :root {
+    --chat-margin: 0px;
+    --header-pad-y: 0.6rem;
+    --header-pad-x: 0.9rem;
+    --header-line: 2.5rem;
+    --ctrl-h: 2.5rem;
+    --z-sheet: 140;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Window chrome sits straight on the bar behind it: no pill, no border. */
+  .chrome-surface {
+    background: none;
+    backdrop-filter: none;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  html,
+  body {
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+  /* No double-tap zoom delay on anything tappable. */
+  :is(button, a, [role="button"], [role="tab"], [role="menuitem"], [role="option"], label, summary) {
+    touch-action: manipulation;
+  }
+  /* iOS Safari (only) zooms the page into any field under 16px. Elsewhere fields keep their own
+     size, which matches the chat text; the composer's .mirror must track its textarea. */
+  @supports (-webkit-touch-callout: none) {
+    input:not([type="checkbox"], [type="radio"], [type="range"]),
+    textarea,
+    .mirror,
+    select {
+      font-size: 16px !important;
+    }
+  }
+  /* Hover cards and tooltips have no finger equivalent, and neither do keyboard hints. */
+  .tooltip,
+  kbd {
+    display: none !important;
+  }
+  /* Code block header: a finger-sized strip, same look. */
+  .markdown .code-toggle {
+    min-height: 2rem;
+  }
+  .markdown .code-copy {
+    min-width: 2rem;
+    min-height: 2rem;
+  }
+
+  /* Anything bits-ui floats next to its trigger becomes a bottom sheet instead: the same
+     content, one thumb-reach surface. sheets.ts adds the drag-to-dismiss. */
+  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) {
+    position: fixed !important;
+    inset: auto 0 0 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    z-index: var(--z-sheet) !important;
+  }
+  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > * {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: min(78dvh, calc(var(--vvh, 100dvh) - 3rem)) !important;
+    margin: 0 !important;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+    border-bottom-width: 0 !important;
+    padding-bottom: max(var(--safe-bottom), var(--space-1)) !important;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35) !important;
+    transform-origin: bottom !important;
+  }
+  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > [data-state="open"] {
+    animation: sheetIn var(--dialog-enter-duration) var(--ui-ease) !important;
+  }
+  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > [data-state="closed"] {
+    animation: sheetOut var(--dialog-exit-duration) ease-in forwards !important;
+  }
+  /* A sheet on its way out must not hold the page hostage while it animates. */
+  [data-bits-floating-content-wrapper]:has(> [data-state="closed"]),
+  [data-dialog-overlay][data-state="closed"],
+  [data-dialog-content][data-state="closed"] {
+    pointer-events: none !important;
+  }
+  /* The grabber: a hint that the sheet can be pulled down. */
+  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > ::before {
+    content: "";
+    display: block;
+    width: 2.4rem;
+    height: 4px;
+    margin: 0.5rem auto 0.3rem;
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--text) 22%, transparent);
+  }
+  /* Behind the sheet; taps on it dismiss like any outside tap. */
+  body:has([data-bits-floating-content-wrapper] > [data-state="open"]:not(.tooltip))::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-sheet) - 1);
+    background: rgba(6, 7, 11, 0.5);
+    animation: scrimIn var(--dialog-enter-duration) ease-out;
+  }
+
+  /* Menus are action sheets: bigger rows. */
+  .context-menu-item,
+  [role="menuitem"],
+  [role="option"] {
+    min-height: 2.7rem;
+  }
+
+  /* Dialogs: a tall sheet, or the whole screen for the big ones. */
+  [data-dialog-content] {
+    position: fixed !important;
+    inset: auto 0 0 0 !important;
+    top: auto !important;
+    left: 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: calc(var(--vvh, 100dvh) - var(--safe-top) - 1.2rem) !important;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+    border-bottom-width: 0 !important;
+    padding-bottom: max(var(--safe-bottom), var(--space-1));
+    z-index: var(--z-sheet) !important;
+  }
+  [data-dialog-content][data-state="open"] {
+    animation: sheetIn var(--dialog-enter-duration) var(--ui-ease) !important;
+  }
+  [data-dialog-content][data-state="closed"] {
+    animation: sheetOut var(--dialog-exit-duration) ease-in forwards !important;
+  }
+  [data-dialog-overlay] {
+    z-index: calc(var(--z-sheet) - 1) !important;
+  }
+  /* The palette takes the screen below the status bar. */
+  [data-dialog-content].palette-content {
+    height: calc(var(--vvh, 100dvh) - var(--safe-top) - 1.2rem) !important;
+  }
+  /* Settings is a page, not a popup: the whole screen, faded in. */
+  [data-dialog-content].settings-content {
+    inset: 0 !important;
+    height: var(--vvh, 100dvh) !important;
+    max-height: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none;
+    padding: var(--safe-top) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+    background: var(--panel-bg);
+    backdrop-filter: none;
+    z-index: var(--z-sheet) !important;
+  }
+  [data-dialog-content].settings-content[data-state="open"] {
+    animation: pageIn var(--dialog-enter-duration) var(--ui-ease) !important;
+  }
+  [data-dialog-content].settings-content[data-state="closed"] {
+    animation: pageOut var(--dialog-exit-duration) ease-in forwards !important;
+  }
+  .settings-overlay {
+    display: none;
+  }
+}

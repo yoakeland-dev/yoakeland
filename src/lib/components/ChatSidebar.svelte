@@ -191,7 +191,7 @@
       </div>
       <button
         type="button"
-        class="tab"
+        class="tab desk-only"
         class:active={swapped}
         {@attach tip(swapped ? "Put the chat back in the middle" : "Give tools the main area, chat on the side")}
         onclick={() => server?.toggleChatSidebarSwapped(sessionId)}
@@ -493,5 +493,49 @@
   .resize-handle:hover::after,
   .resize-handle.active::after {
     background: var(--accent);
+  }
+
+  /* Phone: tools are a page that fades in over the chat (the toggle becomes its back button; so
+     does a swipe right). */
+  @media (max-width: 700px) {
+    .chat-sidebar-slot {
+      position: absolute;
+      inset: 0;
+      z-index: 13;
+      width: auto !important;
+      border: 0;
+      opacity: 0;
+      visibility: hidden;
+      transition:
+        opacity calc(0.18s * var(--anim-speed, 1)) ease,
+        visibility 0s linear calc(0.18s * var(--anim-speed, 1));
+    }
+    .chat-sidebar-slot.open {
+      opacity: 1;
+      visibility: visible;
+      transition-delay: 0s;
+    }
+    .chat-sidebar-body {
+      inset: 0;
+      width: 100% !important;
+      transform: none;
+    }
+    .tabs {
+      padding-left: var(--toggle-reserve-in-panel) !important;
+      padding-right: var(--chrome-reserve) !important;
+    }
+    .tabs :global(.tab) {
+      width: 2.3rem;
+      height: 2.3rem;
+    }
+    .tab-strip {
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .tab-title,
+    .resize-handle,
+    .tabs :global(.desk-only) {
+      display: none;
+    }
   }
 </style>

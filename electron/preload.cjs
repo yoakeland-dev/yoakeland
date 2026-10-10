@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("yoake", {
   openUrl: (url) => call("shell:open_url", { url }),
   browserGuard: (id, hosts) => call("shell:browser_guard", { id, hosts }),
   browserUnguard: (id) => call("shell:browser_unguard", { id }),
+  pairInfo: () => call("shell:pair_info"),
   revealItemInDir: (path) => call("shell:reveal", { path }),
   readClipboard: () => call("shell:read_clipboard"),
   writeClipboard: (text) => call("shell:write_clipboard", { text }),

@@ -16,6 +16,8 @@
   import AboutDialog from "./AboutDialog.svelte";
   import SearchInput from "./SearchInput.svelte";
   import { matches } from "../keybinds.svelte";
+  import { viewport, drawerWidth } from "../viewport.svelte";
+  import { swipe, commits } from "../gestures";
   import { DropdownMenu } from "bits-ui";
   import { tick, untrack } from "svelte";
   import { fly, slide } from "svelte/transition";
@@ -225,7 +227,13 @@
 
   // The slot shrinks in the flex layout (0 when collapsed); the panel itself stays fixed-width
   // and slides off via transform, so content never squashes mid-transition.
-  const slotWidth = $derived(app.sidebarCollapsed ? 0 : app.sidebarWidth);
+  const slotWidth = $derived(app.sidebarCollapsed || viewport.narrow ? 0 : app.sidebarWidth);
+  // Phone: a drawer over the chat. The finger sets its position directly while it is down.
+  const drawerStyle = $derived(
+    viewport.narrow
+      ? `width: ${drawerWidth()}px${viewport.drawer !== null ? `; transform: translateX(${(viewport.drawer - 1) * 100}%); transition: none` : ""}`
+      : `width: ${app.sidebarWidth}px`,
+  );
 
   // The width this drag started from, so a drag that ends collapsed can put it
   // back, see stopResize.
@@ -529,7 +537,17 @@
   <aside
     class="sidebar"
     class:collapsed={app.sidebarCollapsed}
-    style="width: {app.sidebarWidth}px"
+    style={drawerStyle}
+    {@attach swipe(() => ({
+      axis: "x",
+      accept: (d) => viewport.narrow && d < 0 && !app.sidebarCollapsed,
+      onMove: (d) => (viewport.drawer = Math.min(1, Math.max(0, 1 + d / drawerWidth()))),
+      onEnd: (d, v) => {
+        app.setSidebarCollapsed(commits(1 - Math.min(1, Math.max(0, 1 + d / drawerWidth())), -v, 1));
+        viewport.drawer = null;
+      },
+      onCancel: () => (viewport.drawer = null),
+    }))}
   >
     <div class="brand-row">
       <img class="brand-logo" src="logo.png" alt="" />
@@ -1587,5 +1605,40 @@
     height: 0.4rem;
     border-radius: 50%;
     background: var(--warning, var(--accent));
+  }
+
+  /* Phone: the sidebar is a drawer above the chat and the window chrome's toggle. */
+  @media (max-width: 700px) {
+    .sidebar-slot {
+      position: static;
+    }
+    .sidebar {
+      position: fixed;
+      z-index: 15;
+      top: 0;
+      bottom: 0;
+      height: auto;
+      padding-top: var(--safe-top);
+      padding-bottom: max(var(--safe-bottom), 0.6rem);
+      background: var(--bg);
+      border-right: 1px solid var(--panel-border);
+      box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
+      touch-action: pan-y;
+      overscroll-behavior: contain;
+    }
+    .sidebar.collapsed {
+      box-shadow: none;
+    }
+    .resize-handle {
+      display: none;
+    }
+    /* Finger-sized controls (search row, project row, tabs). */
+    .sidebar {
+      --ctrl-h: 2.6rem;
+    }
+    .tab {
+      width: 2.5rem;
+      height: 2.5rem;
+    }
   }
 </style>

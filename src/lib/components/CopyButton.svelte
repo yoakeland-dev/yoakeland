@@ -29,4 +29,11 @@
   .action:hover {
     color: var(--text);
   }
+
+  @media (max-width: 700px) {
+    .action {
+      padding: 0.55rem 0.45rem;
+      margin: -0.55rem -0.2rem;
+    }
+  }
 </style>

@@ -141,7 +141,7 @@
   .groups {
     max-height: min(60vh, 28rem);
     overflow-y: auto;
-    scrollbar-gutter: stable;
+    scrollbar-width: none;
   }
   .group + .group {
     border-top: 1px solid var(--panel-border);

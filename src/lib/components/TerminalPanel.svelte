@@ -16,6 +16,7 @@
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { terminalAttach, terminalClose } from "../ipc";
   import { basename, terminalTitle } from "../format";
+  import { swipe, commits } from "../gestures";
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -37,6 +38,23 @@
   let renamingId = $state<string | null>(null);
   let renameValue = $state("");
   let slotEl = $state<HTMLDivElement | null>(null);
+
+  // Phone: the top bar is the handle. Pull it down to shrink, then hide; push it up to fill the screen.
+  const pull = {
+    axis: "y",
+    onMove: (d: number) => {
+      if (slotEl) (slotEl.style.transition = "none"), (slotEl.style.transform = `translateY(${Math.max(0, d)}px)`);
+    },
+    onEnd: (d: number, v: number) => {
+      if (slotEl) (slotEl.style.transition = ""), (slotEl.style.transform = "");
+      if (d < -40 || v < -0.4) app.terminalMaximized = true;
+      else if (commits(d / (slotEl?.offsetHeight || 1), v, 1)) {
+        if (app.terminalMaximized) app.terminalMaximized = false;
+        else server?.toggleTerminal(sessionId);
+      }
+    },
+    onCancel: () => slotEl && (slotEl.style.transform = ""),
+  } as const;
 
   // Spins up a first terminal when the drawer opens with nothing running, rather than showing an
   // empty pane with no way back in. Gated on `terminalsListedBySession` so it can't fire
@@ -168,7 +186,7 @@
       <span>This chat hasn't started — send a message first, then open a terminal here.</span>
     </div>
   {:else if open}
-    <div class="bar">
+    <div class="bar" {@attach swipe(() => pull)}>
       <div class="status" {@attach tip(active?.cwd)}>
         {#if active && activeState}
           <TerminalStatusIcon tab={active} />
@@ -183,7 +201,7 @@
           <Icon name="plus" size={14} />
         </button>
         <button
-          class="bar-btn"
+          class="bar-btn desk-only"
           class:on={splitOn}
           {@attach tip(splitOn ? "Unsplit" : "Split", "terminal.split")}
           aria-label="Split"
@@ -192,8 +210,8 @@
         >
           <Icon name="layout-columns" size={14} />
         </button>
-        <span class="sep"></span>
-        <button class="bar-btn" {@attach tip("Find", "terminal.find")} aria-label="Find" disabled={!activeId} onclick={() => activeId && views[activeId]?.openFind()}>
+        <span class="sep desk-only"></span>
+        <button class="bar-btn desk-only" {@attach tip("Find", "terminal.find")} aria-label="Find" disabled={!activeId} onclick={() => activeId && views[activeId]?.openFind()}>
           <Icon name="search" size={14} />
         </button>
         <button class="bar-btn" {@attach tip("Clear")} aria-label="Clear" disabled={!activeId} onclick={() => activeId && views[activeId]?.clear()}>
@@ -616,5 +634,73 @@
   .resize-handle:hover::after,
   .resize-handle.active::after {
     background: var(--accent);
+  }
+
+  /* Phone: a sheet over the bottom of the chat. */
+  @media (max-width: 700px) {
+    :global(.panel) .terminal-slot {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 12;
+      height: 0;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      box-shadow: none;
+      transition:
+        height calc(0.2s * var(--anim-speed, 1)) var(--ui-ease),
+        transform calc(0.2s * var(--anim-speed, 1)) var(--ui-ease);
+    }
+    :global(.panel) .terminal-slot.open {
+      height: 58% !important;
+      padding-bottom: var(--safe-bottom);
+      box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
+    }
+    :global(.panel) .terminal-slot.max {
+      height: calc(100% - var(--header-height)) !important;
+    }
+    .desk-only {
+      display: none;
+    }
+    .bar {
+      position: relative;
+      height: 2.9rem;
+      padding: 0.7rem 0.4rem 0 0.9rem;
+      touch-action: none;
+    }
+    /* The grabber. */
+    .bar::before {
+      content: "";
+      position: absolute;
+      top: 0.35rem;
+      left: 50%;
+      width: 2.4rem;
+      height: 4px;
+      transform: translateX(-50%);
+      border-radius: var(--radius-pill);
+      background: color-mix(in srgb, var(--text) 22%, transparent);
+    }
+    .bar-btn {
+      width: 2.3rem;
+      height: 2.3rem;
+    }
+    .status .cwd,
+    .status .badge {
+      display: none;
+    }
+    .body {
+      flex-direction: column-reverse;
+    }
+    .term-list {
+      width: auto;
+      display: flex;
+      flex-direction: row;
+      overflow-x: auto;
+      overflow-y: hidden;
+      border-top: 1px solid var(--panel-border);
+    }
+    .term-list > :global(*) {
+      flex-shrink: 0;
+    }
   }
 </style>

@@ -17,13 +17,17 @@
     listFiles,
     listSkills,
     respondPermission,
+    compactContext,
+    setModelOptions,
   } from "../ipc";
   import { isDesktop, invoke, pickFiles, onFileDrop } from "../platform";
-  import { basename } from "../format";
+  import { viewport } from "../viewport.svelte";
+  import { basename, shortNum } from "../format";
   import { fuzzyFilter, fuzzyIndices } from "../fuzzy";
   import { fileIconUrl } from "../fileIcons";
   import { mentionText, MENTION_RE } from "../mentions";
   import { pickableSkills, skillKindOf, slashToSkill } from "../extensions";
+  import { parseSlashCommand, SLASH_COMMANDS } from "../slashCommands";
   import { liveActivity } from "../activity.svelte";
   import { sessionModes } from "../modes";
   import Icon from "./Icon.svelte";
@@ -398,9 +402,20 @@
     return m ? { start: cursorPos - m[1].length - 1, query: m[1], sign: text[cursorPos - m[1].length - 1] } : null;
   });
   const skillMatches = $derived(skillQuery ? pickableSkills(allSkills, skillQuery.query, agentKind).slice(0, 8) : []);
+  const isCli = $derived(!!sessionModes(server, sessionId).cli);
+  // The composer's own commands (/compact, /autocompact) share the "/" picker. Claude Code and the
+  // API providers have them; any other coding agent compacts on its own terms and gets neither.
+  const hasCompactCommands = $derived(!isCli || agentKind === "claude");
+  const commandMatches = $derived(
+    skillQuery?.sign === "/" && hasCompactCommands ? SLASH_COMMANDS.filter((c) => c.name.startsWith(skillQuery.query.toLowerCase())) : [],
+  );
+  const slashMatches = $derived([
+    ...commandMatches.map((c) => ({ key: `/${c.name}`, name: c.name, hint: c.argumentHint, description: c.description, command: true, scope: "" })),
+    ...skillMatches.map((sk) => ({ key: sk.dir, name: sk.name, hint: sk.argumentHint ?? "", description: sk.description, command: false, scope: sk.scope })),
+  ]);
   const knownSkills = $derived(new Set(pickableSkills(allSkills, "", agentKind).map((s) => s.name)));
   $effect(() => {
-    skillMatches;
+    slashMatches;
     skillIndex = 0;
   });
   // Opening the picker rescans, so a SKILL.md added since the project was first listed is offered.
@@ -556,7 +571,8 @@
   let askCard = $state<AskCard>();
   // Keys only reach the card through the composer, so a new ask brings focus here if it's idle.
   $effect(() => {
-    if (asks[0] && document.activeElement === document.body) untrack(() => textarea?.focus());
+    // Not on a phone: the keyboard would open over the card you need to answer.
+    if (asks[0] && !viewport.narrow && document.activeElement === document.body) untrack(() => textarea?.focus());
   });
 
   const editingId = $derived(server?.editingMessageId[sessionId]);
@@ -597,7 +613,7 @@
           : connected && hasDraft && !uploading && !!projectPath && hasProvider,
   );
   // A CLI agent can be given a message while it works; the server says so if this one can't.
-  const canSteer = $derived(!!sessionModes(server, sessionId).cli);
+  const canSteer = $derived(isCli);
   const primaryTitle = $derived(
     role === "stop"
       ? "Stop (Esc)"
@@ -622,10 +638,40 @@
                     : "Send",
   );
 
+  /** Runs a /compact or /autocompact typed as the whole message; false = not one, send it as a message. */
+  function runCommand(value: string): boolean {
+    const cmd = hasCompactCommands ? parseSlashCommand(value) : null;
+    // Claude Code runs its own /compact (and takes instructions after it), so that one is just sent.
+    if (!cmd || !cid || (cmd.kind === "compact" && isCli)) return false;
+    const say = (title: string) => app.toastAction(cid, title);
+    if (cmd.kind === "compact") {
+      if (turnId) say("Wait for this turn to finish, then /compact");
+      else compactContext(cid, sessionId, cmd.instructions);
+    } else if (cmd.kind === "invalid") say(cmd.message);
+    else if (cmd.kind === "autocompact-help") {
+      const ctx = server?.contextBySession[sessionId];
+      say(
+        ctx?.autoCompactOff
+          ? "Auto-compact is off for this chat. /autocompact on turns it back on"
+          : ctx?.budgetTokens
+            ? `Compacts at ${shortNum(ctx.budgetTokens)} tokens. /autocompact off, default, or a size like 400k`
+            : "/autocompact off, on, default, or a size like 400k",
+      );
+    } else {
+      setModelOptions(cid, sessionId, { autoCompact: cmd.auto ?? undefined, autoCompactTokens: cmd.tokens ?? undefined });
+      say(cmd.auto === false ? "Auto-compact is off for this chat" : cmd.tokens ? `This chat compacts at ${shortNum(cmd.tokens)} tokens` : "Auto-compact is back to the server's setting");
+    }
+    return true;
+  }
+
   function submit(e?: Event, steer = false) {
     e?.preventDefault();
     const value = slashToSkill(text.trim(), knownSkills);
     if (!cid || !canSubmit) return;
+    if (!planAsk && !asks.length && !editingId && runCommand(text.trim())) {
+      text = "";
+      return;
+    }
     if (planAsk && !asks.length) {
       // A plan waiting on approval: what's typed is what to change about it.
       respondPermission(cid, sessionId, planAsk.turnId, planAsk.toolCallId, false, false, value);
@@ -660,15 +706,15 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (skillMatches.length > 0) {
+    if (slashMatches.length > 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        skillIndex = (skillIndex + (e.key === "ArrowDown" ? 1 : skillMatches.length - 1)) % skillMatches.length;
+        skillIndex = (skillIndex + (e.key === "ArrowDown" ? 1 : slashMatches.length - 1)) % slashMatches.length;
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        pickSkill(skillMatches[skillIndex].name);
+        pickSkill(slashMatches[skillIndex].name);
         return;
       }
       if (e.key === "Escape") {
@@ -939,19 +985,19 @@
 
       <!-- Sibling of the form, not a child: the form's own backdrop-filter is a backdrop root, so a
            blur inside it would have nothing to sample. -->
-      {#if skillMatches.length > 0}
+      {#if slashMatches.length > 0}
         <ul
           class="mentions skills"
           role="listbox"
-          aria-label="Skills"
+          aria-label="Commands and skills"
           in:fly={{ y: 8, duration: 160, easing: cubicOut }}
           out:fly={{ y: 6, duration: 120, easing: cubicIn }}
         >
-          {#each skillMatches as sk, i (sk.dir)}
+          {#each slashMatches as sk, i (sk.key)}
             <li role="option" aria-selected={i === skillIndex}>
               <button type="button" class:active={i === skillIndex} onclick={() => pickSkill(sk.name)}>
-                <Icon name="sparkles" size={13} />
-                <span class="m-name">{skillQuery?.sign ?? "$"}{sk.name}{#if sk.argumentHint}<span class="m-arg"> {sk.argumentHint}</span>{/if}</span>
+                <Icon name={sk.command ? "arrows-minimize" : "sparkles"} size={13} />
+                <span class="m-name">{skillQuery?.sign ?? "$"}{sk.name}{#if sk.hint}<span class="m-arg"> {sk.hint}</span>{/if}</span>
                 <span class="m-dir">{sk.description}</span>
                 {#if sk.scope === "project"}<span class="m-scope">project</span>{/if}
               </button>
@@ -1775,6 +1821,91 @@
     }
     .pickers :global(.trigger-label) {
       display: none;
+    }
+  }
+
+  /* Phone: nothing floats. The composer and whatever stacks on it (ask, notices, status) are flush
+     strips along the bottom edge, so it reads as part of the page rather than a card on it. */
+  @media (max-width: 700px) {
+    .stack,
+    .wrap.floating .stack {
+      left: 0;
+      right: 0;
+      top: auto;
+      bottom: 0;
+      width: 100%;
+      transform: none;
+      translate: none;
+    }
+    /* Full width, flush to the bottom, corners still rounded at the top. */
+    .box {
+      border-radius: 22px 22px 0 0;
+      border-bottom-width: 0;
+      padding-inline: var(--space-1);
+    }
+    .pickers {
+      background: none;
+    }
+    .jump {
+      height: 2.4rem;
+      min-width: 2.4rem;
+    }
+    /* The new-chat greeting sits in the middle of what the composer leaves. */
+    .hero {
+      bottom: calc(100% + 24dvh);
+      z-index: 0;
+    }
+    /* The composer carries its own fill now, so nothing needs washing out behind it. */
+    .wrap::before {
+      display: none;
+    }
+    .wrap.floating .stack:has(:global(.notices)) .hero {
+      bottom: calc(100% + 24dvh);
+    }
+    .wrap.floating :global(.notices) {
+      position: relative;
+      inset: auto;
+    }
+    .float-controls {
+      top: auto;
+      bottom: calc(100% + 0.4rem);
+    }
+    :global(.fc-pill) {
+      min-height: 2.4rem;
+      background: none;
+      border-color: transparent;
+      box-shadow: none;
+    }
+    /* Wraps instead of running off the panel. */
+    .hero {
+      width: max-content;
+      max-width: calc(100cqi - 2rem);
+      white-space: normal;
+      text-align: center;
+      font-size: 1.3rem;
+    }
+    .toolbar {
+      padding-right: 3.2rem;
+    }
+    :global(.add-chip) {
+      width: 2.4rem;
+      height: 2.4rem;
+    }
+    .pickers :global(.picker-trigger) {
+      min-height: 2.4rem;
+      min-width: 2.4rem;
+      justify-content: center;
+    }
+    .hint {
+      display: none;
+    }
+    .primary {
+      width: 2.6rem;
+      height: 2.6rem;
+    }
+    .wrap.compact :is(textarea, .mirror) {
+      padding-block: calc((2.6rem - 1.38rem) / 2);
+      padding-right: 3.2rem;
     }
   }
 </style>

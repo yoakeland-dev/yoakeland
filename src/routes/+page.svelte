@@ -17,8 +17,12 @@
   import Icon from "$lib/components/Icon.svelte";
   import TooltipHost from "$lib/components/TooltipHost.svelte";
   import QuietRoom from "$lib/components/QuietRoom.svelte";
+  import Onboarding from "$lib/components/Onboarding.svelte";
   import { dispatchKeybind, dispatchMouseNav } from "$lib/keybinds.svelte";
   import { tip } from "$lib/tooltip.svelte";
+  import { viewport, drawerWidth } from "$lib/viewport.svelte";
+  import { swipe, commits, ownsHorizontalDrag } from "$lib/gestures";
+  import { initSheetDrag } from "$lib/sheets";
 
   // Window chrome lives here instead of a dedicated title bar row, as floating
   // pieces over whatever surface is beneath them (see the layout tokens in
@@ -41,7 +45,7 @@
   // own lifecycle (that's ServerState.sidebarSessionId, opened/closed from a
   // session row or the linked chat's own header).
   const linkedVisible = $derived(
-    !!app.active?.sidebarSessionId && !app.rightSidebarCollapsed,
+    !viewport.narrow && !!app.active?.sidebarSessionId && !app.rightSidebarCollapsed,
   );
   const chromeSessionId = $derived(
     linkedVisible ? app.active!.sidebarSessionId! : app.active?.currentSessionId,
@@ -157,12 +161,67 @@
   // header reserve.
   app.applyWindowChrome();
 
+  // Phone layout: the sidebar is a drawer, dragged in from the left edge or out with the scrim.
+  $effect(() => {
+    viewport.narrow;
+    app.syncNarrow();
+  });
+  // Picking a chat or a page is what you opened the drawer for.
+  let lastDest = "";
+  $effect(() => {
+    const dest = `${app.active?.currentSessionId}|${app.showUsage}|${app.showExtensions}`;
+    if (dest === lastDest) return;
+    lastDest = dest;
+    if (viewport.narrow) app.setSidebarCollapsed(true);
+  });
+  const toolsPage = $derived(
+    viewport.narrow && !!chromeSessionId && !!app.active?.chatSidebarOpenBySession[chromeSessionId],
+  );
+  // What "back" means right now: out of the tools page, or out of a page's sub-screen.
+  const goBack = $derived(
+    toolsPage
+      ? () => chromeSessionId && app.active?.toggleChatSidebar(chromeSessionId)
+      : viewport.narrow
+        ? viewport.back
+        : null,
+  );
+  const drawerProgress = $derived(viewport.drawer ?? (app.sidebarCollapsed ? 0 : 1));
+  const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+  // Swipe right from anywhere in the app: opens the drawer, or backs out of the tools page. Left
+  // to whatever already uses a sideways drag there (code blocks, terminals, fields).
+  const edge = {
+    axis: "x",
+    start: (e: PointerEvent) => !ownsHorizontalDrag(e.target),
+    accept: (d: number) => d > 0,
+    onMove: (d: number) => {
+      if (!goBack) viewport.drawer = clamp01(d / drawerWidth());
+    },
+    onEnd: (d: number, v: number) => {
+      if (goBack) {
+        if (commits(d / innerWidth, v, 1)) goBack();
+      } else app.setSidebarCollapsed(!commits(clamp01(d / drawerWidth()), v, 1));
+      viewport.drawer = null;
+    },
+    onCancel: () => (viewport.drawer = null),
+  } as const;
+  const shut = {
+    axis: "x",
+    accept: (d: number) => d < 0 && !app.sidebarCollapsed,
+    onMove: (d: number) => (viewport.drawer = clamp01(1 + d / drawerWidth())),
+    onEnd: (d: number, v: number) => {
+      app.setSidebarCollapsed(commits(1 - clamp01(1 + d / drawerWidth()), -v, 1));
+      viewport.drawer = null;
+    },
+    onCancel: () => (viewport.drawer = null),
+  } as const;
+
   onMount(() => {
     wireEvents();
     app.applySettings();
     void loadCustomThemes();
     void autoConnect();
     const stopNotifications = startNotifications();
+    const stopSheets = initSheetDrag();
 
     // "System" theme (Settings > Appearance) tracks this live instead of only
     // resolving once at startup.
@@ -176,6 +235,7 @@
     window.addEventListener("mouseup", dispatchMouseNav);
     return () => {
       stopNotifications();
+      stopSheets();
       media.removeEventListener("change", onSchemeChange);
       window.removeEventListener("keydown", dispatchKeybind, true);
       window.removeEventListener("mouseup", dispatchMouseNav);
@@ -195,25 +255,33 @@
 <div class="shell">
   <!-- Must stay the first element: see .titlebar-drag in app.css. -->
   <div class="titlebar-drag"></div>
+  {#if !app.onboarding}
+  {#if viewport.narrow}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="drawer-scrim" class:on={drawerProgress > 0} style:opacity={drawerProgress} {@attach swipe(() => shut)} onclick={() => app.setSidebarCollapsed(true)} role="presentation"></div>
+  {/if}
   <div class="chrome-surface sidebar-toggle">
     <!-- The macOS traffic lights are positioned over this (syncNativeChrome). -->
     <div class="traffic-lights"></div>
     <button
       class="chrome-btn"
       {@attach tip(app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar", { keys: "sidebar.toggle", side: "bottom" })}
-      aria-label={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-      onclick={() => app.toggleSidebar()}
+      aria-label={goBack ? "Back" : app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      onclick={() => (goBack ? goBack() : app.toggleSidebar())}
     >
       <Icon
-        name={app.sidebarCollapsed
-          ? "sidebar-left-expand"
-          : "sidebar-left-collapse"}
+        name={goBack
+          ? "chevron-left"
+          : app.sidebarCollapsed
+            ? "sidebar-left-expand"
+            : "sidebar-left-collapse"}
         size={14}
       />
     </button>
   </div>
+  {/if}
   {#if (app.active?.currentSessionId && !app.fullPage) || (win && app.settings.windowChrome)}
-    <div class="chrome-surface right-island" class:bare={app.fullPage}>
+    <div class="chrome-surface right-island" class:bare={app.fullPage} class:under-drawer={viewport.narrow && drawerProgress > 0}>
       {#if chromeSessionId && !app.fullPage}
         <button
           class="chrome-btn"
@@ -228,7 +296,7 @@
           class="chrome-btn"
           class:active={app.active?.chatSidebarOpenBySession[chromeSessionId]}
           {@attach tip(app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide side panel" : "Show side panel", "panel.toggle")}
-          aria-label={app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide sidebar" : "Show sidebar"}
+          aria-label={app.active?.chatSidebarOpenBySession[chromeSessionId] ? "Hide side panel" : "Show side panel"}
           onclick={() => app.active?.toggleChatSidebar(chromeSessionId)}
         >
           <Icon
@@ -262,7 +330,10 @@
       {/if}
     </div>
   {/if}
-  <div class="main">
+  <div class="main" {@attach viewport.narrow && app.sidebarCollapsed ? swipe(() => edge) : undefined}>
+    {#if app.onboarding}
+      <Onboarding />
+    {:else}
     <Sidebar />
     <div class="content-row" bind:this={contentRowEl}>
       {#if app.showExtensions}
@@ -277,7 +348,7 @@
       {:else if !app.active}
         <FirstServerPanel />
       {/if}
-      <RightSidebar bind:panelEl={rightPanelEl} />
+      {#if !viewport.narrow}<RightSidebar bind:panelEl={rightPanelEl} />{/if}
       {#if cornerVisible}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
@@ -292,8 +363,9 @@
         ></div>
       {/if}
     </div>
+    {/if}
   </div>
-  <StatusBar />
+  {#if !app.onboarding && !viewport.narrow}<StatusBar />{/if}
 </div>
 <SettingsPanel />
 <CommandPalette />
@@ -408,5 +480,50 @@
 
   .right-island .chrome-btn.window-close:hover:active {
     background: color-mix(in srgb, var(--danger) 80%, black);
+  }
+  /* Phone layout. The drawer's own rules are in Sidebar.svelte. */
+  @media (max-width: 700px) {
+    /* The visual viewport, so the composer rides above the keyboard on iOS too. */
+    .shell {
+      position: fixed;
+      top: var(--vv-top, 0px);
+      left: 0;
+      right: 0;
+      height: var(--vvh, 100dvh);
+      padding: var(--safe-top) env(safe-area-inset-right, 0px) var(--safe-bottom) env(safe-area-inset-left, 0px);
+    }
+    .sidebar-toggle,
+    .right-island {
+      top: calc(var(--chrome-inset) + var(--safe-top));
+    }
+    .sidebar-toggle {
+      left: calc(var(--chrome-inset) + env(safe-area-inset-left, 0px));
+    }
+    .right-island {
+      right: calc(var(--chrome-inset) + env(safe-area-inset-right, 0px));
+      transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+    }
+    /* The drawer covers the strip the island would sit over. */
+    .right-island.under-drawer {
+      opacity: 0;
+      pointer-events: none;
+    }
+  }
+  .drawer-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 14;
+    background: rgba(6, 7, 11, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    touch-action: pan-y;
+  }
+  .drawer-scrim.on {
+    pointer-events: auto;
+  }
+  @media (max-width: 700px) {
+    .main {
+      touch-action: pan-y;
+    }
   }
 </style>

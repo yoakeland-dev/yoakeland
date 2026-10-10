@@ -202,7 +202,7 @@
   local.runtime = {
     maxRoundsPerTurn: 0, maxSessionCostUsd: 0, disableBashWhenUnsandboxed: false, execTimeoutSec: 60, execOutputMaxBytes: 1048576,
     terminalMemoryMaxMB: 2048, terminalPidsMax: 512, terminalReadMaxChars: 12000, terminalHistoryKB: 256, poolIdleMinutes: 30,
-    poolMaxLive: 0, pricingRefreshHours: 24, browserBlockCrossOrigin: true,
+    poolMaxLive: 0, pricingRefreshHours: 24, browserBlockCrossOrigin: true, autoCompactTokens: 400000, compactInstructions: "",
   };
   local.selfPeerId = "p1";
   remote.selfPeerId = "p3";
@@ -273,6 +273,15 @@
         durationMs: 14_000,
       },
     },
+    {
+      id: "mc",
+      role: "compaction",
+      text: "## Goal\nTighten the settings layout so every row follows one recipe.\n\n## Done\n- Agreed on a `row(label, hint)` helper\n\n## Next\n- Rename the Subscriptions heading",
+      toolCalls: [],
+      streaming: false,
+      createdAt: now - 120_000,
+      compaction: { kind: "summary", tokensBefore: 402_000, tokensAfter: 3_100 },
+    },
     { id: "m3", role: "user", text: "Rename the Subscriptions heading too.", toolCalls: [], streaming: false, createdAt: now - 60_000 },
     // A native (cli_claude) turn: text, then Read, then Edit (with its diff),
     // then text, the same shape a reload rebuilds from session history.
@@ -289,8 +298,8 @@
       createdAt: now - 50_000,
     },
   ];
-  msgs[3].text += " Renamed — one more place in the hint text below.";
-  msgs[3].toolCalls[2].textOffset = msgs[3].text.length;
+  msgs[4].text += " Renamed — one more place in the hint text below.";
+  msgs[4].toolCalls[2].textOffset = msgs[4].text.length;
   // s2 (?chat=s2): an API-provider turn using the new tools: two subagents working in parallel
   // (one still going, one reported back), a dev server in an agent terminal, and a browser check.
   const call = (toolCallId: string, name: string, args: Record<string, unknown>, extra: Partial<ChatMessage["toolCalls"][number]> = {}) =>
@@ -403,6 +412,21 @@
   onMount(() => {
     app.applySettings();
     if (params.get("ext")) app.openExtensions();
+    // ?toasts: a burst of notifications every few seconds (a stack for s2, singles for the rest).
+    if (params.has("toasts")) {
+      let n = 0;
+      const fire = (sessionId: string, level: "info" | "success" | "warning" | "error", title: string, body: string) =>
+        app.toast("local", { id: `t${++n}`, level, kind: "turn_completed", title, body, sessionId, createdAt: new Date().toISOString() });
+      const burst = () => {
+        fire("s2", "success", "Fix terminal resize flicker finished", "3 files changed");
+        setTimeout(() => fire("s2", "warning", "Needs approval: run npm test", "bash wants to run a command"), 600);
+        setTimeout(() => fire("s2", "info", "Tests passed", "42 passed, 0 failed"), 1200);
+        setTimeout(() => fire("s4", "error", "Persist remote tokens failed", "provider returned 529 overloaded"), 1800);
+        setTimeout(() => app.toastAction("local", "Archived chat", { label: "Undo", run: () => {} }), 2400);
+      };
+      burst();
+      setInterval(burst, 14_000);
+    }
     const open = params.get("open");
     if (!open) return;
     setTimeout(() => {

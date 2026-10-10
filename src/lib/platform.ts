@@ -1,6 +1,8 @@
 // Components reach Electron (window.yoake, electron/preload.cjs) only through
 // this file.
 
+import { canUseRtc, openRtc, type Wire } from "./rtc";
+
 interface YoakeBridge {
   invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
   listen(event: string, cb: (payload: unknown) => void): () => void;
@@ -8,6 +10,7 @@ interface YoakeBridge {
   openUrl(url: string): Promise<void>;
   browserGuard(id: number, hosts: string[]): Promise<void>;
   browserUnguard(id: number): Promise<string[]>;
+  pairInfo(): Promise<{ webRoot: string; hosts: string[] }>;
   revealItemInDir(path: string): Promise<void>;
   readClipboard(): Promise<string>;
   writeClipboard(text: string): Promise<void>;
@@ -43,59 +46,78 @@ export async function listen<T>(event: string, cb: (payload: T) => void): Promis
   return () => set.delete(fn);
 }
 
-// Browser mode: remote servers only, over the WebSocket yoakeland serves at /ws.
+// Browser mode: remote servers only, over the WebSocket yoakeland serves at /ws (the page was
+// loaded from that server) or, when the pairing code carries the server's DTLS fingerprint, a
+// WebRTC data channel (rtc.ts), which works from any origin without trusting the server's CA.
 
 const webListeners = new Map<string, Set<(payload: unknown) => void>>();
 const webEmit = (event: string, payload: unknown) => webListeners.get(event)?.forEach((cb) => cb(payload));
-const webSockets = new Map<string, WebSocket>();
+const webWires = new Map<string, Wire>();
 // ponytail: saved tokens live in localStorage, where any script on the page
 // can read them. sessionStorage (pair again in each tab) is stricter if needed.
 const tokenKey = (serverId: unknown) => `yoake.token.${serverId}`;
 
+async function openWebSocket(host: string, port: number): Promise<Wire> {
+  const h = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const ws = new WebSocket(`wss://${h}:${port}/ws`);
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = () =>
+      reject(
+        `couldn't open a secure connection to ${host}:${port}. Is remote access on, and does this browser trust the server's certificate?`,
+      );
+  });
+  const wire: Wire = {
+    send: async (line) => ws.send(line),
+    close: () => ws.close(),
+    onLine: () => {},
+    onClose: () => {},
+  };
+  ws.onmessage = (e) => {
+    for (const line of String(e.data).split("\n")) if (line.trim()) wire.onLine(line);
+  };
+  ws.onclose = (e) => wire.onClose(e.reason || "connection closed");
+  return wire;
+}
+
 async function webInvoke(cmd: string, args: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
     case "connect_tcp": {
-      const { host, port, token, caPem: _ca, ...identity } = args;
-      const h = String(host).includes(":") ? `[${host}]` : host;
-      const ws = new WebSocket(`wss://${h}:${port}/ws`);
-      await new Promise((resolve, reject) => {
-        ws.onopen = resolve;
-        ws.onerror = () =>
-          reject(
-            `couldn't open a secure connection to ${host}:${port}. Is remote access on, and does this browser trust the server's certificate?`,
-          );
-      });
+      const { host, port, token, caPem: _ca, rtcFp, ...identity } = args;
+      let wire: Wire;
+      if (rtcFp && canUseRtc(String(host))) {
+        wire = await openRtc(String(host), Number(port), String(rtcFp)).catch((e) => {
+          throw `couldn't reach ${host}:${port} over WebRTC (${e instanceof Error ? e.message : e}). Is remote access on, and is UDP port ${port} reachable from here?`;
+        });
+      } else {
+        wire = await openWebSocket(String(host), Number(port));
+      }
       const connectionId = crypto.randomUUID();
-      webSockets.set(connectionId, ws);
-      ws.onmessage = (e) => {
-        for (const line of String(e.data).split("\n")) {
-          if (!line.trim()) continue;
-          try {
-            webEmit("yoake-event", { connectionId, envelope: JSON.parse(line) });
-          } catch (err) {
-            webEmit("yoake-log", { connectionId, message: `bad frame: ${err}: ${line}` });
-          }
+      webWires.set(connectionId, wire);
+      wire.onLine = (line) => {
+        try {
+          webEmit("yoake-event", { connectionId, envelope: JSON.parse(line) });
+        } catch (err) {
+          webEmit("yoake-log", { connectionId, message: `bad frame: ${err}: ${line}` });
         }
       };
-      ws.onclose = (e) => {
+      wire.onClose = (reason) => {
         // `disconnect` deletes the entry first, so only unexpected closes report.
-        if (webSockets.delete(connectionId)) {
-          webEmit("yoake-disconnected", { connectionId, reason: e.reason || "connection closed" });
-        }
+        if (webWires.delete(connectionId)) webEmit("yoake-disconnected", { connectionId, reason });
       };
-      ws.send(JSON.stringify({ type: "auth", data: { token, ...identity } }) + "\n");
+      await wire.send(JSON.stringify({ type: "auth", data: { token, ...identity } }) + "\n");
       return connectionId;
     }
     case "send_envelope": {
-      const ws = webSockets.get(String(args.connectionId));
-      if (!ws) throw "not connected";
-      ws.send(JSON.stringify(args.envelope) + "\n");
+      const wire = webWires.get(String(args.connectionId));
+      if (!wire) throw "not connected";
+      await wire.send(JSON.stringify(args.envelope) + "\n");
       return;
     }
     case "disconnect": {
-      const ws = webSockets.get(String(args.connectionId));
-      webSockets.delete(String(args.connectionId));
-      ws?.close();
+      const wire = webWires.get(String(args.connectionId));
+      webWires.delete(String(args.connectionId));
+      wire?.close();
       return;
     }
     case "load_credential":
@@ -115,10 +137,13 @@ async function webInvoke(cmd: string, args: Record<string, unknown>): Promise<un
 export const pickFiles = (opts: { title?: string; multiple?: boolean } = {}): Promise<string[]> =>
   shell().pickFiles(opts);
 
-export const openUrl = (url: string): Promise<void> => shell().openUrl(url);
+export const openUrl = (url: string): Promise<void> =>
+  bridge ? shell().openUrl(url) : Promise.resolve(void window.open(url, "_blank", "noopener,noreferrer"));
 /** Limit a browser panel's page-initiated navigation to hosts; unguard returns what it stopped. */
 export const browserGuard = (id: number, hosts: string[]): Promise<void> => shell().browserGuard(id, hosts);
 export const browserUnguard = (id: number): Promise<string[]> => shell().browserUnguard(id);
+/** The built web client's directory ("" if there is none) and this machine's LAN IPv4 addresses. */
+export const pairInfo = (): Promise<{ webRoot: string; hosts: string[] }> => shell().pairInfo();
 export const revealItemInDir = (path: string): Promise<unknown> => shell().revealItemInDir(path);
 export const readClipboard = (): Promise<string> => shell().readClipboard();
 export const writeClipboard = (text: string): Promise<void> => shell().writeClipboard(text);

@@ -20,6 +20,7 @@
   import McpForm from "./extensions/McpForm.svelte";
   import SkillDetail from "./extensions/SkillDetail.svelte";
   import Button from "./ui/Button.svelte";
+  import { viewport } from "../viewport.svelte";
 
   const ALL = "__all__";
   type Ctx = { cid: ConnectionId; srv: ServerState; project: string | undefined };
@@ -117,6 +118,14 @@
     if (names?.length) selKey = `${ctx.cid}|${ctx.project}|mcp|user|${names[0]}`;
   }
 
+  // Phone: the list and the picked item are two screens; the top-left toggle (and a swipe right) goes back.
+  const inDetail = $derived(!!pane || !!selected);
+  const back = () => ((selKey = null), (pane = null));
+  $effect(() => {
+    viewport.back = inDetail ? back : null;
+    return () => (viewport.back = null);
+  });
+
   const waiting = $derived(ctxs.reduce((n, c) => n + (c.project ? awaitingApproval(c.srv.mcpByProject[c.project]?.servers).length : 0), 0));
   const offline = $derived(!live.length);
   const dotTone = (s: McpServerStatus) => (s.approval === "pending" || s.approval === "changed" ? "warning" : s.approval === "denied" ? "neutral" : STATE_TONE[s.state]);
@@ -161,7 +170,7 @@
   </button>
 {/snippet}
 
-<div class="panel" class:sidebar-collapsed={app.sidebarCollapsed}>
+<div class="panel" class:sidebar-collapsed={app.sidebarCollapsed} class:detail={inDetail}>
   <header class="head">
     <h1 class="chrome-surface island">
       <Icon name="plug-connected" size={15} />
@@ -611,5 +620,41 @@
   }
   code {
     font-family: var(--font-mono, monospace);
+  }
+
+  @media (max-width: 700px) {
+    .panel {
+      border-radius: 0;
+      border-color: transparent;
+      border-block-color: transparent;
+    }
+    .head {
+      padding-right: calc(var(--header-pad-x) + var(--chrome-reserve));
+    }
+    .list {
+      width: 100%;
+      border-right: 0;
+    }
+    .panel.detail .list,
+    .panel:not(.detail) .pane {
+      display: none;
+    }
+    .pane {
+      padding: 0 1rem;
+      touch-action: pan-y;
+    }
+    .narrow {
+      padding: 0.8rem 0 calc(var(--safe-bottom) + 2rem);
+    }
+    .blank {
+      padding-top: 4vh;
+    }
+    .row {
+      min-height: 3.2rem;
+    }
+    .btns {
+      flex-direction: column;
+      align-self: stretch;
+    }
   }
 </style>

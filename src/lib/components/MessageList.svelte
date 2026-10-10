@@ -3,6 +3,7 @@
   import { app } from "../state.svelte";
   import MessageBubble from "./MessageBubble.svelte";
   import AssistantMessage from "./AssistantMessage.svelte";
+  import CompactionDivider from "./CompactionDivider.svelte";
 
   // `scrolledUp`: far enough above the tail that the composer goes compact and offers a jump back.
   let {
@@ -159,6 +160,8 @@
         {#if message.streaming || eager || hydrated.has(message.id)}
           {#if message.role === "user"}
             <MessageBubble {message} {sessionId} />
+          {:else if message.role === "compaction"}
+            <CompactionDivider {message} />
           {:else}
             <AssistantMessage {message} {sessionId} />
           {/if}

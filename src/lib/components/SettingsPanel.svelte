@@ -7,6 +7,7 @@
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
   import { basename } from "../format";
   import { isDesktop, revealItemInDir, windowChromeKind } from "../platform";
+  import { swipe, commits, ownsHorizontalDrag } from "../gestures";
   import {
     browseAndAddProject,
     connectServerRow,
@@ -38,6 +39,7 @@
   import { extractAccentFromImage, hexToHue, hslToHex, tokensFor, TERMINAL_THEME_PRESETS } from "../theme";
   import { APP_THEME_PRESETS } from "../themePresets";
   import { encodePairingCode } from "../pairing";
+  import PairPhoneDialog from "./PairPhoneDialog.svelte";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
   import type { CliKind, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
@@ -47,6 +49,7 @@
   import Slider from "./ui/Slider.svelte";
   import Switch from "./ui/Switch.svelte";
   import TextField from "./ui/TextField.svelte";
+  import TextArea from "./ui/TextArea.svelte";
   import { CLI_AGENTS } from "../modelVendor";
   import { DEFAULT_NOTIFY_PREFS, NOTIFY_KINDS } from "../notifyKinds";
   import Icon from "./Icon.svelte";
@@ -326,6 +329,10 @@
     { key: "poolMaxLive", label: "Most coding agents alive at once", hint: "0 means no cap. The least recently used idle one is closed to make room; running turns are never stopped.", unit: "", min: 0 },
     { key: "pricingRefreshHours", label: "Refresh model prices every", hint: "An unpriced model also triggers one refresh, at most hourly.", unit: "h", min: 1 },
   ] as const;
+  let compactInstructionsInput = $state("");
+  $effect(() => {
+    compactInstructionsInput = runtime?.compactInstructions ?? "";
+  });
   let remoteAddrInput = $state("");
   $effect(() => {
     remoteAddrInput = server?.remoteAddr ?? "";
@@ -357,6 +364,7 @@
     setServerIdentity(cid, serverIdentityInput.trim());
   }
 
+  let pairingPhone = $state(false);
   let addingPerson = $state(false);
   let tokenNameInput = $state("");
   let tokenEmailInput = $state("");
@@ -532,6 +540,40 @@
     access: "access network remote password tokens peers people",
     audit: "audit log history approved refused",
   };
+  // Phone: the tab list and the page are two screens. Opening to a specific tab (provider or server
+  // prompts) lands straight on its page.
+  let detail = $state(false);
+  // Swipe right to go back a screen: the page follows the finger, then either leaves or springs back.
+  const backTarget = () =>
+    document.querySelector<HTMLElement>(detail ? ".settings-content .tab-panel:not([hidden])" : ".settings-content");
+  const goBack = {
+    axis: "x",
+    start: (e: PointerEvent) => !ownsHorizontalDrag(e.target),
+    accept: (d: number) => d > 0,
+    onMove: (d: number) => {
+      const el = backTarget();
+      if (el) (el.style.transition = "none"), (el.style.transform = `translateX(${Math.max(0, d)}px)`);
+    },
+    onEnd: (d: number, v: number) => {
+      const el = backTarget();
+      const go = commits(d / innerWidth, v, 1);
+      if (!el) return;
+      el.style.transition = go ? "opacity 0.14s ease" : "transform 0.2s var(--ui-ease)";
+      el.style.opacity = go ? "0" : "";
+      el.style.transform = go ? el.style.transform : "";
+      const reset = () => (el.style.transition = el.style.transform = el.style.opacity = "");
+      if (!go) return void setTimeout(reset, 200);
+      // Stay faded while it closes, so it doesn't flash back before bits' own fade-out.
+      setTimeout(() => {
+        detail ? (detail = false) : (app.showSettings = false);
+        setTimeout(reset, 300);
+      }, 140);
+    },
+    onCancel: () => backTarget()?.style.removeProperty("transform"),
+  } as const;
+  $effect(() => {
+    if (app.showSettings) detail = app.settingsTab !== "appearance";
+  });
   let settingsSearch = $state("");
   let tabHasMatch = $state<Record<string, boolean>>({});
   let firstMatchByTab: Record<string, HTMLElement | null> = {};
@@ -625,6 +667,9 @@
 
 {#snippet pageHead(title: string, scoped: boolean)}
   <header class="page-head">
+    <button type="button" class="settings-back" aria-label="All settings" onclick={() => (detail = false)}>
+      <Icon name="chevron-left" size={16} />
+    </button>
     <h2>{title}</h2>
     {#if scoped && serverItems.length > 1}
       <Dropdown
@@ -718,7 +763,7 @@
 {/snippet}
 
 {#snippet tab(value: string, label: string, icon: ComponentProps<typeof Icon>["name"])}
-  <Tabs.Trigger value={value} class="settings-tab-trigger {settingsSearch && tabHasMatch[value] === false ? 'tab-dim' : ''}">
+  <Tabs.Trigger value={value} class="settings-tab-trigger {settingsSearch && tabHasMatch[value] === false ? 'tab-dim' : ''}" onclick={() => (detail = true)}>
     <Icon name={icon} size={14} /> {label}
   </Tabs.Trigger>
 {/snippet}
@@ -759,9 +804,13 @@
     <Dialog.Content class="settings-content">
       <Dialog.Close class="settings-close" aria-label="Close settings"><Icon name="xmark" size={14} /></Dialog.Close>
 
-      <Tabs.Root bind:value={app.settingsTab} orientation="vertical" class="settings-tabs">
+      <div class="settings-swipe" {@attach swipe(() => goBack)}>
+      <Tabs.Root bind:value={app.settingsTab} orientation="vertical" class="settings-tabs {detail ? 'detail' : ''}">
         <Tabs.List class="tabs-list">
-          <Dialog.Title class="settings-title">Settings</Dialog.Title>
+          <div class="settings-bar">
+            <Dialog.Close class="settings-exit" aria-label="Close settings"><Icon name="chevron-left" size={16} /></Dialog.Close>
+            <Dialog.Title class="settings-title">Settings</Dialog.Title>
+          </div>
           <div class="settings-search"><SearchInput boxed bind:value={settingsSearch} placeholder="Search settings…" /></div>
           {#if noMatches}<div class="no-matches">No settings match “{settingsSearch.trim()}”</div>{/if}
 
@@ -838,6 +887,12 @@
                 {/each}
               </div>
               <p class="hint">Pictures are cropped square and scaled to 96×96 before they leave this device.</p>
+            </section>
+            <section class="settings-section">
+              <div class="setting-row">
+                {@render rowText("Setup", "Walk through connecting a server, a provider and a project again.")}
+                <Button type="button" onclick={() => ((app.settings.onboarded = false), apply(), (app.showSettings = false))}>Run setup again</Button>
+              </div>
             </section>
           </div>
         </Tabs.Content>
@@ -1259,6 +1314,34 @@
               </div>
             </section>
             <section class="settings-section">
+              <h3 class="section-heading">Context</h3>
+              <div class="setting-row">
+                {@render rowText("Compact chats at", "When a chat's context grows past this, it is summarized to make room. 0 means the built-in 64,000. Never above 90% of the model's window. Claude Code is told this as its context window and compacts about 33,000 tokens below it; other coding agents compact on their own. Change it for one chat with /autocompact; /compact summarizes right now.")}
+                <span class="num-unit">
+                  <NumberField
+                    class="ctrl-num"
+                    min={0}
+                    step={10000}
+                    disabled={!connected || !runtime}
+                    value={runtime?.autoCompactTokens ?? 0}
+                    onchange={(v) => patchRuntime({ autoCompactTokens: Math.max(0, Math.round(v || 0)) })}
+                  />
+                  <span class="hint">tokens</span>
+                </span>
+              </div>
+              <div class="setting-row stacked">
+                {@render rowText("Summary instructions", "Added to every summary a chat on an API provider makes, automatic or from /compact: what to emphasize, what to leave out. Claude Code doesn't take it; give its /compact instructions after the command. They narrow the focus and never replace the base prompt, which still keeps every request, decision, changed file and the remaining work. A summary these make implausibly short is redone without them.")}
+                <TextArea
+                  bind:value={compactInstructionsInput}
+                  rows={3}
+                  maxlength={4000}
+                  disabled={!connected || !runtime}
+                  placeholder="e.g. Keep the exact error messages and test commands."
+                  onchange={() => patchRuntime({ compactInstructions: compactInstructionsInput })}
+                />
+              </div>
+            </section>
+            <section class="settings-section">
               <h3 class="section-heading">Resources</h3>
               {#each RESOURCE_SETTINGS as r (r.key)}
                 <div class="setting-row">
@@ -1574,6 +1657,12 @@
                     <Button type="submit" disabled={!isLocalConnection || remoteAddrInput.trim() === (server?.remoteAddr ?? "")}>Save</Button>
                   </div>
                 </form>
+                {#if isDesktop}
+                  <div class="setting-row">
+                    {@render rowText("Pair a phone", "Scan a QR code to open yoakeland in the phone's browser, signed in with its own token.")}
+                    <Button type="button" disabled={!isLocalConnection || !server?.remoteAccessEnabled} onclick={() => (pairingPhone = true)}>Pair…</Button>
+                  </div>
+                {/if}
                 <form class="setting-row" onsubmit={submitRemotePassword}>
                   {@render rowText("Shared password", "One secret for everyone. Prefer per-person tokens below.")}
                   <div class="btn-row">
@@ -1710,9 +1799,14 @@
           </div>
         </Tabs.Content>
       </Tabs.Root>
+      </div>
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
+
+{#if cid}
+  <PairPhoneDialog bind:open={pairingPhone} {cid} />
+{/if}
 
 <style>
   /* Dims without blurring: the dialog card is the only thing that frosts (--float-blur below).
@@ -1938,6 +2032,12 @@
     gap: 1.14rem;
     min-height: 2rem;
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  /* A row whose control is a wide field: the text above it, the field full width below. */
+  .setting-row.stacked {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.57rem;
   }
   /* The control side never shrinks, the text side wraps instead. */
   .setting-row > :last-child {
@@ -2627,5 +2727,98 @@
   .quick-avatar.active {
     border-color: var(--accent);
     background: var(--accent-dim);
+  }
+
+  :global(.settings-back),
+  :global(.settings-exit) {
+    display: none;
+  }
+  .settings-swipe {
+    display: contents;
+  }
+  @media (max-width: 700px) {
+    :global(.settings-tabs) {
+      position: relative;
+      touch-action: pan-y;
+    }
+    .settings-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      margin: 0 0 0.5rem -0.5rem;
+    }
+    :global(.settings-exit) {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.3rem;
+      height: 2.3rem;
+      background: none;
+      border: none;
+      border-radius: var(--radius-sm);
+      color: var(--text-dim);
+    }
+    :global(.settings-title) {
+      margin: 0 !important;
+    }
+    :global(.settings-close) {
+      display: none;
+    }
+    :global(.settings-tabs .tabs-list) {
+      width: 100%;
+      border-right: 0;
+      padding: 1rem 0.7rem calc(var(--safe-bottom) + 1rem);
+    }
+    :global(.settings-tabs .settings-tab-trigger) {
+      min-height: 2.9rem;
+    }
+    /* A list of destinations, not a selection. */
+    :global(.settings-tabs .settings-tab-trigger[data-state="active"]) {
+      background: none;
+      color: inherit;
+    }
+    :global(.settings-tabs .settings-tab-trigger::after) {
+      content: "›";
+      margin-left: auto;
+      font-size: 1.3em;
+      opacity: 0.45;
+    }
+    :global(.settings-tabs.detail .tabs-list),
+    :global(.settings-tabs:not(.detail) .tab-panel) {
+      display: none;
+    }
+    :global(.tab-panel) {
+      padding: 0.7rem 1rem calc(var(--safe-bottom) + 1.4rem);
+    }
+    .settings-back {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 2.3rem;
+      height: 2.3rem;
+      margin-left: -0.5rem;
+      background: none;
+      border: none;
+      border-radius: var(--radius-sm);
+      color: var(--text-dim);
+    }
+    .page-head {
+      min-height: 2.4rem;
+      padding-right: 0;
+    }
+    .setting-row {
+      flex-wrap: wrap;
+      gap: 0.5rem 1.14rem;
+    }
+    .setting-text {
+      flex: 1 1 11rem;
+    }
+    .setting-row > :last-child {
+      max-width: 100%;
+    }
+    :global(.ui-field.ctrl-wide) {
+      width: min(15rem, 100%);
+    }
   }
 </style>

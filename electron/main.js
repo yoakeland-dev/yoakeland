@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, Notification, protocol, session, shell } from "electron";
-import { mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
+import os from "node:os";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -150,6 +151,16 @@ handle("oauth_cancel", () => oauth.cancel());
 handle("shell:notify", (req) => osAlerts.show(req));
 handle("shell:badge", ({ count }) => osAlerts.badge(count));
 
+// What "Pair a phone" needs: the built web client for yoakeland to serve (a Go process can't read
+// inside app.asar, hence asarUnpack) and this machine's LAN addresses for the QR code's URL.
+handle("shell:pair_info", () => {
+  const webRoot = BUILD_DIR.replace(/app\.asar(?=[\\/])/, "app.asar.unpacked");
+  const hosts = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((a) => a && a.family === "IPv4" && !a.internal)
+    .map((a) => a.address);
+  return { webRoot: existsSync(path.join(webRoot, "index.html")) ? webRoot : "", hosts };
+});
 handle("shell:reveal", ({ path: p }) => shell.showItemInFolder(p));
 handle("shell:read_clipboard", () => clipboard.readText());
 handle("shell:write_clipboard", ({ text }) => clipboard.writeText(text));

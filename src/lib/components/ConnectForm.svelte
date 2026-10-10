@@ -47,7 +47,8 @@
   let host = $state(untrack(() => prefill?.host ?? pagePrefill?.host ?? ""));
   let port = $state(untrack(() => prefill?.port ?? pagePrefill?.port ?? 7890));
   let token = $state("");
-  let step = $state<"address" | "code" | "manual">("address");
+  // An address that is already known (this page's own server, or one being re-paired) skips its step.
+  let step = $state<"address" | "code" | "manual">(untrack(() => (prefill?.host ?? pagePrefill?.host ? "code" : "address")));
   let hostInputEl = $state<HTMLInputElement | null>(null);
   let codeInputEl = $state<HTMLInputElement | null>(null);
   let manualTokenEl = $state<HTMLInputElement | null>(null);
@@ -110,9 +111,11 @@
     goToCode();
   }
 
-  // A pairing code bundles a token with its CA cert; pasting one fills both
-  // fields below in one step. Purely a shortcut into token/caPem, no submit of its own.
+  // A pairing code bundles a token with its CA cert, or in a code made for the hosted web client
+  // the server's address and DTLS fingerprint (WebRTC, rtc.ts); pasting one fills those fields in
+  // one step. Purely a shortcut, no submit of its own.
   let pairingCode = $state("");
+  let rtcFp = $state("");
   let pairingError = $state<string | null>(null);
   function applyPairingCode(value: string) {
     pairingCode = value;
@@ -128,6 +131,11 @@
     pairingError = null;
     token = decoded.token;
     if (decoded.caPem) caPem = decoded.caPem;
+    if (decoded.host && decoded.port) {
+      host = decoded.host;
+      port = decoded.port;
+    }
+    rtcFp = decoded.rtcFp ?? "";
   }
 
   // §2a: TLS is mandatory. Remembered per host:port so returning to a known
@@ -157,16 +165,29 @@
     if (file) binPath = file;
   }
 
-  async function submitLocal(e: Event) {
-    e.preventDefault();
-    await connectLocalUnix({ binPath, socketPath });
-    onconnected?.();
+  // The global status says "connected" once any server is up, so a second server's progress
+  // and failure are tracked here.
+  let busy = $state(false);
+  let submitError = $state<string | null>(null);
+  async function attempt(connect: () => Promise<unknown>) {
+    busy = true;
+    submitError = null;
+    try {
+      await connect();
+      onconnected?.();
+    } catch (err) {
+      submitError = String(err instanceof Error ? err.message : err);
+    } finally {
+      busy = false;
+    }
   }
-
-  async function submitRemote(e: Event) {
+  function submitLocal(e: Event) {
     e.preventDefault();
-    await connectTcp(host, port, token, caPem);
-    onconnected?.();
+    return attempt(() => connectLocalUnix({ binPath, socketPath }));
+  }
+  function submitRemote(e: Event) {
+    e.preventDefault();
+    return attempt(() => connectTcp(host, port, token, caPem, rtcFp || undefined));
   }
 </script>
 
@@ -202,7 +223,7 @@
     {:else if step === "code"}
       <p class="hint">
         Always TLS, against a CA only the server operator has — paste the pairing code they gave you
-        (from their Settings › Server), it carries the token and CA in one piece.
+        (from their Settings › Access), it carries the token and CA in one piece.
       </p>
       <label>
         Pairing code
@@ -211,7 +232,7 @@
           value={pairingCode}
           onkeydown={onCodeKeydown}
           oninput={(e) => applyPairingCode((e.target as HTMLInputElement).value)}
-          placeholder="Paste the code from Settings › Server"
+          placeholder="Paste the code from Settings › Access"
         />
       </label>
       {#if pairingError}
@@ -225,8 +246,8 @@
         <button type="button" class="back-step" onclick={goToAddress} {@attach tip("Back", "Backspace")}>
           <Icon name="chevron-left" size={13} />
         </button>
-        <Button variant="primary" class="submit grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
-          {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
+        <Button variant="primary" class="submit grow" type="submit" disabled={busy || !token}>
+          {busy ? "Connecting…" : "Connect"}
         </Button>
       </div>
     {:else}
@@ -260,8 +281,8 @@
         <button type="button" class="back-step" onclick={goToCode} {@attach tip("Back", "Backspace")}>
           <Icon name="chevron-left" size={13} />
         </button>
-        <Button variant="primary" class="submit grow" type="submit" disabled={app.connectionStatus === "connecting" || !token}>
-          {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
+        <Button variant="primary" class="submit grow" type="submit" disabled={busy || !token}>
+          {busy ? "Connecting…" : "Connect"}
         </Button>
       </div>
     {/if}
@@ -301,8 +322,8 @@
             </div>
           </label>
         </details>
-        <Button variant="primary" class="submit" type="submit" disabled={app.connectionStatus === "connecting"}>
-          {app.connectionStatus === "connecting" ? "Connecting…" : "Connect"}
+        <Button variant="primary" class="submit" type="submit" disabled={busy}>
+          {busy ? "Connecting…" : "Connect"}
         </Button>
       </form>
     </Tabs.Content>
@@ -314,8 +335,8 @@
   {@render remoteFormBody()}
 {/if}
 
-{#if app.connectionStatus === "error" && app.connectionError}
-  <p class="error"><Icon name="alert-circle" size={14} /> {app.connectionError}</p>
+{#if submitError}
+  <p class="error"><Icon name="alert-circle" size={14} /> {submitError}</p>
 {/if}
 
 <style>
@@ -458,5 +479,14 @@
   .error :global(.icon) {
     flex-shrink: 0;
     margin-top: 0.1rem;
+  }
+
+  @media (max-width: 700px) {
+    .row > label {
+      min-width: 0;
+    }
+    .row > label:not(.grow) {
+      flex: 0 0 6rem;
+    }
   }
 </style>

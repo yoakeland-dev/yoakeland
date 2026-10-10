@@ -342,4 +342,17 @@
     flex-direction: column;
     gap: 0.14rem;
   }
+
+  @media (max-width: 700px) {
+    .summary {
+      min-height: 2.6rem;
+    }
+    .new-chat-btn {
+      opacity: 1;
+      inset: -0.5rem;
+    }
+    .count-slot:has(.new-chat-btn) .count {
+      opacity: 0;
+    }
+  }
 </style>

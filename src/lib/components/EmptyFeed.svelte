@@ -237,6 +237,8 @@
   /* Both contents share the cell while they cross, so the sheet doesn't resize under the fade. */
   .swap {
     display: grid;
+    /* Else a long unwrapped line inside widens the cell past a narrow panel. */
+    grid-template-columns: minmax(0, 1fr);
   }
   .content {
     grid-area: 1 / 1;
@@ -275,7 +277,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
     gap: 0.6rem;
   }
   /* The short cards share the row under the featured one: as many columns as there are of them
@@ -283,11 +285,11 @@
   .grid.chats {
     grid-template-columns: repeat(
       auto-fit,
-      minmax(max(15rem, calc((100% - (var(--cols) - 1) * 0.6rem) / var(--cols) - 0.1px)), 1fr)
+      minmax(max(min(15rem, 100%), calc((100% - (var(--cols) - 1) * 0.6rem) / var(--cols) - 0.1px)), 1fr)
     );
   }
   .grid.two {
-    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
   }
 
   .card {
