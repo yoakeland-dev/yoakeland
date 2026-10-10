@@ -1,0 +1,71 @@
+# Builds the desktop app on every platform and publishes the installers as a GitHub prerelease.
+# Push a tag (git tag v0.1.0 && git push --tags) to release; the tag should match package.json's
+# version, which is what names the installers. Run it by hand to build without releasing.
+# The landing page (yoake.land) picks the newest release's installers by file extension.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            args: --linux
+          # One runner builds both Mac architectures: yoakeland-<v>-arm64.dmg and yoakeland-<v>.dmg.
+          - os: macos-latest
+            args: --mac --arm64 --x64
+          - os: windows-latest
+            args: --win --x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The mock-server preview route is a dev tool; it doesn't ship.
+      - run: rm -rf src/routes/__preview
+      - run: npm run build
+      - run: npx electron-builder ${{ matrix.args }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            dist/*.AppImage
+            dist/*.dmg
+            dist/*.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: installers
+      # Always a prerelease: GitHub's own /releases/latest never points at one, so the landing page
+      # reads the releases list instead.
+      - run: |
+          gh release create "$GITHUB_REF_NAME" installers/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --prerelease \
+            --generate-notes \
+            --notes "Pre-release. Linux is the primary platform; the macOS and Windows builds are experimental and unsigned."
+        env:
+          GH_TOKEN: ${{ github.token }}
