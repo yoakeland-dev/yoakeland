@@ -2,10 +2,10 @@
   // Pair a phone: the QR code opens the hosted web client with a fresh per-device token, the
   // server's address and its WebRTC fingerprint in the URL fragment (pairing.ts), and the page
   // connects straight to this server (ipc.ts, rtc.ts); nothing to install. A server too old to
-  // send a fingerprint falls back to its own page, which needs the phone to trust its CA first.
+  // send a fingerprint can't do that, so it is told to update instead.
   import { Dialog } from "bits-ui";
   import { app } from "../state.svelte";
-  import { answerPairing, registerToken, setRemoteAccess } from "../ipc";
+  import { answerPairing, registerToken, removeToken, setRemoteAccess } from "../ipc";
   import { pairInfo } from "../platform";
   import { pairingUrl } from "../pairing";
   import Button from "./ui/Button.svelte";
@@ -22,9 +22,8 @@
   let hosts = $state<string[]>([]);
   let host = $state("");
   let name = $state("");
-  let phase = $state<"form" | "waiting" | "trust" | "scan">("form");
+  let phase = $state<"form" | "waiting" | "old" | "scan">("form");
   let token = $state("");
-  let hasCa = $state(false);
   let rtcFp = $state("");
   let error = $state("");
   let blocked = $state(false); // nothing a retry here would fix
@@ -61,10 +60,13 @@
     clearTimeout(timer);
     token = t.token;
     rtcFp = t.rtcFp ?? "";
-    // The hosted page pins the fingerprint instead of a CA, so only the fallback needs trusting.
-    hasCa = !!t.caPem && !rtcFp;
     server.justRegisteredToken = null;
-    phase = hasCa ? "trust" : "scan";
+    if (rtcFp) phase = "scan";
+    else {
+      // No fingerprint: this server predates WebRTC pairing. Don't leave the token behind.
+      removeToken(cid, name.trim());
+      phase = "old";
+    }
   });
 
   // The phone connects under the token just made, so match on that: its own name and picture then
@@ -86,7 +88,6 @@
     }, 6000);
   }
 
-  const caUrl = $derived(`https://${host}:${port}/ca.crt`);
 </script>
 
 <Dialog.Root bind:open>
@@ -115,23 +116,16 @@
             Show QR code
           </Button>
         </form>
-      {:else if phase === "trust"}
+      {:else if phase === "old"}
         <Dialog.Description class="pair-hint">
-          <strong>1. Trust this server.</strong> It signs its own certificate, so the phone needs it once. Scan, tap through the warning (this is only the public certificate) and install it.
+          This server is too old to pair a phone: it doesn't report the fingerprint a phone needs to connect safely. Update the server (Settings → General), then try again.
         </Dialog.Description>
-        <div class="qr"><QrCode text={caUrl} label="Certificate download link" /></div>
-        <details>
-          <summary>How to install it</summary>
-          <p><strong>Android:</strong> Settings → Security → Encryption &amp; credentials → Install a certificate → CA certificate.</p>
-          <p><strong>iPhone:</strong> allow the download in Safari, install the profile in Settings, then turn it on under Settings → General → About → Certificate Trust Settings.</p>
-        </details>
         <div class="pair-actions">
-          <Button type="button" variant="ghost" onclick={() => (phase = "scan")}>Already trusted</Button>
-          <Button type="button" variant="primary" onclick={() => (phase = "scan")}>Installed, next</Button>
+          <Button type="button" variant="primary" onclick={() => (open = false)}>Close</Button>
         </div>
       {:else}
         <Dialog.Description class="pair-hint">
-          {#if hasCa}<strong>2. Sign in.</strong>{/if} Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. The first phone to scan it is the only one it works for, and it expires in 10 minutes. You'll be asked to allow it here.
+          Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. The first phone to scan it is the only one it works for, and it expires in 10 minutes. You'll be asked to allow it here.
         </Dialog.Description>
         <div class="qr"><QrCode text={pairingUrl(host, port, token, rtcFp || undefined)} label="Pairing code" /></div>
         {#if request}
@@ -262,14 +256,6 @@
     height: 1.3rem;
     border-radius: 50%;
     object-fit: cover;
-  }
-  details {
-    font-size: var(--text-label-size);
-    color: var(--text-dim);
-    line-height: 1.5;
-  }
-  details p {
-    margin: 0.35rem 0 0;
   }
   .pair-actions {
     display: flex;

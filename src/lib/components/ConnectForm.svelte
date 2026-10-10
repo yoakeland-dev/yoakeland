@@ -14,7 +14,7 @@
     FALLBACK_SOCKET_PATH,
     getDefaultSocketPath,
   } from "../ipc";
-  import { decodePairingCode, parseScanned } from "../pairing";
+  import { decodePairingCode, HOSTED_APP_URL, parseScanned } from "../pairing";
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
   import QrScanner from "./QrScanner.svelte";
@@ -65,10 +65,14 @@
   }
   // The desktop shows the QR code (Pair a phone); scanning one is for the phone's browser.
   const canScan = !isDesktop && !!navigator.mediaDevices?.getUserMedia;
+  // The hosted app can only reach a server by its WebRTC fingerprint, so a code without one is an old server.
+  const TOO_OLD = "This server is too old for a phone to connect to: it sends no WebRTC fingerprint. Update the server and pair again.";
+  const needsFingerprint = (fp?: string) => !fp && !isDesktop && location.origin === new URL(HOSTED_APP_URL).origin;
   let scanError = $state<string | null>(null);
   function onScan(text: string) {
     const scanned = parseScanned(text);
     if (!scanned) return fail("That QR code isn't from a yoakeland server.");
+    if (needsFingerprint(scanned.rtcFp)) return fail(TOO_OLD);
     token = scanned.token;
     if (scanned.caPem) caPem = scanned.caPem;
     rtcFp = scanned.rtcFp ?? "";
@@ -147,6 +151,10 @@
     const decoded = decodePairingCode(value);
     if (!decoded) {
       pairingError = "Not a pairing code — use \"Enter manually instead\" below.";
+      return;
+    }
+    if (needsFingerprint(decoded.rtcFp)) {
+      pairingError = TOO_OLD;
       return;
     }
     pairingError = null;
