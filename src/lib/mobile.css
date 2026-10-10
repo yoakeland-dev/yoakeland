@@ -28,9 +28,9 @@
 @media (max-width: 700px) {
   :root {
     --chat-margin: 0px;
-    --header-pad-y: 0.6rem;
+    --header-pad-y: 0.5rem;
     --header-pad-x: 0.9rem;
-    --header-line: 2.5rem;
+    --header-line: 3rem;
     --ctrl-h: 2.5rem;
     --z-sheet: 140;
     --safe-top: env(safe-area-inset-top, 0px);

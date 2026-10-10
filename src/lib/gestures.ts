@@ -12,7 +12,9 @@ export interface SwipeOptions {
   onCancel?: () => void;
 }
 
-const SLOP = 8;
+// Axis is decided this early (MUI's SwipeableDrawer uses 3px): the browser commits to a native scroll
+// soon after, and a decision made later arrives as a pointercancel.
+const SLOP = 4;
 // Not stopPropagation: Svelte delegates pointer events to the root, so stopping one would
 // silence every handler beneath (the context menu's long-press cancel, for one).
 const claimed = new WeakSet<Event>();
@@ -77,12 +79,20 @@ export function swipe(opts: () => SwipeOptions): Attachment<HTMLElement> {
       active = false;
     };
 
+    // Once the swipe is ours, keep the browser from scrolling or panning under the finger. touch-action
+    // alone isn't enough: inside a nested scroller (the chat list) the ancestors' values stop applying.
+    const block = (e: TouchEvent) => {
+      if (active && e.cancelable) e.preventDefault();
+    };
+
     node.addEventListener("pointerdown", down);
+    node.addEventListener("touchmove", block, { passive: false });
     node.addEventListener("pointermove", move);
     node.addEventListener("pointerup", up);
     node.addEventListener("pointercancel", cancel);
     return () => {
       node.removeEventListener("pointerdown", down);
+      node.removeEventListener("touchmove", block);
       node.removeEventListener("pointermove", move);
       node.removeEventListener("pointerup", up);
       node.removeEventListener("pointercancel", cancel);

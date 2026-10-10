@@ -1888,23 +1888,23 @@
       padding-right: 3.2rem;
     }
     :global(.add-chip) {
-      width: 2.4rem;
-      height: 2.4rem;
+      width: 2.8rem;
+      height: 2.8rem;
     }
     .pickers :global(.picker-trigger) {
-      min-height: 2.4rem;
-      min-width: 2.4rem;
+      min-height: 2.8rem;
+      min-width: 2.8rem;
       justify-content: center;
     }
     .hint {
       display: none;
     }
     .primary {
-      width: 2.6rem;
-      height: 2.6rem;
+      width: 3rem;
+      height: 3rem;
     }
     .wrap.compact :is(textarea, .mirror) {
-      padding-block: calc((2.6rem - 1.38rem) / 2);
+      padding-block: calc((3rem - 1.38rem) / 2);
       padding-right: 3.2rem;
     }
   }

@@ -22,6 +22,7 @@
   import { tip } from "$lib/tooltip.svelte";
   import { viewport, drawerWidth } from "$lib/viewport.svelte";
   import { swipe, commits, ownsHorizontalDrag } from "$lib/gestures";
+import { haptic } from "$lib/haptics";
   import { initSheetDrag } from "$lib/sheets";
 
   // Window chrome lives here instead of a dedicated title bar row, as floating
@@ -198,8 +199,12 @@
     },
     onEnd: (d: number, v: number) => {
       if (goBack) {
-        if (commits(d / innerWidth, v, 1)) goBack();
-      } else app.setSidebarCollapsed(!commits(clamp01(d / drawerWidth()), v, 1));
+        if (commits(d / innerWidth, v, 1)) (haptic(), goBack());
+      } else {
+        const open = commits(clamp01(d / drawerWidth()), v, 1);
+        if (open) haptic();
+        app.setSidebarCollapsed(!open);
+      }
       viewport.drawer = null;
     },
     onCancel: () => (viewport.drawer = null),
@@ -209,7 +214,9 @@
     accept: (d: number) => d < 0 && !app.sidebarCollapsed,
     onMove: (d: number) => (viewport.drawer = clamp01(1 + d / drawerWidth())),
     onEnd: (d: number, v: number) => {
-      app.setSidebarCollapsed(commits(1 - clamp01(1 + d / drawerWidth()), -v, 1));
+      const closed = commits(1 - clamp01(1 + d / drawerWidth()), -v, 1);
+      if (closed) haptic();
+      app.setSidebarCollapsed(closed);
       viewport.drawer = null;
     },
     onCancel: () => (viewport.drawer = null),

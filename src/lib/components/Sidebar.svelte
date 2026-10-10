@@ -20,6 +20,7 @@
   import { matches } from "../keybinds.svelte";
   import { viewport, drawerWidth } from "../viewport.svelte";
   import { swipe, commits } from "../gestures";
+import { haptic } from "../haptics";
   import { DropdownMenu } from "bits-ui";
   import { tick, untrack } from "svelte";
   import { fly, slide } from "svelte/transition";
@@ -548,7 +549,9 @@
       accept: (d) => viewport.narrow && d < 0 && !app.sidebarCollapsed,
       onMove: (d) => (viewport.drawer = Math.min(1, Math.max(0, 1 + d / drawerWidth()))),
       onEnd: (d, v) => {
-        app.setSidebarCollapsed(commits(1 - Math.min(1, Math.max(0, 1 + d / drawerWidth())), -v, 1));
+        const closed = commits(1 - Math.min(1, Math.max(0, 1 + d / drawerWidth())), -v, 1);
+        if (closed) haptic();
+        app.setSidebarCollapsed(closed);
         viewport.drawer = null;
       },
       onCancel: () => (viewport.drawer = null),
@@ -1645,11 +1648,18 @@
     }
     /* Finger-sized controls (search row, project row, tabs). */
     .sidebar {
-      --ctrl-h: 2.6rem;
+      --ctrl-h: 3rem;
+    }
+    .icon-btn {
+      width: 3rem;
+      height: 3rem;
+    }
+    :global(.profile) {
+      min-height: 3rem;
     }
     .tab {
-      width: 2.5rem;
-      height: 2.5rem;
+      width: 3rem;
+      height: 3rem;
     }
   }
 </style>

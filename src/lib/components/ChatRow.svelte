@@ -17,6 +17,7 @@
   import { matches } from "../keybinds.svelte";
   import { viewport } from "../viewport.svelte";
   import { swipe, commits } from "../gestures";
+import { haptic } from "../haptics";
 
   let {
     connectionId,
@@ -129,7 +130,7 @@
     onMove: (d: number) => (dragX = Math.min(d, REVEAL * 1.6)),
     onEnd: (d: number, v: number) => {
       dragX = null;
-      if (commits(d / REVEAL, v, 1) && d > REVEAL * 0.6) archive();
+      if (commits(d / REVEAL, v, 1) && d > REVEAL * 0.6) (haptic(), archive());
     },
     onCancel: () => (dragX = null),
   } as const;

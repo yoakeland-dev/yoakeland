@@ -3,6 +3,8 @@
 // sheet instead of scrolling it, and letting go far enough (or flicking) sends it Escape,
 // which bits-ui already treats as "close".
 // Settings is a page on phones, not a sheet: it has no pull-down dismissal.
+import { haptic } from "./haptics";
+
 const SHEET = '[data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > *, [data-dialog-content]:not(.settings-content)';
 
 function scrollTopOf(el: Element, sheet: Element): number {
@@ -29,6 +31,7 @@ const stillOpen = (el: HTMLElement) => el.isConnected && el.dataset.state !== "c
  * Escape), tries an outside tap, and failing that puts the sheet back: a sheet stranded off-screen
  * under its scrim would leave the page dimmed and dead. */
 function dismiss(el: HTMLElement) {
+  haptic();
   el.style.transition = "transform 0.16s ease-in";
   el.style.transform = "translateY(100%)";
   setTimeout(() => stillOpen(el) && escape(el), 120);

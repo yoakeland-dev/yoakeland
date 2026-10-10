@@ -32,8 +32,8 @@
 
   @media (max-width: 700px) {
     .action {
-      padding: 0.55rem 0.45rem;
-      margin: -0.55rem -0.2rem;
+      padding: 1rem 0.85rem;
+      margin: -1rem -0.2rem;
     }
   }
 </style>

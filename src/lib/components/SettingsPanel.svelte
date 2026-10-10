@@ -8,6 +8,7 @@
   import { basename } from "../format";
   import { isDesktop, revealItemInDir, windowChromeKind } from "../platform";
   import { swipe, commits, ownsHorizontalDrag } from "../gestures";
+  import { viewport } from "../viewport.svelte";
   import {
     browseAndAddProject,
     connectServerRow,
@@ -523,7 +524,9 @@
 
   // ---- Search: dims non-matching rows rather than hiding them, so the page doesn't reflow.
   // Every tab's content stays mounted (bits-ui only toggles `hidden`), so all are indexed. ----
-  const TAB_ORDER = ["profile", "appearance", "terminal", "keyboard", "servers", "general", "providers", "projects", "safety", "notifications", "access", "audit"];
+  const ALL_TABS = ["profile", "appearance", "terminal", "keyboard", "servers", "general", "providers", "projects", "safety", "notifications", "access", "audit"];
+  // No physical keyboard to bind on a phone.
+  const TAB_ORDER = $derived(viewport.narrow ? ALL_TABS.filter((t) => t !== "keyboard") : ALL_TABS);
   const TAB_LABELS: Record<string, string> = {
     profile: "profile you name avatar picture",
     appearance: "appearance look theme fonts",
@@ -570,6 +573,7 @@
     onCancel: () => backTarget()?.style.removeProperty("transform"),
   } as const;
   $effect(() => {
+    if (app.showSettings && viewport.narrow && app.settingsTab === "keyboard") app.settingsTab = "appearance";
     if (app.showSettings) detail = app.settingsTab !== "appearance";
   });
   let settingsSearch = $state("");
@@ -816,7 +820,7 @@
           {@render tab("profile", "Profile", "user")}
           {@render tab("appearance", "Appearance", "palette")}
           {@render tab("terminal", "Terminal", "terminal-2")}
-          {@render tab("keyboard", "Keyboard", "keyboard")}
+          {#if !viewport.narrow}{@render tab("keyboard", "Keyboard", "keyboard")}{/if}
           {@render tab("servers", "Servers", "server")}
 
           <div class="tabs-group-label" {@attach tip("These apply to one server — pick which at the top of each page")}>
@@ -1040,17 +1044,19 @@
             </section>
             <section class="settings-section">
               <h3 class="section-heading">Window</h3>
-              <div class="setting-row">
-                {@render rowText("Main area", "Floating insets the chat area as a rounded card; flat fills the window edge to edge.")}
-                {@render segmented(
-                  [
-                    { value: "floating", label: "Floating" },
-                    { value: "flat", label: "Flat" },
-                  ],
-                  app.settings.mainArea,
-                  (v) => ((app.settings.mainArea = v as "floating" | "flat"), apply()),
-                )}
-              </div>
+              {#if !viewport.narrow}
+                <div class="setting-row">
+                  {@render rowText("Main area", "Floating insets the chat area as a rounded card; flat fills the window edge to edge.")}
+                  {@render segmented(
+                    [
+                      { value: "floating", label: "Floating" },
+                      { value: "flat", label: "Flat" },
+                    ],
+                    app.settings.mainArea,
+                    (v) => ((app.settings.mainArea = v as "floating" | "flat"), apply()),
+                  )}
+                </div>
+              {/if}
 
               <div class="setting-row">
                 {@render rowText("Surfaces", "Frosted glass blurs whatever floats over the UI — the composer, popups and dialogs.")}

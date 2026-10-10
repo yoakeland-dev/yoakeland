@@ -447,10 +447,10 @@
       opacity: 0.8;
       pointer-events: auto;
     }
-    /* Finger-sized hit area around the 12px icons; negative margins keep the row's layout. */
+    /* Finger-sized hit area (about 36x40) around the 12px icons; negative margins keep the row's height. */
     .action {
-      padding: 0.55rem 0.45rem;
-      margin: -0.55rem -0.2rem;
+      padding: 1rem 0.85rem;
+      margin: -1rem -0.2rem;
     }
   }
 </style>
