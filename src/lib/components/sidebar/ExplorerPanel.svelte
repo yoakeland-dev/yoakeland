@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { askConfirm } from "../../confirm.svelte";
   import { tip } from "../../tooltip.svelte";
   // The project tree plus an editor with tabs. Narrow (beside the chat) it's either the tree or
   // the open files; wide (the tools column swapped into the main area) it's both side by side.
@@ -133,8 +134,8 @@
     showing = "editor";
   }
 
-  function closeTab(path: string) {
-    if (dirty[path] && !confirm(`Discard unsaved changes to ${path.split("/").pop()}?`)) return;
+  async function closeTab(path: string) {
+    if (dirty[path] && !(await askConfirm(`Discard unsaved changes to ${path.split("/").pop()}?`))) return;
     dropTabs((p) => p === path);
   }
 
@@ -207,7 +208,7 @@
   }
 
   async function remove(path: string, isDir: boolean) {
-    if (!cid || !confirm(`Delete ${isDir ? "folder" : "file"} "${path}"${isDir ? " and everything in it" : ""}? This can't be undone.`)) return;
+    if (!cid || !(await askConfirm(`Delete ${isDir ? "folder" : "file"} "${path}"${isDir ? " and everything in it" : ""}? This can't be undone.`))) return;
     const r = await fsOp(cid, projectPath, "delete", path).catch((e) => ({ error: String(e) }));
     if (r.error) return void (opError = r.error);
     opError = "";

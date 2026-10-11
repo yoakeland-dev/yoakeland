@@ -8,13 +8,14 @@
   import {
     connectLocalUnix,
     connectTcp,
+    pairAndConnect,
     installServer,
     caServerKey,
     importCaCertFile,
     FALLBACK_SOCKET_PATH,
     getDefaultSocketPath,
   } from "../ipc";
-  import { decodePairingCode, HOSTED_APP_URL, parseScanned } from "../pairing";
+  import { HOSTED_APP_URL, parseScanned } from "../pairing";
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
   import QrScanner from "./QrScanner.svelte";
@@ -129,6 +130,11 @@
   }
   function onHostPortPaste(e: ClipboardEvent) {
     const text = e.clipboardData?.getData("text");
+    // A whole pairing code (the one the server prints, or its link) says where to go as well, so it skips the steps.
+    if (text && parseScanned(text)?.host) {
+      e.preventDefault();
+      return onScan(text);
+    }
     const parsed = text && splitHostPort(text);
     if (!parsed) return;
     e.preventDefault();
@@ -141,6 +147,10 @@
   // the server's address and DTLS fingerprint (WebRTC, rtc.ts); pasting one fills those fields in
   // one step. Purely a shortcut, no submit of its own.
   let pairingCode = $state("");
+  // The short PIN a server prints, as an alternative to a pairing code (desktop only, pair.js).
+  let pin = $state("");
+  const pinDigits = $derived(pin.replace(/\D/g, ""));
+  const canConnect = $derived(!!token || (isDesktop && pinDigits.length >= 6));
   let rtcFp = $state("");
   let alternates = $state<string[]>([]);
   let pairingError = $state<string | null>(null);
@@ -150,7 +160,7 @@
       pairingError = null;
       return;
     }
-    const decoded = decodePairingCode(value);
+    const decoded = parseScanned(value);
     if (!decoded) {
       pairingError = "Not a pairing code. Use \"Enter manually instead\" below.";
       return;
@@ -227,6 +237,7 @@
   }
   function submitRemote(e: Event) {
     e.preventDefault();
+    if (!token && pinDigits) return attempt(() => pairAndConnect(host, port, pinDigits));
     return attempt(() => connectTcp(host, port, token, caPem, rtcFp || undefined, alternates));
   }
 </script>
@@ -247,7 +258,7 @@
       <QrScanner onscan={onScan} onerror={fail} />
       <Button type="button" variant="ghost" onclick={() => (step = host.trim() ? "code" : "address")}>Cancel</Button>
     {:else if step === "address"}
-      <p class="hint">Paste "host:port" into either field to fill both.</p>
+      <p class="hint">Paste the pairing code the server prints here to connect at once, or "host:port" to fill both fields.</p>
       <div class="row">
         <label class="grow">
           Host
@@ -276,8 +287,8 @@
       {@render scanButton()}
     {:else if step === "code"}
       <p class="hint">
-        Always TLS, with a CA only the server operator has. Paste the pairing code from their
-        Settings › Access. It carries the token and CA.
+        Always TLS, with a CA only the server operator has. Paste the pairing code the server
+        prints, or the one from its Settings › Access. It carries the token and CA.
       </p>
       <label>
         Pairing code
@@ -286,11 +297,20 @@
           value={pairingCode}
           onkeydown={onCodeKeydown}
           oninput={(e) => applyPairingCode((e.target as HTMLInputElement).value)}
-          placeholder="Paste the code from Settings › Access"
+          placeholder="Paste the pairing code or link"
         />
       </label>
       {#if pairingError}
         <p class="error"><Icon name="alert-circle" size={14} /> {pairingError}</p>
+      {/if}
+      {#if isDesktop}
+        <label>
+          Or the PIN the server printed
+          <TextField bind:value={pin} placeholder="4821-7733" inputmode="numeric" autocomplete="off" />
+        </label>
+        {#if busy && pinDigits && !token}
+          <p class="hint">Pairing. If someone is at the server's desktop, they'll be asked to approve.</p>
+        {/if}
       {/if}
       {@render scanButton()}
       <button type="button" class="menu-option" onclick={goToManual}>
@@ -301,8 +321,8 @@
         <button type="button" class="back-step" onclick={goToAddress} {@attach tip("Back", "Backspace")}>
           <Icon name="chevron-left" size={13} />
         </button>
-        <Button variant="primary" class="submit grow" type="submit" disabled={busy || !token}>
-          {busy ? "Connecting…" : "Connect"}
+        <Button variant="primary" class="submit grow" type="submit" disabled={busy || !canConnect}>
+          {busy ? (pinDigits && !token ? "Pairing…" : "Connecting…") : "Connect"}
         </Button>
       </div>
     {:else}

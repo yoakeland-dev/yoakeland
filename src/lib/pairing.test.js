@@ -45,3 +45,11 @@ test("a code carries every address and a phone gets them all back", async () => 
   assert.deepEqual(got.hosts, ["10.0.0.2", "100.64.1.1"]);
   assert.equal(parseScanned(pairingUrl("192.168.1.5", 7890, "tok", "AB:CD")).hosts?.length ?? 0, 0);
 });
+
+test("the code the server prints says where to go and what CA to trust", () => {
+  const printed = btoa(JSON.stringify({ t: "tok", ca: "PEM", h: "203.0.113.7", hs: ["10.0.0.2"], p: 7890, fp: "AB:CD" }));
+  const got = parseScanned(printed);
+  assert.deepEqual([got.token, got.caPem, got.host, got.port, got.hosts], ["tok", "PEM", "203.0.113.7", 7890, ["10.0.0.2"]]);
+  // and without a fingerprint, as the desktop's copy has when the server has no WebRTC
+  assert.equal(parseScanned(btoa(JSON.stringify({ t: "tok", ca: "PEM", h: "10.0.0.2", p: 7890 }))).host, "10.0.0.2");
+});

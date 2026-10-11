@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { askConfirm } from "../confirm.svelte";
   import { tip } from "../tooltip.svelte";
   import { slide } from "svelte/transition";
   import { tick } from "svelte";
@@ -61,10 +62,10 @@
     renaming = false;
   }
 
-  function archiveOlder() {
+  async function archiveOlder() {
     const cutoff = Date.now() - app.settings.autoArchiveDays * 86400000;
     const old = sessions.filter((s) => new Date(s.updatedAt).getTime() < cutoff);
-    if (!old.length || !confirm(`Archive ${old.length} chat${old.length === 1 ? "" : "s"} in ${projectName}?`)) return;
+    if (!old.length || !(await askConfirm(`Archive ${old.length} chat${old.length === 1 ? "" : "s"} in ${projectName}?`))) return;
     for (const s of old) setSessionArchived(connectionId, s.sessionId, true);
   }
 
@@ -90,8 +91,8 @@
       icon: "trash",
       danger: true,
       disabled: !connected,
-      onSelect: () => {
-        if (!confirm(`Remove ${projectName} from ${server?.label}? Its files aren't touched.`)) return;
+      onSelect: async () => {
+        if (!(await askConfirm(`Remove ${projectName} from ${server?.label}? Its files aren't touched.`))) return;
         server?.forgetProject(projectPath);
         removeProject(connectionId, projectPath);
       },

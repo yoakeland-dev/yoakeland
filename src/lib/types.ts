@@ -442,6 +442,8 @@ export interface PeerInfo {
   /** The chat this connection last opened. */
   sessionId?: string;
   projectPath?: string;
+  /** Held to the paired-device allowlist; false means full access. */
+  restricted?: boolean;
 }
 
 /** A registered per-person TCP credential (§3.1 register_token/list_tokens):

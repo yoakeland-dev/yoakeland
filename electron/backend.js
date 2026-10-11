@@ -8,6 +8,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
+import { pairWithPin } from "./pair.js";
 import { installedServer, installServer, latestRelease, managedBinPath } from "./serverInstall.js";
 
 const MAX_FRAME_BYTES = 10 * 1024 * 1024;
@@ -168,6 +169,10 @@ export function commands(emit, dataDir) {
       send(sock, { type: "auth", data: { token, ...identity(rest) } });
       return id;
     },
+
+    // Trades an address and the PIN the server printed for a one-device credential and the CA to
+    // trust it with (pair.js); the renderer then connects with those like with any pairing code.
+    pair_tcp: ({ host, port, pin, ...rest }) => pairWithPin({ host, port, pin, ...identity(rest) }),
 
     connect_unix: async ({ path: p, ...rest }) => {
       const sock = await openLocal(expandTilde(p));

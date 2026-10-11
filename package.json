@@ -1,6 +1,6 @@
 {
   "name": "yoake-gui",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "yoakeland desktop client",
   "type": "module",
   "scripts": {

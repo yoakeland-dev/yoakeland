@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { askConfirm } from "../confirm.svelte";
   import { tip } from "../tooltip.svelte";
   // Shared row shape for every sidebar list (Pinned, filter chips,
   // project lists, search results, split pairs); `variant` only changes the
@@ -113,11 +114,11 @@ import { haptic } from "../haptics";
     });
   }
 
-  function remove() {
+  async function remove() {
     // A project-less chat's files live and die with it; a project's are never touched.
     const chat = server?.projectBySession[s.sessionId] === CHAT_PROJECT;
     const files = chat && s.workspaceBytes ? ` Its workspace (${fileSize(s.workspaceBytes)} of files) is deleted too.` : chat ? " Its workspace is deleted too." : "";
-    if (confirm(`Permanently delete "${sessionTitle(s)}"?${files} This can't be undone.`)) deleteSession(connectionId, s.sessionId);
+    if (await askConfirm(`Permanently delete "${sessionTitle(s)}"?${files} This can't be undone.`)) deleteSession(connectionId, s.sessionId);
   }
 
   // Phone: drag a row right to archive it, like swiping a mail away. Shorter drags spring back.

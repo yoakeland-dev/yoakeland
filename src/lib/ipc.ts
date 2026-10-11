@@ -1,3 +1,4 @@
+import { askConfirm } from "./confirm.svelte";
 import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerStatus, TreeEntry, ContextBreakdown } from "./types";
 import {
   app,
@@ -402,6 +403,20 @@ export async function connectTcp(host: string, port: number, token: string, caPe
     app.setPendingConnect("error", "remote", String(err));
     throw err;
   }
+}
+
+/** Pairs with a server by the PIN it printed, then connects with the credential that gives
+ * (desktop only: the exchange needs the TLS connection's exporter, which a browser can't read). */
+export async function pairAndConnect(host: string, port: number, pin: string): Promise<ConnectionId> {
+  app.setPendingConnect("connecting", "remote");
+  let paired: { token: string; caPem: string };
+  try {
+    paired = await invoke<{ token: string; caPem: string }>("pair_tcp", { host, port, pin, ...peerIdentity() });
+  } catch (err) {
+    app.setPendingConnect("error", "remote", String(err));
+    throw err;
+  }
+  return connectTcp(host, port, paired.token, paired.caPem || undefined);
 }
 
 /** The error a remote refused with, or null once it identified itself (or stayed quiet, as an old server may). */
@@ -1058,9 +1073,9 @@ export async function moveChatToProject(connectionId: ConnectionId, sessionId: s
   try {
     const r = await rpc<{ error?: string; dir?: string; files?: number }>(connectionId, "import_chat_files", { sessionId, target: project });
     if (r.dir) imported = { dir: r.dir, files: r.files ?? 0 };
-    else if (r.error && !/no files/.test(r.error) && !confirm(`Couldn't copy the chat's files: ${r.error}. Continue without them?`)) return;
+    else if (r.error && !/no files/.test(r.error) && !(await askConfirm(`Couldn't copy the chat's files: ${r.error}. Continue without them?`))) return;
   } catch (e) {
-    if (!confirm(`Couldn't copy the chat's files: ${e instanceof Error ? e.message : e}. Continue without them?`)) return;
+    if (!(await askConfirm(`Couldn't copy the chat's files: ${e instanceof Error ? e.message : e}. Continue without them?`))) return;
   }
   if (imported) listFiles(connectionId, project);
   await newChat(connectionId, project);
@@ -1345,6 +1360,11 @@ export function disconnectPeer(connectionId: ConnectionId, peerId: string) {
   void send(connectionId, { type: "disconnect_peer", data: { peerId } });
 }
 
+/** Promotes (full) or demotes a device; applies to its whole credential. Needs full access here. */
+export function setPeerScope(connectionId: ConnectionId, peerId: string, full: boolean) {
+  void send(connectionId, { type: "set_peer_scope", data: { peerId, full } });
+}
+
 /** Opens or closes the optional TCP listener live. Local-socket-only: the
  * server rejects this over TCP (§3.1). */
 export function setRemoteAccess(
@@ -1393,8 +1413,8 @@ export function registerToken(connectionId: ConnectionId, name: string, email?: 
 }
 
 /** Lets a device that scanned a pairing QR code in (or turns it away). Local socket only. */
-export function answerPairing(connectionId: ConnectionId, credential: string, allow: boolean) {
-  void send(connectionId, { type: "approve_pairing", data: { credential, allow } });
+export function answerPairing(connectionId: ConnectionId, credential: string, allow: boolean, full = false) {
+  void send(connectionId, { type: "approve_pairing", data: { credential, allow, full: full || undefined } });
   const s = app.servers[connectionId];
   if (s) s.pairingRequests = s.pairingRequests.filter((r) => r.credential !== credential);
 }

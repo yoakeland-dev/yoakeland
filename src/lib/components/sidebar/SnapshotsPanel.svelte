@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { askConfirm } from "../../confirm.svelte";
   import { tip } from "../../tooltip.svelte";
   // Snapshots (§3.1 list_snapshots/restore_snapshot): one per agent turn that edited files.
   // Each file's diff is "what restoring would revert": that turn's copy against the file now.
@@ -27,10 +28,10 @@
   let restoringId = $state<string | null>(null);
   let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  function restore(snapshotId: string, when: string) {
+  async function restore(snapshotId: string, when: string) {
     const cid = app.activeConnectionId;
     if (!cid) return;
-    const ok = confirm(
+    const ok = await askConfirm(
       `Restore the project to how it was before ${when}?\n\nEvery file this and later snapshots touched goes back. Your current state is saved as a new snapshot first, so you can undo this.`,
     );
     if (!ok) return;

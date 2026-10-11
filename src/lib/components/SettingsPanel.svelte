@@ -2,6 +2,7 @@
   // App-wide pages (Profile, Appearance, Terminal, Servers) store on this device;
   // server-scoped pages (General, Providers, Projects, Access) store on whichever
   // server the page header points at.
+  import { askConfirm } from "../confirm.svelte";
   import { Dialog, Tabs } from "bits-ui";
   import { untrack, type ComponentProps } from "svelte";
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
@@ -231,14 +232,17 @@
   }
   const isLocalConnection = $derived(connected && server?.connectionMode === "local");
 
+  // The profile is one identity on every server, so a change goes to all of them, not just the open one.
+  const connectedIds = () => Object.values(app.servers).filter((v) => v.connectionStatus === "connected").map((v) => v.connectionId);
+
   function onProfileNameChange() {
     apply();
-    if (cid) setPeerName(cid, app.settings.profileName || "anonymous");
+    for (const id of connectedIds()) setPeerName(id, app.settings.profileName || "anonymous");
   }
 
   function pushAvatar() {
     apply();
-    if (cid) setPeerAvatar(cid, app.settings.profileAvatar);
+    for (const id of connectedIds()) setPeerAvatar(id, app.settings.profileAvatar);
   }
 
   function setEmojiAvatar(emoji: string) {
@@ -262,8 +266,8 @@
     }
   }
 
-  function onRemoveServer(id: ConnectionId, label: string) {
-    if (!confirm(`Remove "${label}"? Disconnects it and stops offering it for reconnect.`)) return;
+  async function onRemoveServer(id: ConnectionId, label: string) {
+    if (!(await askConfirm(`Remove "${label}"? Disconnects it and stops offering it for reconnect.`))) return;
     if (selectedConnectionId === id) selectedConnectionId = null;
     void removeServer(id);
   }
@@ -286,20 +290,20 @@
     app.addServerRequest = null;
   });
 
-  function onRemoveRow(r: ServerRow) {
-    if (r.connectionId) onRemoveServer(r.connectionId, r.label);
-    else if (r.known && confirm(`Forget "${r.label}"? It stops being offered for reconnect.`)) forgetKnownServer(r.known.serverId);
+  async function onRemoveRow(r: ServerRow) {
+    if (r.connectionId) await onRemoveServer(r.connectionId, r.label);
+    else if (r.known && (await askConfirm(`Forget "${r.label}"? It stops being offered for reconnect.`))) forgetKnownServer(r.known.serverId);
     serversVersion++;
   }
 
-  function onDisconnectPeer(peerId: string, name: string) {
-    if (cid && confirm(`Disconnect "${name}"? Any peer can disconnect any other. There is no extra permission check.`)) {
+  async function onDisconnectPeer(peerId: string, name: string) {
+    if (cid && (await askConfirm(`Disconnect "${name}"? Any peer can disconnect any other. There is no extra permission check.`))) {
       disconnectPeer(cid, peerId);
     }
   }
 
-  function onRemoveProvider(name: string) {
-    if (cid && confirm(`Remove provider "${name}"? This can't be undone.`)) {
+  async function onRemoveProvider(name: string) {
+    if (cid && (await askConfirm(`Remove provider "${name}"? This can't be undone.`))) {
       removeProvider(cid, name);
     }
   }
@@ -378,8 +382,8 @@
     addingPerson = false;
   }
 
-  function onRemoveToken(name: string) {
-    if (cid && confirm(`Revoke "${name}"'s access? They'll be logged out on their next reconnect.`)) {
+  async function onRemoveToken(name: string) {
+    if (cid && (await askConfirm(`Revoke "${name}"'s access? They'll be logged out on their next reconnect.`))) {
       removeToken(cid, name);
     }
   }

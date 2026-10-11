@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { askConfirm } from "../confirm.svelte";
   import { tip } from "../tooltip.svelte";
   // One row per device (matched by deviceId, §3.2 peer_list) even if it's on several servers.
   import { Popover } from "bits-ui";
   import { app, type ConnectionId, type ServerState } from "../state.svelte";
-  import { disconnectPeer, openChatSession, thisDeviceId } from "../ipc";
+  import { disconnectPeer, openChatSession, setPeerScope, thisDeviceId } from "../ipc";
   import { basename, relTime, sessionTitle } from "../format";
   import { isPhotoAvatar } from "../avatar";
   import type { PeerInfo } from "../types";
@@ -64,9 +65,22 @@
     if (c.p.projectPath) c.srv.projectBySession[c.p.sessionId] ??= c.p.projectPath;
     openChatSession(c.cid, c.p.sessionId);
   }
-  function kick(d: Device) {
+  // Only a full-access connection (or the local app) may change another device's tier, and only
+  // a device that came in on a credential has one.
+  function canScope(c: Conn): boolean {
+    const mine = c.srv.peers.find((x) => x.peerId === c.srv.selfPeerId);
+    return !mine?.restricted && !!c.p.credential;
+  }
+  function scopable(d: Device): Conn[] {
+    return d.conns.filter(canScope);
+  }
+  function toggleScope(d: Device) {
+    const full = !!d.p.restricted;
+    for (const c of scopable(d)) setPeerScope(c.cid, c.p.peerId, full);
+  }
+  async function kick(d: Device) {
     const where = d.conns.length > 1 ? `${d.conns.length} servers` : d.conns[0].srv.label;
-    if (!confirm(`Disconnect "${d.p.name}" from ${where}?`)) return;
+    if (!(await askConfirm(`Disconnect "${d.p.name}" from ${where}?`))) return;
     for (const c of d.conns) disconnectPeer(c.cid, c.p.peerId);
   }
 </script>
@@ -121,6 +135,18 @@
                   </span>
                 {/if}
               </button>
+              {#if scopable(d).length}
+                <button
+                  type="button"
+                  class="sb-row-action"
+                  class:on={!d.p.restricted}
+                  {@attach tip(d.p.restricted ? "Limited. Give full access" : "Full access. Limit it")}
+                  aria-label={d.p.restricted ? "Give full access" : "Limit access"}
+                  onclick={() => toggleScope(d)}
+                >
+                  <Icon name="shield-check" size={12} />
+                </button>
+              {/if}
               <button type="button" class="sb-row-action danger" {@attach tip("Disconnect")} aria-label="Disconnect" onclick={() => kick(d)}>
                 <Icon name="unlink" size={12} />
               </button>
@@ -141,6 +167,9 @@
 <style>
   :global(.peers-panel) {
     width: min(20rem, 92vw);
+  }
+  .sb-row-action.on {
+    color: var(--accent, currentColor);
   }
   .stack {
     display: inline-flex;

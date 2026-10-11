@@ -134,6 +134,7 @@
             <p><strong>{request.name || "A device"}</strong> scanned this{request.ip ? ` from ${request.ip}` : ""}. Let it in?</p>
             <div class="pair-actions">
               <Button type="button" variant="ghost" onclick={() => answerPairing(cid, request.credential, false)}>Decline</Button>
+              <Button type="button" variant="ghost" onclick={() => answerPairing(cid, request.credential, true, true)}>Allow with full access</Button>
               <Button type="button" variant="primary" onclick={() => answerPairing(cid, request.credential, true)}>Allow</Button>
             </div>
           </div>

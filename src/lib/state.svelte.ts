@@ -86,6 +86,7 @@ const LAST_USED_MODE_KEY = "yoake.lastUsedMode";
 // one of these with neither `sessionId` nor a current session is dropped, not processed against "".
 const SESSION_SCOPED_EVENTS = new Set([
   "turn_started",
+  "user_message",
   "model_delta",
   "tool_call_requested",
   "permission_request",
@@ -1566,7 +1567,7 @@ export class ServerState {
     this.forgetSessionState(sessionId);
   }
 
-  addUserMessage(sessionId: string, turnId: string, text: string, attachments?: string[]) {
+  addUserMessage(sessionId: string, turnId: string, text: string, attachments?: string[], by?: { author?: string; avatar?: string }) {
     this.ensureSession(sessionId);
     const msg: ChatMessage = {
       id: turnId,
@@ -1577,8 +1578,8 @@ export class ServerState {
       toolCalls: [],
       streaming: false,
       createdAt: Date.now(),
-      author: this.app.settings.profileName || undefined,
-      authorAvatar: this.app.settings.profileAvatar || undefined,
+      author: by ? by.author : this.app.settings.profileName || undefined,
+      authorAvatar: by ? by.avatar : this.app.settings.profileAvatar || undefined,
     };
     this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], msg];
     this.activeTurnBySession[sessionId] = turnId;
@@ -1690,6 +1691,29 @@ export class ServerState {
       return;
     }
     this.beginBranchTurn(sessionId, turnId, idx);
+  }
+
+  /** The turn's reply bubble, making one if this device didn't start the turn (another device did,
+   * or this one opened the chat mid-turn) and so has no placeholder for the stream to fill. */
+  private assistantFor(sessionId: string, turnId: string | undefined): ChatMessage | undefined {
+    const found = this.findAssistantMessage(sessionId, turnId);
+    if (found || !turnId) return found;
+    this.messagesBySession[sessionId] = [
+      ...(this.messagesBySession[sessionId] ?? []),
+      {
+        id: `${turnId}-reply`,
+        role: "assistant",
+        turnId,
+        text: "",
+        toolCalls: [],
+        streaming: true,
+        createdAt: Date.now(),
+        provider: this.providerBySession[sessionId],
+        model: this.modelBySession[sessionId],
+      },
+    ];
+    this.activeTurnBySession[sessionId] ??= turnId;
+    return this.findAssistantMessage(sessionId, turnId);
   }
 
   private findAssistantMessage(sessionId: string, turnId: string | undefined): ChatMessage | undefined {
@@ -1842,7 +1866,7 @@ export class ServerState {
 
     switch (env.type) {
       case "model_delta": {
-        const msg = this.findAssistantMessage(sessionId, env.turnId);
+        const msg = this.assistantFor(sessionId, env.turnId);
         const data = env.data as { content?: string; reasoning?: string };
         if (msg) {
           if (data?.reasoning) msg.thinking = (msg.thinking ?? "") + data.reasoning;
@@ -1851,7 +1875,7 @@ export class ServerState {
         break;
       }
       case "tool_call_requested": {
-        const msg = this.findAssistantMessage(sessionId, env.turnId);
+        const msg = this.assistantFor(sessionId, env.turnId);
         const data = env.data as unknown as ToolCallRequestedData;
         if (msg && env.toolCallId) {
           // The backend has been observed sending this event twice for the same toolCallId;
@@ -1990,6 +2014,13 @@ export class ServerState {
       case "steer_rejected": {
         // The agent couldn't take it; ipc.ts sends it as a prompt of its own, which queues.
         this.takeSteering(sessionId, (env.data as { prompt: string }).prompt);
+        break;
+      }
+      case "user_message": {
+        // Sent to every watcher; the device that sent the prompt already has it.
+        const data = env.data as { messageId: string; content: string; attachments?: string[]; author?: string; authorAvatar?: string };
+        const have = this.messagesBySession[sessionId]?.some((m) => m.id === data.messageId || (m.turnId === env.turnId && m.role === "user"));
+        if (!have && env.turnId) this.addUserMessage(sessionId, env.turnId, data.content, data.attachments, { author: data.author, avatar: data.authorAvatar });
         break;
       }
       case "turn_started": {
