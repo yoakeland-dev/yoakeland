@@ -129,6 +129,16 @@
         }}>{t.action.label}</button
       >
     {/if}
+    {#if t.deny}
+      <button
+        type="button"
+        class="action"
+        onclick={() => {
+          t.deny?.run();
+          app.dropToast(t.id);
+        }}>{t.deny.label}</button
+      >
+    {/if}
     <button type="button" class="x" {@attach tip("Close")} aria-label="Close" onclick={() => app.dropToast(t.id)}>
       <Icon name="xmark" size={12} />
     </button>

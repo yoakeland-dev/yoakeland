@@ -2543,10 +2543,7 @@ export class ServerState {
         const data = env.data as { credential: string; name?: string; deviceType?: string; ip?: string };
         this.pairingRequests = [...this.pairingRequests.filter((r) => r.credential !== data.credential), data];
         // The pair dialog shows it inline when open; otherwise it needs to find the user.
-        this.app.toastAction(this.connectionId, `${data.name || "A device"} wants to pair${data.ip ? ` from ${data.ip}` : ""}`, {
-          label: "Allow",
-          run: () => this.app.answerPairing?.(this.connectionId, data.credential, true),
-        });
+        this.app.pairingToast(this.connectionId, data, (allow) => this.app.answerPairing?.(this.connectionId, data.credential, allow));
         break;
       }
       case "token_registered": {
@@ -2888,7 +2885,7 @@ class AppState {
     }
   }
 
-  toasts = $state<(ServerNotification & { connectionId: ConnectionId; action?: { label: string; run: () => void } })[]>([]);
+  toasts = $state<(ServerNotification & { connectionId: ConnectionId; action?: { label: string; run: () => void }; deny?: { label: string; run: () => void } })[]>([]);
   // One timer per stack (a chat's toasts live and die together), restarted by each new arrival.
   // Held stacks (open, or under the mouse) keep it parked; letting go gives a fresh few seconds.
   private toastTimers = new Map<string, { timer?: ReturnType<typeof setTimeout>; ms: number; held: boolean }>();
@@ -2922,6 +2919,26 @@ class AppState {
       { id, level: "info", kind: "local", title, createdAt: new Date().toISOString(), connectionId, action },
     ];
     this.armToast(id, 6_000);
+  }
+
+  /** A device asking to pair, answered with Allow or Deny right here. It stays up until answered
+   * (answerPairing drops it) or until the server stops waiting, 60 s on (SPEC.md §2a). */
+  pairingToast(connectionId: ConnectionId, request: { credential: string; name?: string; ip?: string }, answer: (allow: boolean) => void) {
+    const id = `pair-${request.credential}`;
+    this.toasts = [
+      ...this.toasts.slice(-5),
+      {
+        id,
+        level: "info",
+        kind: "local",
+        title: `${request.name || "A device"} wants to pair${request.ip ? ` from ${request.ip}` : ""}`,
+        createdAt: new Date().toISOString(),
+        connectionId,
+        action: { label: "Allow", run: () => answer(true) },
+        deny: { label: "Deny", run: () => answer(false) },
+      },
+    ];
+    this.armToast(id, 60_000);
   }
 
   // Ticks periodically so relative times ("3m") re-render instead of freezing.

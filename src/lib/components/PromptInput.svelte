@@ -2,7 +2,7 @@
   import { tip } from "../tooltip.svelte";
   import { fly, scale, slide } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
-  import { setContext, untrack } from "svelte";
+  import { onDestroy, setContext, untrack } from "svelte";
   import { DropdownMenu } from "bits-ui";
   import { app, CHAT_PROJECT } from "../state.svelte";
   import {
@@ -233,35 +233,46 @@
   // local socket that's this machine, so a picked file is referenced in place. A remote
   // server gets the bytes uploaded (§3.1 upload_begin); pasted files have no path either way.
   type Attachment = { key: string; name: string; path?: string; progress?: number; error?: string; thumb?: string };
-  let attachments = $state<Attachment[]>([]);
+  // Each chat keeps its own list, so switching chats shows its chips and a send ships only its own.
+  // Lists are edited in place rather than replaced, so an upload still running for a chat finds its
+  // chip even if the user has switched away meanwhile.
+  let attachmentsBySession = $state<Record<string, Attachment[]>>({});
+  const listFor = (sid: string): Attachment[] => (attachmentsBySession[sid] ??= []);
+  const attachments = $derived(attachmentsBySession[sessionId] ?? []);
   let fileInput: HTMLInputElement | undefined = $state();
   const uploading = $derived(attachments.some((a) => !a.path && !a.error));
+  onDestroy(() => {
+    for (const list of Object.values(attachmentsBySession)) for (const a of list) if (a.thumb) URL.revokeObjectURL(a.thumb);
+  });
 
   // Image attachments show a thumbnail: straight from the File when there is one, else read off
   // disk (a local path, desktop only).
   const IMAGE_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
-  function thumbFromFile(key: string, file: File) {
-    const a = attachments.find((x) => x.key === key);
+  function thumbFromFile(sid: string, key: string, file: File) {
+    const a = listFor(sid).find((x) => x.key === key);
     if (a && !a.thumb && file.type.startsWith("image/")) a.thumb = URL.createObjectURL(file);
   }
-  function thumbFromPath(key: string, path: string) {
+  function thumbFromPath(sid: string, key: string, path: string) {
     if (!isDesktop || !IMAGE_RE.test(path)) return;
     invoke<ArrayBuffer>("read_file_bytes", { path })
       .then((buf) => {
-        const a = attachments.find((x) => x.key === key);
+        const a = listFor(sid).find((x) => x.key === key);
         if (a && !a.thumb) a.thumb = URL.createObjectURL(new Blob([buf]));
       })
       .catch(() => {});
   }
   function addLocal(path: string) {
-    if (attachments.some((a) => a.path === path)) return;
-    attachments.push({ key: path, name: basename(path), path });
-    thumbFromPath(path, path);
+    const sid = sessionId;
+    const list = listFor(sid);
+    if (list.some((a) => a.path === path)) return;
+    list.push({ key: path, name: basename(path), path });
+    thumbFromPath(sid, path, path);
   }
   function removeAttachment(key: string) {
-    const a = attachments.find((x) => x.key === key);
+    const sid = sessionId;
+    const a = listFor(sid).find((x) => x.key === key);
     if (a?.thumb) URL.revokeObjectURL(a.thumb);
-    attachments = attachments.filter((x) => x.key !== key);
+    attachmentsBySession[sid] = listFor(sid).filter((x) => x.key !== key);
   }
 
   async function attachFile() {
@@ -277,12 +288,13 @@
   function startUpload(name: string, load: () => Promise<File>) {
     const c = cid;
     if (!c) return;
+    const sid = sessionId;
     const key = crypto.randomUUID();
-    attachments.push({ key, name, progress: 0 });
-    const entry = () => attachments.find((a) => a.key === key);
+    listFor(sid).push({ key, name, progress: 0 });
+    const entry = () => listFor(sid).find((a) => a.key === key);
     load()
       .then((file) => {
-        thumbFromFile(key, file);
+        thumbFromFile(sid, key, file);
         return uploadFile(c, file, (f) => {
           const a = entry();
           if (a) a.progress = f;
@@ -685,7 +697,7 @@
       // Mid-turn is fine: it queues until the running turn ends (sendPrompt).
       sendPrompt(cid, sessionId, value, attachments.flatMap((a) => (a.path ? [a.path] : [])));
       for (const a of attachments) if (a.thumb) URL.revokeObjectURL(a.thumb);
-      attachments = [];
+      attachmentsBySession[sessionId] = [];
     }
     text = "";
   }

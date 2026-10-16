@@ -1546,6 +1546,7 @@ export function answerPairing(connectionId: ConnectionId, credential: string, al
   void send(connectionId, { type: "approve_pairing", data: { credential, allow, full: full || undefined } });
   const s = app.servers[connectionId];
   if (s) s.pairingRequests = s.pairingRequests.filter((r) => r.credential !== credential);
+  app.dropToast(`pair-${credential}`);
 }
 
 function listTokens(connectionId: ConnectionId) {
