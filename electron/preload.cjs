@@ -9,10 +9,19 @@ async function call(cmd, args) {
 
 const chromeArg = process.argv.find((a) => a.startsWith("--yoake-chrome="));
 
+// The commands the page calls through invoke() (src/lib/ipc.ts and friends). Anything else stays
+// unreachable from the page, the shell: channels included; main.js checks each call's arguments.
+const COMMANDS = new Set([
+  "load_themes", "themes_reveal_path", "default_socket_path", "probe_unix", "connect_unix", "connect_tcp",
+  "pair_tcp", "disconnect", "send_envelope", "spawn_detached_unix_server", "server_latest_release",
+  "server_install", "read_text_file", "read_file_bytes", "load_credential", "store_credential",
+  "oauth_listen", "oauth_wait", "oauth_wait_params", "oauth_cancel", "shell:notify", "shell:badge",
+]);
+
 const EVENTS = ["yoake-event", "yoake-log", "yoake-disconnected", "yoake-notification-open", "yoake-themes-changed", "yoake-close-requested"];
 
 contextBridge.exposeInMainWorld("yoake", {
-  invoke: (cmd, args) => (cmd.startsWith("shell:") ? Promise.reject("unknown command") : call(cmd, args)),
+  invoke: (cmd, args) => (COMMANDS.has(cmd) ? call(cmd, args) : Promise.reject("unknown command")),
   listen(event, cb) {
     if (!EVENTS.includes(event)) throw new Error(`unknown event ${event}`);
     const h = (_e, payload) => cb(payload);
@@ -30,7 +39,12 @@ contextBridge.exposeInMainWorld("yoake", {
   minimize: () => call("shell:window", { action: "minimize" }),
   toggleMaximize: () => call("shell:window", { action: "toggleMaximize" }),
   close: () => call("shell:window", { action: "close" }),
-  getPathForFile: (file) => webUtils.getPathForFile(file),
+  // A dropped file's path is only ever learned this way, so it's the one grant a drop makes.
+  getPathForFile(file) {
+    const p = webUtils.getPathForFile(file);
+    if (p) void call("shell:grant_path", { path: p }).catch(() => {});
+    return p;
+  },
   platform: process.platform,
   chrome: chromeArg ? JSON.parse(chromeArg.slice("--yoake-chrome=".length)) : {},
   setCloseHook: (on) => call("shell:set_close_hook", { on }),

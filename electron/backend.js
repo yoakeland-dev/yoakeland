@@ -135,6 +135,22 @@ function trustedCAs(caPem) {
   return tls.getCACertificates?.("system") ?? undefined;
 }
 
+// Paths the user picked in a file dialog or dropped onto the window this session. The page can
+// only read these, and only one of these can be a custom server binary (grantPaths).
+const granted = new Set();
+export function grantPaths(paths) {
+  for (const p of paths ?? []) if (typeof p === "string" && path.isAbsolute(p)) granted.add(path.resolve(p));
+}
+const isGranted = (p) => typeof p === "string" && granted.has(path.resolve(p));
+
+// Read by the page only for paths it was granted; the bridge can't name any other file.
+async function readGranted(p, encoding) {
+  if (!isGranted(p)) throw new Error(`not a file you picked: ${p}`);
+  return readFile(p, encoding).catch((e) => {
+    throw new Error(`failed to read ${p}: ${e.message}`);
+  });
+}
+
 export function commands(emit, dataDir) {
   return {
     probe_tcp: ({ host, port }) => probe(net.connect({ host, port })),
@@ -147,6 +163,8 @@ export function commands(emit, dataDir) {
       const wanted = expandTilde(socketPath);
       // The bare default means "whatever is installed": a downloaded copy wins over PATH.
       if (binPath === "yoakeland" && (await installedServer(dataDir))) binPath = managedBinPath(dataDir);
+      // Otherwise only a binary the user picked (ConnectForm, Onboarding); the page can't name another.
+      else if (binPath !== "yoakeland" && !isGranted(binPath)) throw new Error(`not a server binary you picked: ${binPath}`);
       return spawnDetached(dataDir, binPath, wanted === defaultSocketPath() ? [] : ["-listen", `unix:${wanted}`]);
     },
 
@@ -200,14 +218,8 @@ export function commands(emit, dataDir) {
     load_themes: () => loadThemes(dataDir),
     themes_reveal_path: () => themesRevealPath(dataDir),
 
-    read_text_file: ({ path: p }) =>
-      readFile(p, "utf8").catch((e) => {
-        throw new Error(`failed to read ${p}: ${e.message}`);
-      }),
-    read_file_bytes: ({ path: p }) =>
-      readFile(p).catch((e) => {
-        throw new Error(`failed to read ${p}: ${e.message}`);
-      }),
+    read_text_file: ({ path: p }) => readGranted(p, "utf8"),
+    read_file_bytes: ({ path: p }) => readGranted(p),
   };
 }
 
@@ -249,8 +261,24 @@ export async function themesRevealPath(dir) {
   return example;
 }
 
-// ponytail: tokens are plaintext JSON at 0600, not in the OS keychain, which
-// Linux doesn't reliably have. Electron's safeStorage is the upgrade.
+// Electron's safeStorage (main.js calls setSecretStore): when the OS keeps a key for it, tokens are
+// written encrypted as { enc }; otherwise, and for files from before, plaintext strings at 0600.
+let secrets = null;
+/** @param {{ available(): boolean, encrypt(s: string): string, decrypt(b64: string): string } | null} store */
+export function setSecretStore(store) {
+  secrets = store;
+}
+const encodeCredential = (v) => (secrets?.available() ? { enc: secrets.encrypt(v) } : v);
+function decodeCredential(v) {
+  if (typeof v === "string") return v;
+  if (typeof v?.enc !== "string" || !secrets) return null;
+  try {
+    return secrets.decrypt(v.enc);
+  } catch {
+    return null; // encrypted under a key the OS no longer has: the server needs pairing again
+  }
+}
+
 async function readCredentials(dir) {
   try {
     return JSON.parse(await readFile(path.join(dir, "credentials.json"), "utf8"));
@@ -260,13 +288,22 @@ async function readCredentials(dir) {
 }
 
 export async function loadCredential(dir, key) {
-  return (await readCredentials(dir))[key] ?? null;
+  checkKey(key);
+  const v = (await readCredentials(dir))[key];
+  return v == null ? null : decodeCredential(v);
+}
+
+// Server ids are short strings; anything else is a bad call, not a key to store.
+function checkKey(key) {
+  if (typeof key !== "string" || !key || key.length > 200) throw new Error("bad credential key");
 }
 
 async function writeCredential(dir, key, value) {
   const all = await readCredentials(dir);
+  // Every plaintext entry is encrypted by this write too, which migrates an older file.
+  for (const [k, v] of Object.entries(all)) if (typeof v === "string") all[k] = encodeCredential(v);
   if (value == null) delete all[key];
-  else all[key] = value;
+  else all[key] = encodeCredential(value);
   await mkdir(dir, { recursive: true });
   // Temp file and rename, so a crash can't leave a truncated file.
   const file = path.join(dir, "credentials.json");
@@ -279,7 +316,9 @@ async function writeCredential(dir, key, value) {
 let credentialQueue = Promise.resolve();
 
 /** An absent `value` deletes the entry. */
-export function storeCredential(dir, key, value) {
+export async function storeCredential(dir, key, value) {
+  checkKey(key);
+  if (value != null && typeof value !== "string") throw new Error("bad credential value");
   credentialQueue = credentialQueue.catch(() => {}).then(() => writeCredential(dir, key, value));
   return credentialQueue;
 }

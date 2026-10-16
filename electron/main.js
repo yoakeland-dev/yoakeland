@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, Notification, protocol, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, Notification, protocol, safeStorage, session, shell } from "electron";
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import os from "node:os";
 import { readFile } from "node:fs/promises";
@@ -129,6 +129,12 @@ const emit = (channel, payload) => win?.webContents.send(channel, payload);
 
 for (const [name, fn] of Object.entries(backend.commands(emit, app.getPath("userData")))) handle(name, fn);
 
+// Linux with no keyring falls back to a built-in password ("basic_text"), which encrypts nothing.
+backend.setSecretStore({
+  available: () => safeStorage.isEncryptionAvailable() && (process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text"),
+  encrypt: (s) => safeStorage.encryptString(s).toString("base64"),
+  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, "base64")),
+});
 handle("load_credential", ({ key }) => backend.loadCredential(app.getPath("userData"), key));
 handle("store_credential", ({ key, value }) => backend.storeCredential(app.getPath("userData"), key, value));
 
@@ -137,8 +143,12 @@ handle("shell:pick_files", async ({ title, multiple }, event) => {
     title,
     properties: multiple ? ["openFile", "multiSelections"] : ["openFile"],
   });
-  return r.canceled ? [] : r.filePaths;
+  if (r.canceled) return [];
+  backend.grantPaths(r.filePaths);
+  return r.filePaths;
 });
+// Files dropped on the window: preload.cjs reports each one's path here as the drop is read.
+handle("shell:grant_path", ({ path: p }) => backend.grantPaths([p]));
 handle("shell:open_url", ({ url }) => {
   if (!/^https?:|^mailto:/.test(url)) throw new Error(`refusing to open ${url}`);
   return shell.openExternal(url);

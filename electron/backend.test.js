@@ -5,7 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { commands, loadCredential, loadThemes, storeCredential, themesRevealPath } from "./backend.js";
+import { commands, grantPaths, loadCredential, loadThemes, setSecretStore, storeCredential, themesRevealPath } from "./backend.js";
 
 // Waits for a condition instead of sleeping: a fixed delay is too short on a loaded machine.
 async function until(cond, what, ms = 10_000) {
@@ -99,4 +99,40 @@ test("themes folder: absent is empty, reveal seeds an example once, files come b
   await writeFile(path.join(dir, "themes", "notes.txt"), "ignored");
   assert.equal(path.basename(await themesRevealPath(dir)), "b.json");
   assert.deepEqual((await loadThemes(dir)).map((f) => f.file), ["b.json", "example.json"]);
+});
+
+test("the page reads only files the user picked, and spawns only a binary it picked", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "yoake-"));
+  const file = path.join(dir, "ca.pem");
+  await writeFile(file, "pem");
+  const cmds = commands(() => {}, dir);
+  await assert.rejects(cmds.read_text_file({ path: file }), /not a file you picked/);
+  await assert.rejects(cmds.read_file_bytes({ path: file }), /not a file you picked/);
+  await assert.rejects(cmds.spawn_detached_unix_server({ binPath: "/bin/sh", socketPath: path.join(dir, "s.sock") }), /not a server binary you picked/);
+  grantPaths([file]);
+  assert.equal(await cmds.read_text_file({ path: file }), "pem");
+  assert.equal(Buffer.from(await cmds.read_file_bytes({ path: file })).toString(), "pem");
+});
+
+test("credentials: a key or value of the wrong type is refused", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "yoake-"));
+  await assert.rejects(storeCredential(dir, "", "tok"), /bad credential key/);
+  await assert.rejects(storeCredential(dir, "srv", { x: 1 }), /bad credential value/);
+  await assert.rejects(loadCredential(dir, undefined), /bad credential key/);
+});
+
+test("credentials: encrypted when a secret store is available, plaintext files still read", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "yoake-"));
+  await writeFile(path.join(dir, "credentials.json"), JSON.stringify({ old: "plain-old" }));
+  setSecretStore({ available: () => true, encrypt: (s) => Buffer.from(s).toString("hex"), decrypt: (h) => Buffer.from(h, "hex").toString() });
+  try {
+    await storeCredential(dir, "srv", "tok-secret");
+    const file = await readFile(path.join(dir, "credentials.json"), "utf8");
+    assert.doesNotMatch(file, /tok-secret|plain-old/); // the write migrated the old entry too
+    assert.equal(await loadCredential(dir, "srv"), "tok-secret");
+    assert.equal(await loadCredential(dir, "old"), "plain-old");
+  } finally {
+    setSecretStore(null);
+  }
+  assert.equal(await loadCredential(dir, "srv"), null); // no store: the encrypted entry can't be read
 });
