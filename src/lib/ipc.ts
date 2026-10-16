@@ -270,6 +270,13 @@ export function wireEvents() {
   listen<{ connectionId: string; message: string }>("yoake-log", (p) => app.log(p.message));
 
   listen("yoake-close-requested", () => void closeApp());
+  // Coming back to the app is the usual moment after installing or signing in to a CLI in a terminal.
+  let lastFocusDetect = 0;
+  window.addEventListener("focus", () => {
+    if (Date.now() - lastFocusDetect < 10_000) return;
+    lastFocusDetect = Date.now();
+    for (const s of Object.values(app.servers)) if (s.connectionStatus === "connected") detectCli(s.connectionId);
+  });
   listen<{ connectionId: string; reason: string }>("yoake-disconnected", (p) => {
     handleConnectionLost(p.connectionId, p.reason);
   });
@@ -1252,7 +1259,9 @@ function listProviders(connectionId: ConnectionId) {
   void send(connectionId, { type: "list_providers", data: {} });
 }
 
-function detectCli(connectionId: ConnectionId) {
+/** Asks which coding-agent CLIs the server has (§3.1 detect_cli). The server looks them up fresh,
+ * so this is how one installed since the last ask shows up. */
+export function detectCli(connectionId: ConnectionId) {
   void send(connectionId, { type: "detect_cli", data: {} });
 }
 

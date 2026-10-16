@@ -18,6 +18,7 @@
     type ServerRow,
     setPeerName,
     restartServer,
+    detectCli,
     setPeerAvatar,
     disconnectPeer,
     removeServer,
@@ -163,6 +164,11 @@
       available: !!server?.cliAvailability[kind],
     })),
   );
+
+  // Opening the agents tab asks again, so a CLI installed since connecting is listed.
+  $effect(() => {
+    if (app.settingsTab === "providers" && cid && connected) untrack(() => detectCli(cid));
+  });
 
   function toggleCli(kind: CliKind, existing: ProviderInfo | undefined, enabled: boolean) {
     if (!cid) return;

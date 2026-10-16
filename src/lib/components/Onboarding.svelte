@@ -9,6 +9,7 @@
   import {
     cancelOpenRouterSignIn,
     connectLocalUnix,
+    detectCli,
     installServer,
     getDefaultSocketPath,
     pickProjectFolder,
@@ -289,6 +290,14 @@
     done: { title: "All set", sub: "Here's where things stand." },
   };
   const next = $derived(STEPS[Math.min(at + 1, STEPS.length - 1)]);
+  // The hint says a CLI signed in to "shows up here": keep asking while this step is open.
+  $effect(() => {
+    if (step !== "provider" || !connected || !cid) return;
+    const id = cid;
+    detectCli(id);
+    const timer = setInterval(() => detectCli(id), 5000);
+    return () => clearInterval(timer);
+  });
   const needed = $derived(step === "provider" ? hasProvider : step === "project" ? hasProject : true);
 </script>
 
