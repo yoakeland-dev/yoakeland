@@ -2,7 +2,7 @@
 // Run with: node --test src/lib/
 import assert from "node:assert/strict";
 import test from "node:test";
-import { allowedImgSrc, allowedSvgHref, cssIsSafe } from "./sanitizeRules.ts";
+import { allowedImgSrc, allowedInput, allowedSvgHref, cssIsSafe, isRemoteImgSrc } from "./sanitizeRules.ts";
 
 test("image sources: https and inline images only", () => {
   assert.equal(allowedImgSrc("https://example.com/a.png"), true);
@@ -15,6 +15,15 @@ test("image sources: https and inline images only", () => {
   assert.equal(allowedImgSrc("javascript:alert(1)"), false);
   assert.equal(allowedImgSrc("data:text/html,<script>"), false);
   assert.equal(allowedImgSrc("app://yoake/x.png"), false);
+});
+
+test("remote images are the https ones; only a disabled checkbox is a form control", () => {
+  assert.equal(isRemoteImgSrc("https://example.com/a.png?d=secret"), true);
+  assert.equal(isRemoteImgSrc("data:image/png;base64,AAAA"), false);
+  assert.equal(allowedInput("checkbox", true), true); // GFM task list
+  assert.equal(allowedInput("checkbox", false), false);
+  assert.equal(allowedInput("image", true), false); // <input type=image src> fetches its src
+  assert.equal(allowedInput(null, true), false);
 });
 
 test("svg hrefs stay in the document", () => {
