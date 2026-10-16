@@ -15,7 +15,7 @@ const COMMANDS = new Set([
   "load_themes", "themes_reveal_path", "default_socket_path", "probe_unix", "connect_unix", "connect_tcp",
   "pair_tcp", "disconnect", "send_envelope", "spawn_detached_unix_server", "server_latest_release",
   "server_install", "read_text_file", "read_file_bytes", "load_credential", "store_credential",
-  "oauth_listen", "oauth_wait", "oauth_wait_params", "oauth_cancel", "shell:notify", "shell:badge",
+  "oauth_listen", "oauth_wait", "oauth_wait_params", "oauth_cancel", "oauth_expect_state", "shell:notify", "shell:badge",
 ]);
 
 const EVENTS = ["yoake-event", "yoake-log", "yoake-disconnected", "yoake-notification-open", "yoake-themes-changed", "yoake-close-requested"];

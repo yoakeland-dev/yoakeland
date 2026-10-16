@@ -172,6 +172,7 @@ handle("oauth_listen", () => oauth.listen());
 handle("oauth_wait", () => oauth.wait());
 handle("oauth_wait_params", () => oauth.waitParams());
 handle("oauth_cancel", () => oauth.cancel());
+handle("oauth_expect_state", ({ state }) => oauth.expectState(state));
 handle("shell:notify", (req) => osAlerts.show(req));
 handle("shell:badge", ({ count }) => osAlerts.badge(count));
 

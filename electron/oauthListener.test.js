@@ -66,3 +66,14 @@ test("a refusal from the provider rejects wait() instead of hanging until the ti
   assert.match(await res.text(), /refused/);
   await rejected;
 });
+
+test("once a flow names its state, only a redirect carrying it is taken", async () => {
+  const l = createOAuthListener();
+  const { callbackUrl } = await l.listen();
+  l.expectState("st1");
+  const waiting = l.waitParams();
+  assert.equal((await hit(callbackUrl, "?code=forged")).status, 404); // another page guessing the port
+  assert.equal((await hit(callbackUrl, "?code=forged&state=nope")).status, 404);
+  await hit(callbackUrl, "?code=real&state=st1");
+  assert.deepEqual(await waiting, { code: "real", state: "st1", iss: undefined });
+});
