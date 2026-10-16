@@ -2,7 +2,8 @@
 // Run with: node --test src/lib/
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bar, cacheHitPct, categoryHue, ringState, ringSummary, usd } from "./contextBreakdown.ts";
+import { bar, cacheHitPct, categoryHue, ringState, ringSummary } from "./contextBreakdown.ts";
+import { usd } from "./format.ts";
 
 const cat = (key, tokens, exact = false) => ({ key, label: key, tokens, exact });
 

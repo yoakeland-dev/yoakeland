@@ -4,11 +4,18 @@ import type {
   AskUserQuestionData,
   ChatMessage,
   ChatMode,
+  HistoryMessage,
+  HistoryToolCall,
+  ProjectOpenedData,
+  PendingAsksData,
+  PeerListData,
+  ServerIdentityData,
+  SessionHistoryData,
+  TerminalSnapshotData,
   CliKind,
   DirectoryEntry,
   FileDiff,
   GitStatus,
-  NativeToolFields,
   ServerNotification,
   NotifyPrefs,
   PermissionRulesData,
@@ -30,7 +37,6 @@ import type {
   SessionSummary,
   SnapshotInfo,
   SidebarPanel,
-  TerminalStatus,
   TerminalTab,
   TokenInfo,
   ToolCallEntry,
@@ -45,8 +51,6 @@ import type {
 } from "./types";
 import { findCall, findCallInMessages } from "./subagents";
 
-/** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
-type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
 import {
   DIFF_COLORS,
   deriveTerminalTheme,
@@ -131,6 +135,8 @@ function sanitizeChatHistory(history: ChatHistory): ChatHistory {
       ...m,
       text: m.text ?? "",
       toolCalls: m.toolCalls ?? [],
+      // Nothing is still streaming after a restart; a cache written mid-turn would otherwise spin forever.
+      streaming: false,
     }));
   }
   const sessionsByProject: Record<string, SessionSummary[]> = {};
@@ -184,6 +190,8 @@ function loadServerChatHistory(serverId: string): ChatHistory {
 // settings, wallpaper included) and made each save and every startup parse stall the UI.
 const CHAT_CACHE_MAX_CHARS = 1_500_000;
 const CHAT_CACHE_MAX_SESSIONS = 30;
+// Per chat, the newest messages only: a long chat's older turns are not worth its share of the total.
+const CHAT_CACHE_MAX_MESSAGES = 100;
 
 function saveServerChatHistory(serverId: string, history: ChatHistory) {
   const lastAt = (id: string) => history.messagesBySession[id]?.at(-1)?.createdAt ?? 0;
@@ -193,7 +201,10 @@ function saveServerChatHistory(serverId: string, history: ChatHistory) {
     .slice(0, CHAT_CACHE_MAX_SESSIONS);
   try {
     for (;;) {
-      const json = JSON.stringify({ ...history, messagesBySession: Object.fromEntries(keep.map((id) => [id, history.messagesBySession[id]])) });
+      const json = JSON.stringify({
+        ...history,
+        messagesBySession: Object.fromEntries(keep.map((id) => [id, history.messagesBySession[id].slice(-CHAT_CACHE_MAX_MESSAGES)])),
+      });
       // Halve the least recent until it fits; the newest chat is kept even if it alone is over.
       if (json.length <= CHAT_CACHE_MAX_CHARS || keep.length <= 1) return localStorage.setItem(serverStorageKey(serverId, "chatHistory"), json);
       keep = keep.slice(0, Math.ceil(keep.length / 2));
@@ -522,6 +533,10 @@ export class ServerState {
   connectionMode: ConnectionMode;
   connectionStatus = $state<ConnectionStatus>("connected");
   connectionError = $state<string | null>(null);
+  /** Redials since the connection last stayed up; ipc.ts's backoff grows with it. */
+  reconnectAttempt = 0;
+  /** Chats a turn was running in when the connection dropped: refetched on reconnect (ipc.ts afterConnect). */
+  turnsLostOnDrop: string[] = [];
 
   // Not UI-bound, so a plain field: whether the *next* project_opened response should switch
   // currentProjectPath. A client-side decision per open_project call; defaults true.
@@ -922,11 +937,22 @@ export class ServerState {
   setSessionSyncing(sessionId: string, syncing: boolean) {
     if (syncing) this.syncingSessions[sessionId] = true;
     else delete this.syncingSessions[sessionId];
-    this.syncingSessions = { ...this.syncingSessions };
   }
 
   clearAllSessionSyncing() {
     this.syncingSessions = {};
+  }
+
+  /** The connection dropped mid-turn: nothing here will finish those turns, so they stop reading as
+   * running. Returns their chats, which ipc.ts refetches once back online. */
+  endRunningTurns(): string[] {
+    const chats = Object.keys(this.activeTurnBySession).filter((id) => this.activeTurnBySession[id]);
+    for (const sessionId of chats) {
+      const msg = this.findAssistantMessage(sessionId, this.activeTurnBySession[sessionId]);
+      if (msg) msg.streaming = false;
+    }
+    this.activeTurnBySession = {};
+    return chats;
   }
 
   /** Chats otherwise live only in memory and vanish on restart even though the server-side
@@ -1109,7 +1135,6 @@ export class ServerState {
     }
     if (this.finishedSessions[sessionId]) {
       delete this.finishedSessions[sessionId];
-      this.finishedSessions = { ...this.finishedSessions };
     }
     const project = this.projectBySession[sessionId];
     if (project) this.currentProjectPath = project;
@@ -1262,30 +1287,7 @@ export class ServerState {
    * truth: `messagesBySession` is otherwise just a cache of turns this client has streamed,
    * so this is what shows history for a session opened cold. Skipped mid-stream so a reconnect
    * response can't clobber live-streaming state. */
-  applySessionHistory(
-    sessionId: string,
-    messages: {
-      id?: string;
-      alternateIds?: string[];
-      role: "user" | "assistant" | "tool" | "compaction";
-      compaction?: Compaction;
-      content: string;
-      author?: string;
-      authorAvatar?: string;
-      attachments?: string[];
-      reasoning?: string;
-      toolCalls?: HistoryToolCall[];
-      toolCallId?: string;
-      parentToolCallId?: string;
-      diffs?: FileDiff[];
-      error?: string;
-      provider?: string;
-      model?: string;
-      createdAt?: string;
-      generationMs?: number;
-      usage?: { inputTokens: number; outputTokens: number; costUsd: number };
-    }[],
-  ) {
+  applySessionHistory(sessionId: string, messages: HistoryMessage[]) {
     if (this.activeTurnBySession[sessionId]) return;
     const toolResults = new Map<string, { content: string; diffs?: FileDiff[]; error?: string }>();
     for (const m of messages) {
@@ -2099,7 +2101,6 @@ export class ServerState {
           delete this.modelBySession[sessionId];
           this.providerBlockedBySession[sessionId] = true;
           delete this.activeTurnBySession[sessionId];
-          this.activeTurnBySession = { ...this.activeTurnBySession };
           this.saveChatHistory();
           break;
         }
@@ -2123,7 +2124,6 @@ export class ServerState {
         // A queued prompt may already have taken over as the active turn.
         if (!this.activeTurnBySession[sessionId] || this.activeTurnBySession[sessionId] === env.turnId) {
           delete this.activeTurnBySession[sessionId];
-          this.activeTurnBySession = { ...this.activeTurnBySession };
         }
         if (sessionId !== this.currentSessionId) {
           this.finishedSessions[sessionId] = true;
@@ -2218,7 +2218,7 @@ export class ServerState {
         break;
       }
       case "project_opened": {
-        const data = env.data as { path: string; sandboxTier?: SandboxTier };
+        const data = env.data as unknown as ProjectOpenedData;
         // Always remember it (also where a raw-picked path gets upgraded to the server's
         // canonical form, see ipc.selectProject), but only switch if this open was meant to.
         this.rememberProject(data.path);
@@ -2289,7 +2289,6 @@ export class ServerState {
           }
           this.saveSidebarPrefs();
           delete this.refreshingProjects[project];
-          this.refreshingProjects = { ...this.refreshingProjects };
           this.saveChatHistory();
         }
         break;
@@ -2360,7 +2359,7 @@ export class ServerState {
         break;
       }
       case "pending_asks": {
-        const data = env.data as { asks?: PendingAsk[] };
+        const data = env.data as unknown as PendingAsksData;
         this.pendingAsks = data?.asks ?? [];
         break;
       }
@@ -2429,13 +2428,13 @@ export class ServerState {
         break;
       }
       case "peer_list": {
-        const data = env.data as { peers: PeerInfo[]; you?: string };
+        const data = env.data as unknown as PeerListData;
         this.peers = data.peers ?? [];
         this.selfPeerId = data.you ?? null;
         break;
       }
       case "server_identity": {
-        const data = env.data as { identity: string; serverId?: string; version?: string };
+        const data = env.data as unknown as ServerIdentityData;
         this.serverIdentity = data.identity;
         this.awaitingApproval = false;
         this.version = data.version ?? null;
@@ -2474,25 +2473,7 @@ export class ServerState {
         break;
       }
       case "session_history": {
-        const data = env.data as {
-          sessionId: string;
-          mode?: ChatMode;
-          context?: ContextData;
-          spend?: SpendData;
-          messages: {
-            id?: string;
-            alternateIds?: string[];
-            role: "user" | "assistant" | "tool" | "compaction";
-            compaction?: Compaction;
-            content: string;
-            author?: string;
-            authorAvatar?: string;
-            reasoning?: string;
-            toolCalls?: HistoryToolCall[];
-            toolCallId?: string;
-            diffs?: FileDiff[];
-          }[];
-        };
+        const data = env.data as unknown as SessionHistoryData;
         this.applySessionHistory(data.sessionId, data.messages ?? []);
         if (data.context) this.contextBySession[data.sessionId] = data.context;
         if (data.spend) this.spendBySession[data.sessionId] = data.spend;
@@ -2521,10 +2502,7 @@ export class ServerState {
         const data = env.data as { credential: string; name?: string; deviceType?: string; ip?: string };
         this.pairingRequests = [...this.pairingRequests.filter((r) => r.credential !== data.credential), data];
         // The pair dialog shows it inline when open; otherwise it needs to find the user.
-        this.app.toastAction(this.connectionId, `${data.name || "A device"} wants to pair${data.ip ? ` from ${data.ip}` : ""}`, {
-          label: "Allow",
-          run: () => this.app.answerPairing?.(this.connectionId, data.credential, true),
-        });
+        this.app.pairingToast(this.connectionId, data, (allow) => this.app.answerPairing?.(this.connectionId, data.credential, allow));
         break;
       }
       case "token_registered": {
@@ -2579,7 +2557,6 @@ export class ServerState {
         if (sessionId && this.syncingSessions[sessionId]) this.setSessionSyncing(sessionId, false);
         if (data.projectPath && this.refreshingProjects[data.projectPath]) {
           delete this.refreshingProjects[data.projectPath];
-          this.refreshingProjects = { ...this.refreshingProjects };
         }
         if (data.fatal) {
           this.connectionStatus = "error";
@@ -2598,7 +2575,6 @@ export class ServerState {
             msg.text = msg.text ? `${msg.text}\n\n${note}` : note;
           }
           delete this.activeTurnBySession[sessionId];
-          this.activeTurnBySession = { ...this.activeTurnBySession };
           this.saveChatHistory();
         }
         break;
@@ -2627,19 +2603,7 @@ export class ServerState {
         break;
       }
       case "terminal_snapshot": {
-        const data = env.data as {
-          terminalId: string;
-          cwd?: string;
-          cols: number;
-          rows: number;
-          status: TerminalStatus;
-          pid?: number;
-          history: string;
-          sequence: number;
-          label: string;
-          sandboxTier?: SandboxTier;
-          exitCode?: number;
-        };
+        const data = env.data as unknown as TerminalSnapshotData;
         const existing = this.terminalById[data.terminalId];
         const history = base64ToBytes(data.history ?? "");
         // A snapshot for an id we never registered has no session to attach to; drop it rather than guess.
@@ -2674,18 +2638,18 @@ export class ServerState {
         const tab = this.terminalById[data.terminalId];
         const bytes = base64ToBytes(data.data);
         if (tab) {
+          // Written in place: this runs per chunk, and a new map each time would re-run everything reading it.
           const ev = scanShellEvents(bytes, !!tab.busy);
-          const next = { ...tab, sequence: data.sequence };
+          tab.sequence = data.sequence;
           if (ev) {
             if (ev.busy !== undefined) {
-              next.busy = ev.busy;
-              if (ev.busy) next.command = ev.command;
-              next.lastExit = ev.busy ? undefined : ev.exitCode;
+              tab.busy = ev.busy;
+              if (ev.busy) tab.command = ev.command;
+              tab.lastExit = ev.busy ? undefined : ev.exitCode;
             }
-            if (ev.cwd) next.cwd = ev.cwd;
-            if (ev.title !== undefined) next.title = ev.title || undefined;
+            if (ev.cwd) tab.cwd = ev.cwd;
+            if (ev.title !== undefined) tab.title = ev.title || undefined;
           }
-          this.terminalById = { ...this.terminalById, [data.terminalId]: next };
         }
         publishTerminalChunk(data.terminalId, bytes, data.sequence);
         break;
@@ -2866,7 +2830,7 @@ class AppState {
     }
   }
 
-  toasts = $state<(ServerNotification & { connectionId: ConnectionId; action?: { label: string; run: () => void } })[]>([]);
+  toasts = $state<(ServerNotification & { connectionId: ConnectionId; action?: { label: string; run: () => void }; deny?: { label: string; run: () => void } })[]>([]);
   // One timer per stack (a chat's toasts live and die together), restarted by each new arrival.
   // Held stacks (open, or under the mouse) keep it parked; letting go gives a fresh few seconds.
   private toastTimers = new Map<string, { timer?: ReturnType<typeof setTimeout>; ms: number; held: boolean }>();
@@ -2900,6 +2864,26 @@ class AppState {
       { id, level: "info", kind: "local", title, createdAt: new Date().toISOString(), connectionId, action },
     ];
     this.armToast(id, 6_000);
+  }
+
+  /** A device asking to pair, answered with Allow or Deny right here. It stays up until answered
+   * (answerPairing drops it) or until the server stops waiting, 60 s on (SPEC.md §2a). */
+  pairingToast(connectionId: ConnectionId, request: { credential: string; name?: string; ip?: string }, answer: (allow: boolean) => void) {
+    const id = `pair-${request.credential}`;
+    this.toasts = [
+      ...this.toasts.slice(-5),
+      {
+        id,
+        level: "info",
+        kind: "local",
+        title: `${request.name || "A device"} wants to pair${request.ip ? ` from ${request.ip}` : ""}`,
+        createdAt: new Date().toISOString(),
+        connectionId,
+        action: { label: "Allow", run: () => answer(true) },
+        deny: { label: "Deny", run: () => answer(false) },
+      },
+    ];
+    this.armToast(id, 60_000);
   }
 
   // Ticks periodically so relative times ("3m") re-render instead of freezing.

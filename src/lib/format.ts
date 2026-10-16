@@ -15,6 +15,13 @@ export function shortNum(n: number): string {
   return compactNumber.format(n);
 }
 
+/** "$1.23", "<$0.01" for a real but tiny amount, "unknown" when no rate exists (the total shown would be a floor). */
+export function usd(amount: number, unknown?: boolean): string {
+  if (unknown && amount === 0) return "unknown";
+  const s = amount > 0 && amount < 0.01 ? "<$0.01" : `$${amount.toFixed(2)}`;
+  return unknown ? `${s}+` : s;
+}
+
 /** 1536 -> "1.5 KB". */
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

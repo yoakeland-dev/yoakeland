@@ -8,7 +8,7 @@
   import { app, CHAT_PROJECT } from "../state.svelte";
   import { briefOf, CHAT_STARTERS, clip, projectStarters } from "../chatBrief";
   import { getSessionHistory, openChatSession } from "../ipc";
-  import { basename, relTime, sessionTitle } from "../format";
+  import { basename, relTime, sessionTitle, usd } from "../format";
   import { STATUS_ICON } from "../liveChats";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
@@ -51,7 +51,6 @@
     (project ? (server?.sessionsByProject[project] ?? []) : []).filter((s) => s.messageCount > 0 && app.now - Date.parse(s.updatedAt) < 7 * 86400000).length,
   );
   const spend = $derived(server?.serverStatus?.spend);
-  const usd = (n: number) => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
   const stats = $derived([
     ...(weekChats ? [{ n: String(weekChats), label: weekChats === 1 ? "chat this week" : "chats this week" }] : []),
     ...(spend ? [{ n: usd(spend.todayUsd), label: "spent today" }, { n: usd(spend.monthUsd), label: "spent this month" }] : []),

@@ -4,6 +4,7 @@
   // spans all of them. Per-chat numbers live with the chat: session cost in its header, context in its composer.
   import { app, type ConnectionId } from "../state.svelte";
   import { openChatSession } from "../ipc";
+  import { usd } from "../format";
   import Icon from "./Icon.svelte";
   import NotificationCenter from "./NotificationCenter.svelte";
   import UsageWidget from "./UsageWidget.svelte";
@@ -103,9 +104,9 @@
         class="item"
         {@attach tip(reporting.length
           ? `Spent across ${reporting.length === 1 ? reporting[0].label : `${reporting.length} servers`} (server-local day/month)` +
-            (spend.month != null ? `\nThis month: $${spend.month.toFixed(2)}` : "")
+            (spend.month != null ? `\nThis month: ${usd(spend.month)}` : "")
           : "Spent today across every server (turns this app has seen)")}
-        >${spend.today.toFixed(2)} today{#if spend.month != null}<span class="dim">&nbsp;· ${spend.month.toFixed(2)} mo</span>{/if}</span
+        >{usd(spend.today)} today{#if spend.month != null}<span class="dim">&nbsp;· {usd(spend.month)} mo</span>{/if}</span
       >
     {/if}
     <NotificationCenter />

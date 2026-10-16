@@ -7,8 +7,8 @@
   import { Popover } from "bits-ui";
   import { app } from "../state.svelte";
   import { getContextBreakdown } from "../ipc";
-  import { shortNum } from "../format";
-  import { bar, cacheHitPct, categoryHue, ringState, ringSummary, usd } from "../contextBreakdown";
+  import { shortNum, usd } from "../format";
+  import { bar, cacheHitPct, categoryHue, ringState, ringSummary } from "../contextBreakdown";
   import type { ContextBreakdown } from "../types";
   import Icon from "./Icon.svelte";
 

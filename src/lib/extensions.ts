@@ -3,8 +3,6 @@
 // only so a mistake shows next to the field instead of as a refusal.
 import type { McpImportCandidate, McpServerConfig, McpServerStatus, McpState, SkillInfo } from "./types";
 
-export const REDACTED = "••••••";
-
 /** Same rule as the daemon: 1-40 of letters, digits, - and _, first a letter or digit, no "__". */
 export function serverNameError(name: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(name)) return "1–40 letters, digits, - or _, starting with a letter or digit";

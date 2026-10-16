@@ -48,19 +48,21 @@ const LIVENESS_TIMEOUT_MS = 60_000; // comfortably < the backend's own ~90s cuto
 const WATCHDOG_INTERVAL_MS = 10_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
+// Backoff starts over only once a connection has stayed up this long (see afterConnect).
+const STABLE_MS = 30_000;
 
 interface LivenessState {
   lastActivityAt: number;
   watchdogTimer?: ReturnType<typeof setInterval>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
-  reconnectAttempt: number;
 }
 
 const liveness = new Map<ConnectionId, LivenessState>();
+const stableTimers = new WeakMap<ServerState, ReturnType<typeof setTimeout>>();
 
 function startLiveness(connectionId: ConnectionId) {
   stopLiveness(connectionId);
-  const state: LivenessState = { lastActivityAt: Date.now(), reconnectAttempt: 0 };
+  const state: LivenessState = { lastActivityAt: Date.now() };
   liveness.set(connectionId, state);
   state.watchdogTimer = setInterval(() => {
     const server = app.servers[connectionId];
@@ -92,34 +94,49 @@ function scheduleReconnect(connectionId: ConnectionId) {
   if (!server) return;
   let state = liveness.get(connectionId);
   if (!state) {
-    state = { lastActivityAt: Date.now(), reconnectAttempt: 0 };
+    state = { lastActivityAt: Date.now() };
     liveness.set(connectionId, state);
   }
   clearTimeout(state.reconnectTimer);
-  const delay = Math.min(RECONNECT_BASE_MS * 2 ** state.reconnectAttempt, RECONNECT_MAX_MS);
-  state.reconnectAttempt++;
+  const attempt = server.reconnectAttempt++;
+  const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
   state.reconnectTimer = setTimeout(() => {
     const s = app.servers[connectionId];
     if (!s || s.connectionStatus === "connected" || s.connectionStatus === "connecting") return;
-    app.log(`reconnecting to ${s.label} (attempt ${state.reconnectAttempt})…`);
+    app.log(`reconnecting to ${s.label} (attempt ${attempt + 1})…`);
     void redial(connectionId);
   }, delay);
+}
+
+/** Fails what waits on this connection's replies: they will never come on a dead connection. */
+function failWaiters(connectionId: ConnectionId, reason: string) {
+  for (const w of uploadWaiters.values()) {
+    if (w.connectionId === connectionId) w.resolve({ error: reason });
+  }
+  for (const w of rpcWaiters.values()) {
+    if (w.connectionId === connectionId) w.reject(new Error(reason));
+  }
 }
 
 function handleConnectionLost(connectionId: ConnectionId, reason: string) {
   const server = app.servers[connectionId];
   if (!server) return;
   stopLiveness(connectionId);
-  server.connectionStatus = "disconnected";
-  server.connectionError = reason;
+  clearTimeout(stableTimers.get(server));
+  // A fatal error arrived first (the server refused this connection, e.g. a revoked token): keep its
+  // message, and don't redial into the same refusal.
+  const refused = server.connectionStatus === "error";
+  if (!refused) {
+    server.connectionStatus = "disconnected";
+    server.connectionError = reason;
+  }
   app.log(`disconnected: ${reason}`);
   server.clearAllSessionSyncing();
   server.pendingAsks = [];
   server.forgetQueuedPrompts();
-  for (const w of uploadWaiters.values()) {
-    if (w.connectionId === connectionId) w.resolve({ error: "connection lost" });
-  }
-  scheduleReconnect(connectionId);
+  server.turnsLostOnDrop = server.endRunningTurns();
+  failWaiters(connectionId, "connection lost before the server replied");
+  if (!refused) scheduleReconnect(connectionId);
 }
 
 /** Every connect gets a new ConnectionId, so this re-keys the existing ServerState under it
@@ -202,8 +219,9 @@ export function wireEvents() {
       return;
     }
     const requestId = (env.data as { requestId?: string } | undefined)?.requestId;
-    if (requestId && rpcWaiters.has(requestId)) {
-      rpcWaiters.get(requestId)!(env.data!);
+    const waiter = requestId ? rpcWaiters.get(requestId) : undefined;
+    if (waiter) {
+      waiter.resolve(env.data!);
       return;
     }
     // A queued prompt being merged (sendPrompt): withdrawn, it goes out again as one prompt with
@@ -350,6 +368,8 @@ function afterConnect(connectionId: ConnectionId) {
   if (!server) return;
   if (isDesktop) checkServerUpdate();
   startLiveness(connectionId);
+  clearTimeout(stableTimers.get(server));
+  stableTimers.set(server, setTimeout(() => (server.reconnectAttempt = 0), STABLE_MS));
   listProjects(connectionId);
   listProviders(connectionId);
   server.modelsAsked.clear(); // a reconnect (or restarted server) is worth one fresh try per provider
@@ -361,11 +381,13 @@ function afterConnect(connectionId: ConnectionId) {
   if (server.connectionMode === "local") listTokens(connectionId);
   // Only the desktop app has a browser panel the agent can drive (§3.2 browser_host).
   if (isDesktop) void send(connectionId, { type: "browser_host", data: { enabled: true } });
-  // Reconcile the session restored from the local cache against server history.
-  if (server.currentSessionId) {
-    getSessionHistory(connectionId, server.currentSessionId);
-    listTerminals(connectionId, server.currentSessionId);
+  // Reconcile the chats on screen, and any a turn was running in when the connection dropped (its
+  // outcome is only in history now), against server history. Fetching also resubscribes to their live events.
+  for (const sessionId of new Set([server.currentSessionId, server.sidebarSessionId, ...server.turnsLostOnDrop])) {
+    if (sessionId) getSessionHistory(connectionId, sessionId);
   }
+  server.turnsLostOnDrop = [];
+  if (server.currentSessionId) listTerminals(connectionId, server.currentSessionId);
 }
 
 /** Self-reported identity sent on the opt-in `auth` frame (§2a), sourced from Settings > Profile.
@@ -561,7 +583,9 @@ export async function disconnect(connectionId: ConnectionId) {
     server.clearAllSessionSyncing();
     server.pendingAsks = [];
     server.forgetQueuedPrompts();
+    server.turnsLostOnDrop = server.endRunningTurns();
   }
+  failWaiters(connectionId, "disconnected before the server replied");
 }
 
 /** Unlike disconnect(), also forgets the server, so it stops being offered
@@ -775,6 +799,8 @@ export function cancelEditingMessage(connectionId: ConnectionId, sessionId: stri
   if (server) delete server.editingMessageId[sessionId];
 }
 
+const historyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 /** Fetches a session's server-persisted transcript (§3.2 get_session_history), repainting from
  * truth rather than the local cache. Fine to call unconditionally: an unknown id just returns empty. */
 export function getSessionHistory(connectionId: ConnectionId, sessionId: string) {
@@ -789,8 +815,11 @@ export function getSessionHistory(connectionId: ConnectionId, sessionId: string)
   // or the history resolves against the default project and comes back empty.
   const projectPath = server.projectBySession[sessionId];
   void send(connectionId, { type: "get_session_history", data: { sessionId, projectPath } });
-  // Nothing else clears this if the reply never comes, leaving the chat inert and blank.
-  setTimeout(() => app.servers[connectionId]?.setSessionSyncing(sessionId, false), 8000);
+  // Nothing else clears this if the reply never comes, leaving the chat inert and blank. One timer per
+  // chat, so an earlier fetch's timer can't clear a later fetch's syncing flag.
+  const key = `${connectionId}\n${sessionId}`;
+  clearTimeout(historyTimers.get(key));
+  historyTimers.set(key, setTimeout(() => app.servers[connectionId]?.setSessionSyncing(sessionId, false), 8000));
 }
 
 /** Re-sends a resumed session's provider/model choice from `providerBySession`: this is
@@ -1517,6 +1546,7 @@ export function answerPairing(connectionId: ConnectionId, credential: string, al
   void send(connectionId, { type: "approve_pairing", data: { credential, allow, full: full || undefined } });
   const s = app.servers[connectionId];
   if (s) s.pairingRequests = s.pairingRequests.filter((r) => r.credential !== credential);
+  app.dropToast(`pair-${credential}`);
 }
 
 function listTokens(connectionId: ConnectionId) {
@@ -1655,6 +1685,7 @@ export async function uploadFile(
   file: File,
   onProgress?: (fraction: number) => void,
 ): Promise<string> {
+  if (app.servers[connectionId]?.connectionStatus !== "connected") throw new Error("not connected to the server");
   const bytes = new Uint8Array(await file.arrayBuffer());
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   const sha256 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -1693,19 +1724,31 @@ export function openNotificationTarget(connectionId: ConnectionId, n: { sessionI
 // These requests carry a requestId the reply echoes, so callers can simply await them.
 
 const RPC_TIMEOUT_MS = 20_000;
-const rpcWaiters = new Map<string, (data: Record<string, unknown>) => void>();
+const rpcWaiters = new Map<string, { connectionId: ConnectionId; resolve: (data: Record<string, unknown>) => void; reject: (err: Error) => void }>();
 
 function rpc<T>(connectionId: ConnectionId, type: string, data: Record<string, unknown>): Promise<T> {
+  // Not connected means no reply is coming: say so now instead of after the timeout.
+  if (app.servers[connectionId]?.connectionStatus !== "connected") return Promise.reject(new Error(`${type}: not connected to the server`));
   const requestId = `rq-${crypto.randomUUID().slice(0, 8)}`;
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      rpcWaiters.delete(requestId);
-      reject(new Error(`${type}: no reply from the server (it may be too old for this)`));
-    }, RPC_TIMEOUT_MS);
-    rpcWaiters.set(requestId, (reply) => {
+    const settle = () => {
       clearTimeout(timer);
       rpcWaiters.delete(requestId);
-      resolve(reply as T);
+    };
+    const timer = setTimeout(() => {
+      settle();
+      reject(new Error(`${type}: no reply from the server (it may be too old for this)`));
+    }, RPC_TIMEOUT_MS);
+    rpcWaiters.set(requestId, {
+      connectionId,
+      resolve: (reply) => {
+        settle();
+        resolve(reply as T);
+      },
+      reject: (err) => {
+        settle();
+        reject(err);
+      },
     });
     void send(connectionId, { type, data: { ...data, requestId } });
   });

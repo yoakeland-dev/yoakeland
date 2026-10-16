@@ -20,9 +20,9 @@
   // The hover card for a chat: sidebar rows and the header's live tabs both show it, so the
   // rows of detail stay in one place. Every derived value is lazy, so it only computes while shown.
   import { app, CHAT_PROJECT, type ConnectionId } from "../state.svelte";
-  import { fileSize, relTime, sessionTitle, shortNum } from "../format";
+  import { fileSize, relTime, sessionTitle, shortNum, usd } from "../format";
   import { titleFor, vendorMetaFor } from "../modelVendor";
-  import { ringState, usd } from "../contextBreakdown";
+  import { ringState } from "../contextBreakdown";
   import { STATUS_ICON } from "../liveChats";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
