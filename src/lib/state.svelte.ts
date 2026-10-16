@@ -4,11 +4,18 @@ import type {
   AskUserQuestionData,
   ChatMessage,
   ChatMode,
+  HistoryMessage,
+  HistoryToolCall,
+  ProjectOpenedData,
+  PendingAsksData,
+  PeerListData,
+  ServerIdentityData,
+  SessionHistoryData,
+  TerminalSnapshotData,
   CliKind,
   DirectoryEntry,
   FileDiff,
   GitStatus,
-  NativeToolFields,
   ServerNotification,
   NotifyPrefs,
   PermissionRulesData,
@@ -30,7 +37,6 @@ import type {
   SessionSummary,
   SnapshotInfo,
   SidebarPanel,
-  TerminalStatus,
   TerminalTab,
   TokenInfo,
   ToolCallEntry,
@@ -45,8 +51,6 @@ import type {
 } from "./types";
 import { findCall, findCallInMessages } from "./subagents";
 
-/** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
-type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
 import {
   DIFF_COLORS,
   deriveTerminalTheme,
@@ -1283,30 +1287,7 @@ export class ServerState {
    * truth: `messagesBySession` is otherwise just a cache of turns this client has streamed,
    * so this is what shows history for a session opened cold. Skipped mid-stream so a reconnect
    * response can't clobber live-streaming state. */
-  applySessionHistory(
-    sessionId: string,
-    messages: {
-      id?: string;
-      alternateIds?: string[];
-      role: "user" | "assistant" | "tool" | "compaction";
-      compaction?: Compaction;
-      content: string;
-      author?: string;
-      authorAvatar?: string;
-      attachments?: string[];
-      reasoning?: string;
-      toolCalls?: HistoryToolCall[];
-      toolCallId?: string;
-      parentToolCallId?: string;
-      diffs?: FileDiff[];
-      error?: string;
-      provider?: string;
-      model?: string;
-      createdAt?: string;
-      generationMs?: number;
-      usage?: { inputTokens: number; outputTokens: number; costUsd: number };
-    }[],
-  ) {
+  applySessionHistory(sessionId: string, messages: HistoryMessage[]) {
     if (this.activeTurnBySession[sessionId]) return;
     const toolResults = new Map<string, { content: string; diffs?: FileDiff[]; error?: string }>();
     for (const m of messages) {
@@ -2237,7 +2218,7 @@ export class ServerState {
         break;
       }
       case "project_opened": {
-        const data = env.data as { path: string; sandboxTier?: SandboxTier };
+        const data = env.data as unknown as ProjectOpenedData;
         // Always remember it (also where a raw-picked path gets upgraded to the server's
         // canonical form, see ipc.selectProject), but only switch if this open was meant to.
         this.rememberProject(data.path);
@@ -2378,7 +2359,7 @@ export class ServerState {
         break;
       }
       case "pending_asks": {
-        const data = env.data as { asks?: PendingAsk[] };
+        const data = env.data as unknown as PendingAsksData;
         this.pendingAsks = data?.asks ?? [];
         break;
       }
@@ -2447,13 +2428,13 @@ export class ServerState {
         break;
       }
       case "peer_list": {
-        const data = env.data as { peers: PeerInfo[]; you?: string };
+        const data = env.data as unknown as PeerListData;
         this.peers = data.peers ?? [];
         this.selfPeerId = data.you ?? null;
         break;
       }
       case "server_identity": {
-        const data = env.data as { identity: string; serverId?: string; version?: string };
+        const data = env.data as unknown as ServerIdentityData;
         this.serverIdentity = data.identity;
         this.awaitingApproval = false;
         this.version = data.version ?? null;
@@ -2492,25 +2473,7 @@ export class ServerState {
         break;
       }
       case "session_history": {
-        const data = env.data as {
-          sessionId: string;
-          mode?: ChatMode;
-          context?: ContextData;
-          spend?: SpendData;
-          messages: {
-            id?: string;
-            alternateIds?: string[];
-            role: "user" | "assistant" | "tool" | "compaction";
-            compaction?: Compaction;
-            content: string;
-            author?: string;
-            authorAvatar?: string;
-            reasoning?: string;
-            toolCalls?: HistoryToolCall[];
-            toolCallId?: string;
-            diffs?: FileDiff[];
-          }[];
-        };
+        const data = env.data as unknown as SessionHistoryData;
         this.applySessionHistory(data.sessionId, data.messages ?? []);
         if (data.context) this.contextBySession[data.sessionId] = data.context;
         if (data.spend) this.spendBySession[data.sessionId] = data.spend;
@@ -2640,19 +2603,7 @@ export class ServerState {
         break;
       }
       case "terminal_snapshot": {
-        const data = env.data as {
-          terminalId: string;
-          cwd?: string;
-          cols: number;
-          rows: number;
-          status: TerminalStatus;
-          pid?: number;
-          history: string;
-          sequence: number;
-          label: string;
-          sandboxTier?: SandboxTier;
-          exitCode?: number;
-        };
+        const data = env.data as unknown as TerminalSnapshotData;
         const existing = this.terminalById[data.terminalId];
         const history = base64ToBytes(data.history ?? "");
         // A snapshot for an id we never registered has no session to attach to; drop it rather than guess.

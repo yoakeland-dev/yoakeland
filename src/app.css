@@ -583,14 +583,6 @@ pre {
 .sb-panel[data-state="closed"] {
   animation: floatOut var(--float-exit-duration) ease-in;
 }
-.sb-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.29rem;
-  padding: var(--space-half);
-  overflow-y: auto;
-  scrollbar-width: none;
-}
 .sb-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
@@ -612,10 +604,6 @@ pre {
   font-size: var(--text-label-size);
   font-weight: 600;
   color: var(--text-dim);
-}
-.sb-foot-actions {
-  display: flex;
-  gap: 0.14rem;
 }
 .sb-foot-btn {
   display: inline-flex;
@@ -673,13 +661,6 @@ button.sb-card.selected:hover {
   display: flex;
   color: var(--text-dim);
 }
-.sb-who {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.07rem;
-}
 .sb-card-title {
   font-size: 0.82rem;
   font-weight: 600;
@@ -688,48 +669,10 @@ button.sb-card.selected:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sb-card-sub {
-  display: flex;
-  align-items: center;
-  gap: 0.36rem;
-  font-size: 0.66rem;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sb-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 0.57rem;
-}
-/* A labelled meter: name + note on top, bar + value below. */
-.sb-meter {
-  display: flex;
-  flex-direction: column;
-  gap: 0.21rem;
-}
-.sb-meter-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.43rem;
-  font-size: 0.7rem;
-}
-.sb-meter-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .sb-meter-note {
   flex-shrink: 0;
   font-size: 0.64rem;
   color: var(--text-dim);
-}
-.sb-meter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
 }
 .sb-bar {
   position: relative;
@@ -773,21 +716,6 @@ button.sb-card.selected:hover {
 .sb-value.full,
 .sb-level.full {
   color: var(--danger);
-}
-/* Small key/value facts under a card's meters. */
-.sb-facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.21rem 0.71rem;
-  font-size: 0.68rem;
-}
-.sb-facts dt {
-  color: var(--text-dim);
-}
-.sb-facts dd {
-  margin: 0;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 /* List rows: a main button (lead, text, trailing bits) and optional
    hover-revealed actions beside it. */
@@ -927,10 +855,6 @@ button.sb-row-main {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tip-sub {
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
 .tip-rows {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -949,19 +873,6 @@ button.sb-row-main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.tip-meter {
-  flex-shrink: 0;
-  width: 3.5rem;
-  height: 4px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--text) 12%, transparent);
-  overflow: hidden;
-}
-.tip-meter > span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
 }
 .tip-list {
   display: flex;

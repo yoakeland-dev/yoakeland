@@ -111,10 +111,3 @@ export const categoryHue = (key: string): number | null => (key === "free" || ke
 export function cacheHitPct(cache: ContextBreakdown["cache"]): number | null {
   return cache && cache.input > 0 ? Math.round((cache.read / cache.input) * 100) : null;
 }
-
-/** "$1.23", "<$0.01" for a real but tiny amount, "unknown" when no rate exists (the total shown would be a floor). */
-export function usd(amount: number, unknown?: boolean): string {
-  if (unknown && amount === 0) return "unknown";
-  const s = amount > 0 && amount < 0.01 ? "<$0.01" : `$${amount.toFixed(2)}`;
-  return unknown ? `${s}+` : s;
-}

@@ -154,6 +154,77 @@ export interface SpendData {
   projectCostUnknown?: boolean;
 }
 
+/** A tool call as persisted on a `get_session_history` assistant entry (§3.2). */
+export type HistoryToolCall = { id: string; name: string; args: Record<string, unknown> } & NativeToolFields;
+
+/** One entry of `session_history.messages` (§3.2). A subagent's own entries carry `parentToolCallId`. */
+export interface HistoryMessage {
+  id?: string;
+  alternateIds?: string[];
+  role: "user" | "assistant" | "tool" | "compaction";
+  compaction?: Compaction;
+  content: string;
+  author?: string;
+  authorAvatar?: string;
+  attachments?: string[];
+  reasoning?: string;
+  toolCalls?: HistoryToolCall[];
+  toolCallId?: string;
+  parentToolCallId?: string;
+  diffs?: FileDiff[];
+  error?: string;
+  provider?: string;
+  model?: string;
+  createdAt?: string;
+  generationMs?: number;
+  usage?: { inputTokens: number; outputTokens: number; costUsd: number };
+}
+
+/** `session_history` (§3.2): the reply to get_session_history. */
+export interface SessionHistoryData {
+  sessionId: string;
+  mode?: ChatMode;
+  context?: ContextData;
+  spend?: SpendData;
+  messages?: HistoryMessage[];
+}
+
+export interface ServerIdentityData {
+  identity: string;
+  serverId?: string;
+  version?: string;
+}
+
+export interface PeerListData {
+  peers: PeerInfo[];
+  you?: string;
+}
+
+export interface PendingAsksData {
+  asks?: PendingAsk[];
+}
+
+export interface ProjectOpenedData {
+  path: string;
+  sandboxTier?: SandboxTier;
+}
+
+/** `terminal_snapshot` (§3.2): a terminal's whole recent output, sent on attach. */
+export interface TerminalSnapshotData {
+  terminalId: string;
+  cwd?: string;
+  cols: number;
+  rows: number;
+  status: TerminalStatus;
+  pid?: number;
+  /** base64 of the raw output window. */
+  history: string;
+  sequence: number;
+  label: string;
+  sandboxTier?: SandboxTier;
+  exitCode?: number;
+}
+
 /** One slice of the context (§3.2 `context_breakdown`). `exact`: counted by the provider, not apportioned. */
 export interface ContextCategory {
   key: string;
