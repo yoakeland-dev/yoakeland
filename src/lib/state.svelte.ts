@@ -522,6 +522,10 @@ export class ServerState {
   connectionMode: ConnectionMode;
   connectionStatus = $state<ConnectionStatus>("connected");
   connectionError = $state<string | null>(null);
+  /** Redials since the connection last stayed up; ipc.ts's backoff grows with it. */
+  reconnectAttempt = 0;
+  /** Chats a turn was running in when the connection dropped: refetched on reconnect (ipc.ts afterConnect). */
+  turnsLostOnDrop: string[] = [];
 
   // Not UI-bound, so a plain field: whether the *next* project_opened response should switch
   // currentProjectPath. A client-side decision per open_project call; defaults true.
@@ -922,11 +926,22 @@ export class ServerState {
   setSessionSyncing(sessionId: string, syncing: boolean) {
     if (syncing) this.syncingSessions[sessionId] = true;
     else delete this.syncingSessions[sessionId];
-    this.syncingSessions = { ...this.syncingSessions };
   }
 
   clearAllSessionSyncing() {
     this.syncingSessions = {};
+  }
+
+  /** The connection dropped mid-turn: nothing here will finish those turns, so they stop reading as
+   * running. Returns their chats, which ipc.ts refetches once back online. */
+  endRunningTurns(): string[] {
+    const chats = Object.keys(this.activeTurnBySession).filter((id) => this.activeTurnBySession[id]);
+    for (const sessionId of chats) {
+      const msg = this.findAssistantMessage(sessionId, this.activeTurnBySession[sessionId]);
+      if (msg) msg.streaming = false;
+    }
+    this.activeTurnBySession = {};
+    return chats;
   }
 
   /** Chats otherwise live only in memory and vanish on restart even though the server-side
