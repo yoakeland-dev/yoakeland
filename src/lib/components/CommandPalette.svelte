@@ -19,6 +19,7 @@
     openChatSession,
     resolveDirectoryBrowser,
     selectProject,
+    carryBlankChat,
   } from "../ipc";
   import { relTime, sessionTitle } from "../format";
   import Icon from "./Icon.svelte";
@@ -558,8 +559,10 @@
                           keywords={[p.label, p.path]}
                           onSelect={() =>
                             run(() => {
+                              const from = app.active;
                               app.activeConnectionId = p.cid;
                               selectProject(p.cid, p.path);
+                              if (app.active) carryBlankChat(from, app.active);
                             })}
                           class="palette-item"
                         >

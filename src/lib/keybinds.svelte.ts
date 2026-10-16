@@ -132,11 +132,13 @@ export function normalize(combo: string): string {
 
 /** The combo a keydown spells, or null for a bare modifier press. */
 export function comboFromEvent(e: KeyboardEvent): string | null {
-  if (["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock", "Dead", "Unidentified"].includes(e.key)) return null;
+  if (["Control", "Shift", "Alt", "Meta", "AltGraph", "CapsLock"].includes(e.key)) return null;
   let key: string;
   if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
   else if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
   else if (CODE_KEYS[e.code]) key = CODE_KEYS[e.code];
+  // A dead key (backquote on many layouts) reports "Dead", but its code still names it, handled above.
+  else if (e.key === "Dead" || e.key === "Unidentified") return null;
   else if (e.key === "+") key = "Plus";
   else key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
   const mods: string[] = [];

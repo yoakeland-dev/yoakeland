@@ -32,6 +32,11 @@ protocol.registerSchemesAsPrivileged([
 /** @type {BrowserWindow | null} */
 let win = null;
 let overlayOn = false;
+// The renderer turns this on when "Stop the server when closing" is set: closing the window then
+// asks it first (it may need to confirm), and it ends the app itself with shell:quit.
+let closeHook = false;
+let closing = false;
+let closeAckTimer;
 
 // Mirrors the renderer's "Window controls" setting; Windows only accepts the overlay at window creation.
 const prefsFile = () => path.join(app.getPath("userData"), "window.json");
@@ -94,6 +99,14 @@ function createWindow() {
   // vite may still be starting.
   if (DEV_URL) win.webContents.on("did-fail-load", (_e, _code, _desc, _url, mainFrame) => mainFrame && setTimeout(() => win?.loadURL(DEV_URL), 300));
   win.on("focus", () => osAlerts.closeAll());
+  win.on("close", (e) => {
+    if (!closeHook || closing || win?.webContents.isCrashed()) return;
+    e.preventDefault();
+    emit("yoake-close-requested");
+    // A renderer that is reloading or hung never answers, and the window must still close.
+    clearTimeout(closeAckTimer);
+    closeAckTimer = setTimeout(() => ((closing = true), win?.close()), 2000);
+  });
   win.on("closed", () => (win = null));
   void win.loadURL(DEV_URL ?? "app://yoake/");
 }
@@ -168,6 +181,13 @@ handle("shell:window", ({ action }, event) => {
   if (action === "minimize") w.minimize();
   else if (action === "toggleMaximize") w.isMaximized() ? w.unmaximize() : w.maximize();
   else if (action === "close") w.close();
+});
+handle("shell:set_close_hook", ({ on }) => (closeHook = !!on));
+handle("shell:close_ack", () => clearTimeout(closeAckTimer));
+handle("shell:quit", () => {
+  clearTimeout(closeAckTimer);
+  closing = true;
+  app.quit();
 });
 handle("shell:set_window_chrome", ({ on }, event) => {
   writeFileSync(prefsFile(), JSON.stringify({ chrome: !!on }));

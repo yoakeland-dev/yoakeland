@@ -7,7 +7,7 @@
   import { untrack, type ComponentProps } from "svelte";
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
   import { basename } from "../format";
-  import { isDesktop, revealItemInDir, windowChromeKind } from "../platform";
+  import { isDesktop, localServerSupported, revealItemInDir, windowChromeKind } from "../platform";
   import { swipe, commits, ownsHorizontalDrag } from "../gestures";
   import { viewport } from "../viewport.svelte";
   import {
@@ -1142,6 +1142,12 @@
                   <span class="slider-value">{app.settings.animationSpeed.toFixed(1)}×</span>
                 </div>
               </div>
+              {#if localServerSupported}
+                <div class="setting-row">
+                  {@render rowText("Stop the server when closing", "Closing the app also stops the local server. You'll be asked first if chats or terminals are still running.")}
+                  {@render toggle(app.settings.stopServerOnClose, (v) => ((app.settings.stopServerOnClose = v), apply()))}
+                </div>
+              {/if}
               <div class="setting-row">
                 {@render rowText("Auto-archive threads", "Idle threads move to the archive after this many days.")}
                 <div class="with-unit">

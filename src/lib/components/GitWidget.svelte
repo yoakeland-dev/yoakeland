@@ -37,9 +37,12 @@
       .sort((a, b) => b.git.dirtyFiles - a.git.dirtyFiles || b.git.ahead + b.git.behind - (a.git.ahead + a.git.behind) || a.name.localeCompare(b.name)),
   );
   const current = $derived(app.active && app.activeConnectionId ? `${app.activeConnectionId}:${app.active.currentProjectPath}` : "");
-  const dirty = $derived(repos.filter((r) => r.git.dirtyFiles > 0).length);
-  const ahead = $derived(repos.reduce((n, r) => n + (r.git.hasUpstream ? r.git.ahead : 0), 0));
-  const behind = $derived(repos.reduce((n, r) => n + (r.git.hasUpstream ? r.git.behind : 0), 0));
+  // The trigger speaks for the open chat's repo; with none open it sums them all.
+  const here = $derived(repos.find((r) => r.key === current));
+  const scope = $derived(here ? [here] : repos);
+  const dirty = $derived(here ? here.git.dirtyFiles : repos.filter((r) => r.git.dirtyFiles > 0).length);
+  const ahead = $derived(scope.reduce((n, r) => n + (r.git.hasUpstream ? r.git.ahead : 0), 0));
+  const behind = $derived(scope.reduce((n, r) => n + (r.git.hasUpstream ? r.git.behind : 0), 0));
 
   function latestChat(r: Repo) {
     return [...(r.srv.sessionsByProject[r.path] ?? [])]
@@ -76,7 +79,8 @@
       aria-label="Git"
     >
       <Icon name="git-branch" size={12} />
-      {#if dirty}<span class="changed">{dirty} changed</span>{:else}<span class="dim">clean</span>{/if}
+      {#if here}<span class="branch" style="max-width: 10rem; white-space: nowrap">{here.git.detached ? "detached" : here.git.branch}</span>{/if}
+      {#if dirty}<span class="changed">{here ? `±${dirty}` : `${dirty} changed`}</span>{:else if !here}<span class="dim">clean</span>{/if}
       {#if ahead}<span>↑{ahead}</span>{/if}
       {#if behind}<span>↓{behind}</span>{/if}
     </Popover.Trigger>

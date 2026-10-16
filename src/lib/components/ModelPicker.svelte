@@ -2,7 +2,8 @@
   import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app, modelKey } from "../state.svelte";
-  import { setProvider, ensureModels, setFavoriteModels } from "../ipc";
+  import { setProvider, setModelOptions, ensureModels, refreshModels, setFavoriteModels } from "../ipc";
+  import { effortLevels } from "./EffortPicker.svelte";
   import { viewport } from "../viewport.svelte";
   import {
     type Entry,
@@ -143,23 +144,25 @@
   });
 
   // New sessions start unbound; pick up whatever was last confirmed active
-  // anywhere, once, rather than landing on the "Provider…" placeholder.
+  // anywhere, once, rather than landing on the "Provider…" placeholder. Its effort and speed
+  // come too where the model has that level: a new chat starts as the last one was left.
+  // A blank chat carried here from another server asks for it again (reseedBySession).
   $effect(() => {
-    if (
-      cid &&
-      server &&
-      !server.providerBySession[sessionId] &&
-      !server.providerBlockedBySession[sessionId] &&
-      server.lastUsedProvider &&
-      server.providers.some((p) => p.name === server!.lastUsedProvider)
-    ) {
-      setProvider(
-        cid,
-        sessionId,
-        server.lastUsedProvider,
-        server.lastUsedModel ?? undefined,
-      );
-    }
+    if (!cid || !server || server.providerBlockedBySession[sessionId]) return;
+    const again = server.reseedBySession[sessionId];
+    if (server.providerBySession[sessionId] && !again) return;
+    const { lastUsedProvider: name, lastUsedModel: model, lastUsedEffort: effort, lastUsedFast: fast } = server;
+    const provider = server.providers.find((p) => p.name === name);
+    if (!name || !provider) return;
+    const sig = [name, model, effort, fast].join("\n");
+    if (server.seededBySession.get(sessionId) === sig) return;
+    server.seededBySession.set(sessionId, sig);
+    if (again) delete server.reseedBySession[sessionId];
+    setProvider(cid, sessionId, name, model ?? undefined);
+    const modelInfo = server.modelsByProvider[name]?.find((m) => m.id === model);
+    const levels = effortLevels(provider, modelInfo, model ?? undefined);
+    const level = effort && levels?.includes(effort) ? effort : undefined;
+    if (level || fast) setModelOptions(cid, sessionId, { reasoningEffort: level, fastMode: fast || undefined });
   });
 
   // Fetches each provider's model list once, lazily; refetch by reopening.
@@ -168,6 +171,11 @@
     for (const p of server.providers) {
       if (!server.modelsByProvider[p.name]) ensureModels(cid, p.name);
     }
+  });
+  // Opening the picker retries a CLI agent whose list was missing or the fallback (it was signed out).
+  $effect(() => {
+    if (!open || !cid || !server) return;
+    for (const p of server.providers) if (isCli(p)) refreshModels(cid, p.name);
   });
 
   function tabForEntry(entry: Entry): TabKey {

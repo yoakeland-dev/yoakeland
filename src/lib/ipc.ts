@@ -1,4 +1,5 @@
 import { askConfirm } from "./confirm.svelte";
+import { chooseMode, sessionModes } from "./modes";
 import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerStatus, TreeEntry, ContextBreakdown } from "./types";
 import {
   app,
@@ -12,7 +13,7 @@ import {
 } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
 import { briefOf, continuationDraft } from "./chatBrief";
-import { connectedHost, isDesktop, invoke, listen, openUrl, pickFiles } from "./platform";
+import { closeAck, connectedHost, isDesktop, invoke, listen, openUrl, pickFiles, quitApp } from "./platform";
 import { bytesToBase64, base64ToBytes } from "./base64";
 import { decodePairingCode } from "./pairing";
 import { handleBrowserRequest } from "./browserAgent.svelte";
@@ -232,6 +233,15 @@ export function wireEvents() {
       );
     }
 
+    // The saved chat list a project was restored with can be stale (afterConnect runs before it
+    // is restored, and the sidebar only fetches projects it holds nothing for), so once per
+    // connection ask for every project's real list. A chat made since the cache was last saved,
+    // or on another device, only shows up this way.
+    if (env.type === "project_list" && !projectsRefreshed.has(connectionId)) {
+      projectsRefreshed.add(connectionId);
+      listSessionsForProjects(connectionId, server.recentProjects);
+    }
+
     // provider_registered only carries {name}, not the full roster, so refetch it.
     if (env.type === "provider_registered") {
       listProviders(connectionId);
@@ -241,10 +251,13 @@ export function wireEvents() {
   listen("yoake-themes-changed", () => void loadCustomThemes());
   listen<{ connectionId: string; message: string }>("yoake-log", (p) => app.log(p.message));
 
+  listen("yoake-close-requested", () => void closeApp());
   listen<{ connectionId: string; reason: string }>("yoake-disconnected", (p) => {
     handleConnectionLost(p.connectionId, p.reason);
   });
 }
+
+const projectsRefreshed = new Set<ConnectionId>();
 
 export async function send(connectionId: ConnectionId, envelope: Envelope) {
   try {
@@ -305,6 +318,29 @@ async function updateServer(connectionId: ConnectionId) {
 export function restartServer(connectionId: ConnectionId, force = false) {
   void send(connectionId, { type: "restart_server", data: { force: force || undefined } });
 }
+/** The window was closed with "Stop the server when closing" on: confirm if work is running, stop
+ * the local server, then quit. Cancelling leaves the app open. */
+async function closeApp() {
+  void closeAck();
+  const local = Object.values(app.servers).find((s) => s.connectionMode === "local" && s.connectionStatus === "connected");
+  if (local) {
+    const chats = Object.values(local.activeTurnBySession).filter(Boolean).length;
+    const terminals = Object.values(local.terminalById).filter((t) => t.status === "running" || t.status === "starting").length;
+    const running = [
+      chats && `${chats} chat${chats === 1 ? " is" : "s are"} running`,
+      terminals && `${terminals} terminal${terminals === 1 ? " is" : "s are"} open`,
+    ].filter(Boolean);
+    if (running.length && !(await askConfirm(`${running.join(" and ")}. Closing stops the server and everything running in it.`))) return;
+    // Force: the confirmation above was the "busy" answer. The daemon drops every connection as it exits.
+    await send(local.connectionId, { type: "restart_server", data: { force: true } });
+    // The daemon drops us as it exits. If it doesn't (a server older than restart_server), say so
+    // rather than quitting and leaving it running as if the setting had worked.
+    for (let i = 0; i < 40 && local.connectionStatus === "connected"; i++) await new Promise((r) => setTimeout(r, 50));
+    if (local.connectionStatus === "connected" && !(await askConfirm("The server didn't stop. It may need updating. Quit anyway?"))) return;
+  }
+  await quitApp();
+}
+
 if (isDesktop) app.updateServer = (id) => void updateServer(id);
 app.answerPairing = (id, credential, allow) => answerPairing(id, credential, allow);
 app.restartServer = (id, force) => restartServer(id, force);
@@ -1048,15 +1084,67 @@ export async function browseAndAddProject(startOn: ConnectionId): Promise<Picked
 export async function newChat(connectionId: ConnectionId, projectPath?: string) {
   const server = app.servers[connectionId];
   if (!server) return;
+  const from = app.active;
   app.activeConnectionId = connectionId;
   // No project given: a chat with the server as its computer (§4b), not the current project.
+  // newSessionInProject drops an untouched chat it replaces, carrying its unsent text over.
   const path = projectPath ?? CHAT_PROJECT;
-  if (path !== CHAT_PROJECT && path !== server.currentProjectPath) selectProject(connectionId, path);
-  const current = server.currentSessionId;
-  if (current && (server.messagesBySession[current] ?? []).length === 0) {
-    server.discardUnsentSession(current);
+  if (path !== CHAT_PROJECT && path !== server.currentProjectPath) {
+    selectProject(connectionId, path);
+    server.freshChatId = server.currentSessionId;
+  } else {
+    server.freshChatId = server.newSessionInProject(path);
   }
-  server.freshChatId = server.newSessionInProject(path);
+  carryBlankChat(from, server);
+}
+
+/** Moving to another server from an untouched chat takes its unsent text, model, effort and
+ * permission level along where the new server has the same model. Nothing happens unless both
+ * chats are untouched: a chat with history keeps what it has. */
+export function carryBlankChat(from: ServerState | null, to: ServerState) {
+  const src = from?.currentSessionId;
+  const dst = to.currentSessionId;
+  if (!from || from === to || !src || !dst) return;
+  if (from.messagesBySession[src]?.length || to.messagesBySession[dst]?.length) return;
+  const draft = from.composerDraftBySession[src];
+  if (draft) {
+    to.composerDraftBySession[dst] = draft;
+    delete from.composerDraftBySession[src];
+  }
+  void carrySettings(from, src, to, dst);
+}
+
+/** Looks for the chat's model among the new server's providers (same provider first) and, if it
+ * has it, has the chat start there on it, at the same effort, speed and permission level. */
+async function carrySettings(from: ServerState, src: string, to: ServerState, dst: string) {
+  const name = from.providerBySession[src];
+  const model = from.modelBySession[src];
+  if (!name) return;
+  const candidates = [...to.providers].sort((a, b) => Number(b.name === name) - Number(a.name === name));
+  for (const p of candidates) ensureModels(to.connectionId, p.name);
+  for (let i = 0; i < 30 && candidates.some((p) => !to.modelsByProvider[p.name] && to.modelsAsked.has(p.name)); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const match = candidates.find((p) => (model ? to.modelsByProvider[p.name]?.some((m) => m.id === model) : p.name === name));
+  if (!match || to.currentSessionId !== dst) return;
+  const { reasoningEffort, fastMode } = from.modelOptionsBySession[src] ?? {};
+  to.lastUsedProvider = match.name;
+  to.lastUsedModel = model ?? null;
+  to.lastUsedEffort = reasoningEffort ?? null;
+  to.lastUsedFast = !!fastMode;
+  to.reseedBySession[dst] = true; // ModelPicker applies it, with the effort check it owns
+  const mode = from.modeBySession[src];
+  if (!mode) return;
+  for (let i = 0; i < 30 && to.providerBySession[dst] !== match.name; i++) await new Promise((r) => setTimeout(r, 100));
+  if (sessionModes(to, dst).available.includes(mode)) chooseMode(to, to.connectionId, dst, mode);
+}
+
+/** Switches the main panel to another server, taking an untouched chat's composer along. */
+export function switchServer(connectionId: ConnectionId) {
+  const from = app.active;
+  app.activeConnectionId = connectionId;
+  const to = app.active;
+  if (to) carryBlankChat(from, to);
 }
 
 /** A chat can't change root, so "moving" it starts a session in the project: the chat's files are
@@ -1162,8 +1250,20 @@ export function compactContext(connectionId: ConnectionId, sessionId: string, in
 }
 
 /** Fetches one provider's available models (§3.1), called lazily per picker tab. */
-function listModels(connectionId: ConnectionId, providerName: string) {
-  void send(connectionId, { type: "list_models", data: { providerName } });
+function listModels(connectionId: ConnectionId, providerName: string, refresh = false) {
+  void send(connectionId, { type: "list_models", data: { providerName, refresh: refresh || undefined } });
+}
+
+/** Asks a CLI agent's models again when what we have is missing or the server's fallback, which is
+ * what a chat sees if the agent was logged out when first asked and has been signed in since. At
+ * most once every 15 s per provider, since each ask spawns the agent. */
+export function refreshModels(connectionId: ConnectionId, providerName: string) {
+  const server = app.servers[connectionId];
+  if (!server || server.modelsByProvider[providerName] && !server.modelsFallback.has(providerName)) return;
+  if (Date.now() - (server.modelsRefreshedAt.get(providerName) ?? 0) < 15_000) return;
+  server.modelsRefreshedAt.set(providerName, Date.now());
+  server.modelsAsked.add(providerName);
+  listModels(connectionId, providerName, true);
 }
 
 /** `listModels` once per provider per server: a failed ask (host down) isn't asked again by every

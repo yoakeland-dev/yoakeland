@@ -21,6 +21,9 @@ interface YoakeBridge {
   platform: string;
   chrome: { overlay?: boolean; trafficLights?: { w: number; h: number } };
   setWindowChrome(on: boolean): Promise<void>;
+  setCloseHook(on: boolean): Promise<void>;
+  closeAck(): Promise<void>;
+  quit(): Promise<void>;
   placeTrafficLights(x: number, y: number): Promise<void>;
   styleOverlay(symbolColor: string, height: number): Promise<void>;
 }
@@ -157,6 +160,9 @@ export const revealItemInDir = (path: string): Promise<unknown> => shell().revea
 export const readClipboard = (): Promise<string> => shell().readClipboard();
 export const writeClipboard = (text: string): Promise<void> => shell().writeClipboard(text);
 
+/** The desktop app can only reach a local server over a Unix socket; Windows' named pipe isn't supported yet (backend.js openLocal). */
+export const localServerSupported = !!bridge && bridge.platform !== "win32";
+
 export const windowChromeKind: "traffic-lights" | "overlay" | "custom" | null = !bridge
   ? null
   : bridge.platform === "darwin"
@@ -171,6 +177,11 @@ export const windowControls =
   bridge && windowChromeKind === "custom"
     ? { minimize: bridge.minimize, toggleMaximize: bridge.toggleMaximize, close: bridge.close }
     : null;
+
+/** While on, closing the window sends "yoake-close-requested" instead; answer it with closeAck, then quit or nothing. */
+export const setCloseHook = (on: boolean): Promise<void> => bridge?.setCloseHook(on) ?? Promise.resolve();
+export const closeAck = (): Promise<void> => bridge?.closeAck() ?? Promise.resolve();
+export const quitApp = (): Promise<void> => bridge?.quit() ?? Promise.resolve();
 
 export const setWindowChrome = (on: boolean): Promise<void> => bridge?.setWindowChrome(on) ?? Promise.resolve();
 

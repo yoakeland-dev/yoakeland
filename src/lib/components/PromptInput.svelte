@@ -37,7 +37,6 @@
   import ModePicker from "./ModePicker.svelte";
   import EffortPicker from "./EffortPicker.svelte";
   import ContextRing from "./ContextRing.svelte";
-  import GitChip from "./GitChip.svelte";
   import ChatNotices from "./ChatNotices.svelte";
   import Dropdown from "./Dropdown.svelte";
 
@@ -633,7 +632,7 @@
                     : "Send the edit"
                   : role === "queue"
                     ? canSteer
-                      ? "Queue until this turn ends (Ctrl+Enter sends now)"
+                      ? "Send into this turn (Ctrl+Enter queues until it ends)"
                       : "Queue until this turn ends"
                     : "Send",
   );
@@ -664,7 +663,7 @@
     return true;
   }
 
-  function submit(e?: Event, steer = false) {
+  function submit(e?: Event, steer = true) {
     e?.preventDefault();
     const value = slashToSkill(text.trim(), knownSkills);
     if (!cid || !canSubmit) return;
@@ -756,8 +755,8 @@
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
-      // With Ctrl/Cmd, into the running turn instead of behind it.
-      submit(e, e.metaKey || e.ctrlKey);
+      // Mid-turn, steers by default (lands at the agent's next step); Ctrl/Cmd queues behind the turn instead.
+      submit(e, !(e.metaKey || e.ctrlKey));
     }
   }
 </script>
@@ -890,7 +889,7 @@
             rows="1"
           ></textarea>
           <span class="hint" class:shown={focused && !text && !compact && !asks.length && !!projectPath} aria-hidden="true">
-            <kbd>⏎</kbd> {turnId && !editingId ? "queue" : "send"} · <kbd>⇧⏎</kbd> newline
+            <kbd>⏎</kbd> {turnId && !editingId ? (canSteer ? "steer" : "queue") : "send"} · <kbd>⇧⏎</kbd> newline
           </span>
         </div>
 
@@ -958,7 +957,6 @@
               <EffortPicker {sessionId} />
               <ModePicker {sessionId} />
               <ContextRing {sessionId} />
-              <GitChip {sessionId} />
             </div>
           </div>
         </div>

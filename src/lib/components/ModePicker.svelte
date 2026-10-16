@@ -3,7 +3,7 @@
   import { Popover } from "bits-ui";
   import { slide } from "svelte/transition";
   import { app } from "../state.svelte";
-  import { setWebToolsEnabled, setRuntimeSettings } from "../ipc";
+  import { setWebToolsEnabled, setRuntimeSettings, refreshModels } from "../ipc";
   import { LADDER, MODES, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable, getRunOnce, setRunOnce } from "../modes";
   import type { ChatMode } from "../types";
   import Icon from "./Icon.svelte";
@@ -34,6 +34,10 @@
   function toggleShellOff() {
     if (cid) setRuntimeSettings(cid, { disableBashWhenUnsandboxed: !server?.runtime?.disableBashWhenUnsandboxed });
   }
+  // Signed in since the models were first listed? Opening the picker asks the agent again.
+  $effect(() => {
+    if (open && cid && cliProvider) refreshModels(cid, cliProvider.name);
+  });
   const rungs = $derived(LADDER.filter((m) => info.available.includes(m.id)));
   const canPlan = $derived(info.available.includes("plan"));
 

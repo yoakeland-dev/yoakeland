@@ -185,6 +185,9 @@
   --z-overlay-backdrop: 100;
   --z-overlay-content: 101;
   --z-context-menu: 110;
+  /* In-app confirm: opens over other dialogs (Settings), so it needs to beat their backdrop. */
+  --z-confirm-backdrop: 112;
+  --z-confirm-content: 113;
   /* The OS-level window drag region + minimize/maximize/close controls —
      always above every portaled surface, since losing them behind a dialog
      would trap the window (no way to move or close it). */

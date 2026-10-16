@@ -44,7 +44,7 @@ export function modeHint(id: ChatMode, spec?: ModeSpec): string {
     case "accept_edits":
       return "Edits freely, asks to run.";
     case "auto":
-      return "Its own reviewer decides what to ask.";
+      return spec?.sandbox ? "Its own reviewer decides what to ask, in a sandbox." : spec ? "Its own reviewer decides what to ask. Commands are not sandboxed; the reviewer is the only check." : "Its own reviewer decides what to ask.";
     case "autonomous":
       return spec?.sandbox ? "Edits and runs freely, sandboxed." : spec ? "Edits and runs freely, unconfined." : "Edits and runs freely.";
     case "plan":

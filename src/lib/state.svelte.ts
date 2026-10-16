@@ -57,7 +57,7 @@ import {
   type TerminalColorTheme,
 } from "./theme";
 import { APP_THEME_PRESETS } from "./themePresets";
-import { invoke, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
+import { invoke, setCloseHook, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { viewport } from "./viewport.svelte";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
@@ -179,9 +179,25 @@ function loadServerChatHistory(serverId: string): ChatHistory {
   }
 }
 
+// The cache only makes a reopened chat paint at once; the server's history replaces it (ipc.getSessionHistory).
+// Unbounded, it reached ~15 MB, which starves every other localStorage write on this origin (the
+// settings, wallpaper included) and made each save and every startup parse stall the UI.
+const CHAT_CACHE_MAX_CHARS = 1_500_000;
+const CHAT_CACHE_MAX_SESSIONS = 30;
+
 function saveServerChatHistory(serverId: string, history: ChatHistory) {
+  const lastAt = (id: string) => history.messagesBySession[id]?.at(-1)?.createdAt ?? 0;
+  let keep = Object.keys(history.messagesBySession)
+    .filter((id) => history.messagesBySession[id]?.length)
+    .sort((a, b) => lastAt(b) - lastAt(a))
+    .slice(0, CHAT_CACHE_MAX_SESSIONS);
   try {
-    localStorage.setItem(serverStorageKey(serverId, "chatHistory"), JSON.stringify(history));
+    for (;;) {
+      const json = JSON.stringify({ ...history, messagesBySession: Object.fromEntries(keep.map((id) => [id, history.messagesBySession[id]])) });
+      // Halve the least recent until it fits; the newest chat is kept even if it alone is over.
+      if (json.length <= CHAT_CACHE_MAX_CHARS || keep.length <= 1) return localStorage.setItem(serverStorageKey(serverId, "chatHistory"), json);
+      keep = keep.slice(0, Math.ceil(keep.length / 2));
+    }
   } catch {
     // best-effort only
   }
@@ -392,6 +408,8 @@ export interface AppSettings {
   diffColors: "default" | "colorblind";
   /** Window controls and the drag strip. */
   windowChrome: boolean;
+  /** Desktop: closing the app also stops the local server (asking first while it has work running). */
+  stopServerOnClose: boolean;
   /** Keep the accent in sync with the wallpaper, re-derived whenever it changes. */
   accentFromWallpaper: boolean;
   /** Sessions untouched this many days show as archived in the sidebar without the server-side flag set. */
@@ -443,6 +461,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   emptyFeed: true,
   diffColors: "default",
   windowChrome: true,
+  stopServerOnClose: false,
   accentFromWallpaper: false,
   autoArchiveDays: 14,
   trustedCaByHostPort: {},
@@ -690,11 +709,21 @@ export class ServerState {
   // Providers whose list was already asked for. A failed ask leaves no entry in modelsByProvider,
   // so without this every picker mount would dial the dead host again (see ipc.ensureModels).
   modelsAsked = new Set<string>();
+  // Providers whose list is the server's built-in fallback (the agent was logged out or failed): it
+  // lacks what only the agent reports, such as Auto, so it is asked again when a picker opens.
+  modelsFallback = new Set<string>();
+  modelsRefreshedAt = new Map<string, number>();
   // Whatever provider/model/mode last got confirmed on ANY session on this server; new sessions
   // default to this instead of landing on "Provider...". Per-server since names are registry-scoped.
   lastUsedProvider = $state<string | null>(null);
   lastUsedModel = $state<string | null>(null);
   lastUsedMode = $state<ChatMode | null>(null);
+  lastUsedEffort = $state<string | null>(null);
+  lastUsedFast = $state(false);
+  /** What ModelPicker last seeded each unbound chat with, so its effect re-running doesn't send it twice. */
+  seededBySession = new Map<string, string>();
+  /** Set to seed a chat that is already bound again (a blank chat carried to another server). */
+  reseedBySession = $state<Record<string, boolean>>({});
   modeBySession = $state<Record<string, ChatMode>>({});
   /** The tier a chat was in before Plan, which approving the plan defaults back to. */
   tierBeforePlan = $state<Record<string, ChatMode>>({});
@@ -1487,6 +1516,17 @@ export class ServerState {
   newSessionInProject(projectPath: string): string {
     const id = `session-${crypto.randomUUID().slice(0, 8)}`;
     this.ensureSession(id);
+    // An untouched chat being left behind hands its unsent text on rather than dropping it.
+    // Only a chat known to be empty: a blank placeholder (not bound to a project) or one whose summary
+    // says so. One opened cold has no summary yet, and discarding a pinned one would unpin it for good.
+    const prev = this.currentSessionId;
+    const prevSummary = prev ? this.sessionById.get(prev) : undefined;
+    const knownEmpty = prevSummary ? !prevSummary.messageCount : !!prev && !this.projectBySession[prev];
+    if (prev && knownEmpty && !this.messagesBySession[prev]?.length && !this.pinnedSessions.includes(prev)) {
+      const draft = this.composerDraftBySession[prev];
+      if (draft) this.composerDraftBySession[id] = draft;
+      this.discardUnsentSession(prev);
+    }
     this.projectBySession[id] = projectPath;
     const existing = this.sessionsByProject[projectPath] ?? [];
     this.sessionsByProject[projectPath] = [
@@ -1527,6 +1567,8 @@ export class ServerState {
     delete this.planBySession[sessionId];
     delete this.syncingSessions[sessionId];
     delete this.composerDraftBySession[sessionId];
+    this.seededBySession.delete(sessionId);
+    delete this.reseedBySession[sessionId];
     if (
       sessionId in this.lastViewedBySession ||
       sessionId in this.chatSidebarOpenBySession ||
@@ -1786,6 +1828,8 @@ export class ServerState {
     this.lastUsedModel = loadServerString(serverId, "lastUsedModel");
     const mode = loadServerString(serverId, "lastUsedMode");
     this.lastUsedMode = isChatMode(mode) ? mode : null;
+    this.lastUsedEffort = loadServerString(serverId, "lastUsedEffort");
+    this.lastUsedFast = loadServerString(serverId, "lastUsedFast") === "1";
 
     // Carry over a CA trusted by address (trustedCaByHostPort), or a client that already
     // paired this server would appear to have forgotten it once serverId-based trust takes over.
@@ -2133,6 +2177,12 @@ export class ServerState {
         if (data.thinkingBudget) merged.thinkingBudget = data.thinkingBudget;
         if (data.contextWindow) merged.contextWindow = data.contextWindow;
         if (data.fastMode !== undefined) merged.fastMode = data.fastMode;
+        if (data.reasoningEffort) this.lastUsedEffort = data.reasoningEffort === "default" ? null : data.reasoningEffort;
+        if (data.fastMode !== undefined) this.lastUsedFast = data.fastMode;
+        if (this.serverId && (data.reasoningEffort || data.fastMode !== undefined)) {
+          saveServerString(this.serverId, "lastUsedEffort", this.lastUsedEffort ?? "");
+          saveServerString(this.serverId, "lastUsedFast", this.lastUsedFast ? "1" : "0");
+        }
         if (data.autoCompactTokens !== undefined) {
           if (data.autoCompactTokens > 0) merged.autoCompactTokens = data.autoCompactTokens;
           else delete merged.autoCompactTokens;
@@ -2150,8 +2200,10 @@ export class ServerState {
         break;
       }
       case "model_list": {
-        const data = env.data as { providerName: string; models: ModelInfo[] };
+        const data = env.data as { providerName: string; models: ModelInfo[]; fallback?: boolean };
         this.modelsByProvider = { ...this.modelsByProvider, [data.providerName]: data.models };
+        if (data.fallback) this.modelsFallback.add(data.providerName);
+        else this.modelsFallback.delete(data.providerName);
         break;
       }
       case "favorite_models_set": {
@@ -2212,11 +2264,16 @@ export class ServerState {
           const listed = new Set((data.sessions ?? []).map((x) => x.sessionId));
           // A never-prompted chat doesn't exist server-side, so it's never listed. Keep the
           // one open locally; prune every other unlisted, empty one (ghosts older builds left).
+          // A chat with history is kept too: a list that comes back short (a server that just
+          // restarted) must not make it vanish; only session_deleted removes one.
+          // ponytail: a chat deleted elsewhere while this client was offline lingers until deleted here.
           const keep: SessionSummary[] = [];
           for (const [id, p] of Object.entries(this.projectBySession)) {
-            if (p !== project || listed.has(id) || (this.messagesBySession[id] ?? []).length > 0) continue;
-            if (id === this.currentSessionId || id === this.sidebarSessionId || this.activeTurnBySession[id]) {
-              const local = this.sessionsByProject[project]?.find((x) => x.sessionId === id);
+            if (p !== project || listed.has(id)) continue;
+            const local = this.sessionsByProject[project]?.find((x) => x.sessionId === id);
+            const hasHistory = (this.messagesBySession[id] ?? []).length > 0 || !!local?.messageCount;
+            // Pinned too: forgetting a chat drops its pin, and a list that came back short must not do that.
+            if (hasHistory || id === this.currentSessionId || id === this.sidebarSessionId || this.activeTurnBySession[id] || this.pinnedSessions.includes(id)) {
               if (local) keep.push(local);
             } else {
               this.forgetSessionState(id);
@@ -2239,7 +2296,15 @@ export class ServerState {
       }
       case "session_updated": {
         const data = env.data as unknown as SessionSummary;
-        const project = this.projectBySession[data.sessionId];
+        let project = this.projectBySession[data.sessionId];
+        // A chat made on another device (or since this client's list was saved) isn't in the list yet.
+        if (!project && data.projectPath && this.sessionsByProject[data.projectPath]) {
+          project = data.projectPath;
+          this.projectBySession[data.sessionId] = project;
+          if (!this.sessionsByProject[project].some((s) => s.sessionId === data.sessionId)) {
+            this.sessionsByProject[project] = [data, ...this.sessionsByProject[project]];
+          }
+        }
         if (project === CHAT_PROJECT && data.projectPath) this.rootBySession[data.sessionId] = data.projectPath;
         if (project && this.sessionsByProject[project]) {
           this.sessionsByProject[project] = this.sessionsByProject[project].map((s) =>
@@ -3025,6 +3090,7 @@ class AppState {
     root.style.setProperty("--diff-del", diff.del);
     root.dataset.main = this.settings.mainArea;
     this.applyWindowChrome();
+    void setCloseHook(this.settings.stopServerOnClose);
     syncNativeChrome();
   }
 

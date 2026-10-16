@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -110,7 +110,9 @@ export function defaultSocketPath() {
 // Logs go to a file, not a pipe: after the app exits, a write to a pipe would raise SIGPIPE and kill the server.
 async function spawnDetached(dataDir, binPath, args) {
   await mkdir(dataDir, { recursive: true });
-  const log = openSync(path.join(dataDir, "server.log"), "w");
+  const logFile = path.join(dataDir, "server.log");
+  // Append, so a crash's output survives the respawn that follows it; start over once it's large.
+  const log = openSync(logFile, (await stat(logFile).catch(() => null))?.size > 5_000_000 ? "w" : "a");
   try {
     const child = spawn(binPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true });
     await new Promise((resolve, reject) => {

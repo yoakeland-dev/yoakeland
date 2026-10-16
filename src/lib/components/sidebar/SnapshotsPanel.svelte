@@ -5,6 +5,8 @@
   // Each file's diff is "what restoring would revert": that turn's copy against the file now.
   import { onDestroy } from "svelte";
   import { app } from "../../state.svelte";
+  import { sessionModes } from "../../modes";
+  import { cliMeta } from "../../modelVendor";
   import { listSnapshots, restoreSnapshot } from "../../ipc";
   import { refreshWhenVisible } from "../../refresh.svelte";
   import Icon from "../Icon.svelte";
@@ -14,6 +16,7 @@
   let { sessionId, projectPath, visible = true }: { sessionId: string; projectPath: string; visible?: boolean } = $props();
 
   const server = $derived(app.active);
+  const cli = $derived(sessionModes(server, sessionId).cli ? sessionModes(server, sessionId).provider : undefined);
   const snapshots = $derived([...(server?.snapshotsByProject[projectPath] ?? [])].reverse());
   let open = $state<string | null>(null);
 
@@ -54,7 +57,9 @@
 </script>
 
 <div class="panel">
-  {#if snapshots.length}
+  {#if cli}
+    <div class="note">{cliMeta(cli).title} edits files directly and isn't snapshotted. Use Diffs or git to review and undo; the snapshots below are from yoakeland's own agent.</div>
+  {:else if snapshots.length}
     <div class="note">Only yoakeland's own edits are snapshotted; CLI agents edit files directly.</div>
   {/if}
   <div class="list">

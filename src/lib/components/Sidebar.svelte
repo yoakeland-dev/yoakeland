@@ -3,7 +3,7 @@
   import { tip } from "../tooltip.svelte";
   import { CHAT_STARTERS } from "../chatBrief";
   import { app, CHAT_PROJECT, SIDEBAR_TAB_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, type ConnectionId, type ServerState } from "../state.svelte";
-  import { browseAndAddProject, openChatSession, startChatWith, listSessionsForProjects, newChat as newChatIn, disconnect, reconnectServer } from "../ipc";
+  import { browseAndAddProject, openChatSession, startChatWith, listSessionsForProjects, newChat as newChatIn, switchServer, disconnect, reconnectServer } from "../ipc";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { isPhotoAvatar } from "../avatar";
   import type { SessionSummary } from "../types";
@@ -202,7 +202,7 @@ import { haptic } from "../haptics";
   function pickFocus(v: string | undefined) {
     if (!v) return;
     pickerValue = v;
-    if (v.startsWith("server::")) app.activeConnectionId = v.slice(8);
+    if (v.startsWith("server::")) switchServer(v.slice(8));
     else if (v !== ALL_PROJECTS) void newChatIn(v.slice(0, v.indexOf("::")), v.slice(v.indexOf("::") + 2));
   }
 
