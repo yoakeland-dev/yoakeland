@@ -131,6 +131,8 @@ function sanitizeChatHistory(history: ChatHistory): ChatHistory {
       ...m,
       text: m.text ?? "",
       toolCalls: m.toolCalls ?? [],
+      // Nothing is still streaming after a restart; a cache written mid-turn would otherwise spin forever.
+      streaming: false,
     }));
   }
   const sessionsByProject: Record<string, SessionSummary[]> = {};
@@ -184,6 +186,8 @@ function loadServerChatHistory(serverId: string): ChatHistory {
 // settings, wallpaper included) and made each save and every startup parse stall the UI.
 const CHAT_CACHE_MAX_CHARS = 1_500_000;
 const CHAT_CACHE_MAX_SESSIONS = 30;
+// Per chat, the newest messages only: a long chat's older turns are not worth its share of the total.
+const CHAT_CACHE_MAX_MESSAGES = 100;
 
 function saveServerChatHistory(serverId: string, history: ChatHistory) {
   const lastAt = (id: string) => history.messagesBySession[id]?.at(-1)?.createdAt ?? 0;
@@ -193,7 +197,10 @@ function saveServerChatHistory(serverId: string, history: ChatHistory) {
     .slice(0, CHAT_CACHE_MAX_SESSIONS);
   try {
     for (;;) {
-      const json = JSON.stringify({ ...history, messagesBySession: Object.fromEntries(keep.map((id) => [id, history.messagesBySession[id]])) });
+      const json = JSON.stringify({
+        ...history,
+        messagesBySession: Object.fromEntries(keep.map((id) => [id, history.messagesBySession[id].slice(-CHAT_CACHE_MAX_MESSAGES)])),
+      });
       // Halve the least recent until it fits; the newest chat is kept even if it alone is over.
       if (json.length <= CHAT_CACHE_MAX_CHARS || keep.length <= 1) return localStorage.setItem(serverStorageKey(serverId, "chatHistory"), json);
       keep = keep.slice(0, Math.ceil(keep.length / 2));
