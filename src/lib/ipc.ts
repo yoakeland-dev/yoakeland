@@ -543,7 +543,11 @@ async function connectFromUrl(): Promise<ConnectionId | null> {
   if (!code) return null;
   // A code with an address was made for a page that isn't served by the server (the hosted app);
   // one without opened the server's own page.
-  if (code.host && code.port && code.rtcFp) return connectTcp(code.host, code.port, code.token, undefined, code.rtcFp, code.hosts).catch(() => null);
+  if (code.host && code.port && code.rtcFp) {
+    // The address came with the link, so say where it leads before this browser pairs with it.
+    if (!(await askConfirm(`Connect to ${code.host}:${code.port} and save it as a server? Only if you opened this link yourself.`))) return null;
+    return connectTcp(code.host, code.port, code.token, undefined, code.rtcFp, code.hosts).catch(() => null);
+  }
   return connectTcp(location.hostname, Number(location.port) || 443, code.token).catch(() => null);
 }
 
@@ -1434,9 +1438,12 @@ export async function signInMcpServer(connectionId: ConnectionId, projectPath: s
       mcpOauthWaiters.set(connectionId, waiter);
       void send(connectionId, { type: "mcp_oauth_start", data: { projectPath, name, callbackUrl } });
     });
+    // Only the redirect that carries this sign-in's state is taken (oauthListener.js).
+    const state = new URL(url).searchParams.get("state");
+    if (state) await invoke("oauth_expect_state", { state });
     await openUrl(url);
-    const { code, state, iss } = await invoke<{ code: string; state?: string; iss?: string }>("oauth_wait_params");
-    void send(connectionId, { type: "mcp_oauth_complete", data: { projectPath, requestId, code, state, iss } });
+    const { code, state: returned, iss } = await invoke<{ code: string; state?: string; iss?: string }>("oauth_wait_params");
+    void send(connectionId, { type: "mcp_oauth_complete", data: { projectPath, requestId, code, state: returned, iss } });
   } catch (e) {
     void invoke("oauth_cancel").catch(() => {});
     throw e;

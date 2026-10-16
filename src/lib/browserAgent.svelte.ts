@@ -90,8 +90,9 @@ export async function handleBrowserRequest(connectionId: ConnectionId, req: Brow
       });
     }
     const serverHost = server.connectParams.mode === "remote" ? server.connectParams.host : null;
+    // On a remote server, localhost means that server (resolveAgentUrl), so this machine stays out.
     const guard = req.blockCrossOrigin
-      ? { hosts: [...LOCAL_HOSTS, ...(serverHost ? [serverHost] : []), ...(req.allowedHosts ?? [])] }
+      ? { hosts: [...(serverHost ? [serverHost] : LOCAL_HOSTS), ...(req.allowedHosts ?? [])] }
       : undefined;
     reply({ output: await c.run(req.action, args, guard) });
   } catch (e) {

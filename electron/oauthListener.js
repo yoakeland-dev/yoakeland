@@ -14,6 +14,9 @@ const DENIED =
 
 export function createOAuthListener({ timeoutMs = 5 * 60_000 } = {}) {
   let current = null; // { result: Promise<{ code, state, iss }>, finish(err?, params?) }
+  // The `state` the redirect must carry, once the flow has named one (MCP does; OpenRouter's has none).
+  // Without it, any page or process that finds the port could settle the sign-in with its own code.
+  let expected;
 
   function cancel() {
     current?.finish(new Error("sign-in cancelled"));
@@ -21,6 +24,7 @@ export function createOAuthListener({ timeoutMs = 5 * 60_000 } = {}) {
 
   async function listen() {
     cancel();
+    expected = undefined;
     let settled = false;
     let finish;
     const result = new Promise((resolve, reject) => {
@@ -39,6 +43,8 @@ export function createOAuthListener({ timeoutMs = 5 * 60_000 } = {}) {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://localhost");
       if (url.pathname !== "/callback") return void res.writeHead(404).end();
+      // Not this sign-in's redirect: refuse it and keep waiting for the real one.
+      if (expected !== undefined && url.searchParams.get("state") !== expected) return void res.writeHead(404).end();
       // The provider refused (the user said no): say so on the page and to the caller.
       const denied = url.searchParams.get("error");
       if (denied) {
@@ -65,6 +71,10 @@ export function createOAuthListener({ timeoutMs = 5 * 60_000 } = {}) {
     return { callbackUrl: `http://localhost:${server.address().port}/callback` };
   }
 
+  function expectState(state) {
+    expected = typeof state === "string" && state ? state : undefined;
+  }
+
   async function waitParams() {
     const c = current;
     if (!c) throw new Error("no sign-in in progress");
@@ -79,5 +89,5 @@ export function createOAuthListener({ timeoutMs = 5 * 60_000 } = {}) {
     return (await waitParams()).code;
   }
 
-  return { listen, wait, waitParams, cancel };
+  return { listen, wait, waitParams, cancel, expectState };
 }

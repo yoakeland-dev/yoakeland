@@ -11,7 +11,7 @@
 
 <script lang="ts">
   import type { Token, Links } from "marked";
-  import { sanitizeMarkdown } from "../sanitize";
+  import { sanitizeMarkdown, loadRemoteImage } from "../sanitize";
   import { hasOpenFence } from "../fences";
   import { loadKatex } from "../mathRender";
   import { cachedMermaid, renderMermaid, downloadSvg, mermaidThemeFromCss } from "../mermaidRender";
@@ -204,6 +204,8 @@
   // Links must never navigate the app's own page away.
   function onClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
+    const remote = target.closest?.<HTMLElement>(".remote-img");
+    if (remote) return loadRemoteImage(remote);
     const toggle = target.closest?.<HTMLElement>(".code-toggle");
     if (toggle) {
       const collapsed = !!toggle.closest(".code-block")?.toggleAttribute("data-collapsed");
@@ -585,6 +587,20 @@
   /* sanitize.ts drops the src of an image it won't load (not https or inline). */
   .markdown :global(img:not([src])) {
     display: none;
+  }
+  /* A remote image waits for a click (sanitize.ts), so it shows its host first. */
+  .markdown :global(.remote-img) {
+    font: inherit;
+    font-size: 0.9em;
+    padding: 0.2em 0.5em;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .markdown :global(.remote-img:hover) {
+    color: var(--text);
   }
   /* GFM task lists: the checkbox stands in for the bullet. */
   .markdown :global(li:has(> input[type="checkbox"])),

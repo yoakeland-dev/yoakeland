@@ -4,6 +4,12 @@
  * on the wire), not a relative path (which would resolve against the app itself). */
 export const allowedImgSrc = (src: string) => /^(?:https:\/\/|data:image\/[a-z0-9.+-]+[;,])/i.test(src.trim());
 
+/** An https image is fetched from its own host, so it waits for the reader's click (sanitize.ts). */
+export const isRemoteImgSrc = (src: string) => /^https:\/\//i.test(src.trim());
+
+/** The only <input> a message may keep: the disabled checkbox of a GFM task list. */
+export const allowedInput = (type: string | null, disabled: boolean) => type === "checkbox" && disabled;
+
 /** SVG references that stay inside the document (a marker, a gradient), or an inlined image. */
 export const allowedSvgHref = (href: string) => /^(?:#|data:image\/)/i.test(href.trim());
 
