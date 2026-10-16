@@ -1131,7 +1131,6 @@ export class ServerState {
     }
     if (this.finishedSessions[sessionId]) {
       delete this.finishedSessions[sessionId];
-      this.finishedSessions = { ...this.finishedSessions };
     }
     const project = this.projectBySession[sessionId];
     if (project) this.currentProjectPath = project;
@@ -2121,7 +2120,6 @@ export class ServerState {
           delete this.modelBySession[sessionId];
           this.providerBlockedBySession[sessionId] = true;
           delete this.activeTurnBySession[sessionId];
-          this.activeTurnBySession = { ...this.activeTurnBySession };
           this.saveChatHistory();
           break;
         }
@@ -2145,7 +2143,6 @@ export class ServerState {
         // A queued prompt may already have taken over as the active turn.
         if (!this.activeTurnBySession[sessionId] || this.activeTurnBySession[sessionId] === env.turnId) {
           delete this.activeTurnBySession[sessionId];
-          this.activeTurnBySession = { ...this.activeTurnBySession };
         }
         if (sessionId !== this.currentSessionId) {
           this.finishedSessions[sessionId] = true;
@@ -2311,7 +2308,6 @@ export class ServerState {
           }
           this.saveSidebarPrefs();
           delete this.refreshingProjects[project];
-          this.refreshingProjects = { ...this.refreshingProjects };
           this.saveChatHistory();
         }
         break;
@@ -2598,7 +2594,6 @@ export class ServerState {
         if (sessionId && this.syncingSessions[sessionId]) this.setSessionSyncing(sessionId, false);
         if (data.projectPath && this.refreshingProjects[data.projectPath]) {
           delete this.refreshingProjects[data.projectPath];
-          this.refreshingProjects = { ...this.refreshingProjects };
         }
         if (data.fatal) {
           this.connectionStatus = "error";
@@ -2617,7 +2612,6 @@ export class ServerState {
             msg.text = msg.text ? `${msg.text}\n\n${note}` : note;
           }
           delete this.activeTurnBySession[sessionId];
-          this.activeTurnBySession = { ...this.activeTurnBySession };
           this.saveChatHistory();
         }
         break;
@@ -2693,18 +2687,18 @@ export class ServerState {
         const tab = this.terminalById[data.terminalId];
         const bytes = base64ToBytes(data.data);
         if (tab) {
+          // Written in place: this runs per chunk, and a new map each time would re-run everything reading it.
           const ev = scanShellEvents(bytes, !!tab.busy);
-          const next = { ...tab, sequence: data.sequence };
+          tab.sequence = data.sequence;
           if (ev) {
             if (ev.busy !== undefined) {
-              next.busy = ev.busy;
-              if (ev.busy) next.command = ev.command;
-              next.lastExit = ev.busy ? undefined : ev.exitCode;
+              tab.busy = ev.busy;
+              if (ev.busy) tab.command = ev.command;
+              tab.lastExit = ev.busy ? undefined : ev.exitCode;
             }
-            if (ev.cwd) next.cwd = ev.cwd;
-            if (ev.title !== undefined) next.title = ev.title || undefined;
+            if (ev.cwd) tab.cwd = ev.cwd;
+            if (ev.title !== undefined) tab.title = ev.title || undefined;
           }
-          this.terminalById = { ...this.terminalById, [data.terminalId]: next };
         }
         publishTerminalChunk(data.terminalId, bytes, data.sequence);
         break;
