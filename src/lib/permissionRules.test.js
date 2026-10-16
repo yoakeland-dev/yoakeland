@@ -53,6 +53,7 @@ test("describeRule reads as a sentence", () => {
 test("MCP rules: the form's tool name becomes the rule's tool, and they read as server: tool", () => {
   assert.deepEqual(ruleFromForm("mcp", " mcp__github__* "), { tool: "mcp__github__*", text: "*" });
   assert.deepEqual(ruleFromForm("bash", " ls * "), { tool: "bash", text: "ls *" });
+  assert.deepEqual(ruleFromForm("web_search", ""), { tool: "web_search", text: "*" });
   assert.equal(toolLabel("mcp__github__*"), "github: any tool");
   assert.equal(toolLabel("mcp__github__create_issue"), "github: Create issue");
   assert.equal(toolLabel("bash"), "Command");

@@ -11,14 +11,19 @@ export const SCOPES: { value: PermissionScope; label: string; hint: string }[] =
 export const TOOLS: { value: string; label: string; placeholder: string }[] = [
   { value: "bash", label: "Command", placeholder: "go test *" },
   { value: "edit", label: "File edits", placeholder: "internal/agent/**" },
+  // Deny or ask only: reading needs no allow rule.
+  { value: "read", label: "File reads", placeholder: "secrets/**" },
   { value: "web_fetch", label: "Web fetch", placeholder: "docs.python.org" },
   { value: "browser", label: "Browser", placeholder: "example.com" },
+  { value: "web_search", label: "Web search", placeholder: "every search" },
   { value: "mcp", label: "MCP tool", placeholder: "mcp__github__* or mcp__github__create_issue" },
 ];
 
 /** What add_permission_rule takes for the form's pick. An MCP rule covers a whole tool (or every tool of
- * one server), so the tool's name is the rule's tool and its pattern is always "*". */
+ * one server), so the tool's name is the rule's tool and its pattern is always "*". A web_search rule
+ * covers every query, so its pattern is "*" too. */
 export function ruleFromForm(tool: string, text: string): { tool: string; text: string } {
+  if (tool === "web_search") return { tool, text: "*" };
   return tool === "mcp" ? { tool: text.trim(), text: "*" } : { tool, text: text.trim() };
 }
 
@@ -41,7 +46,7 @@ export function modesLabel(rule: Pick<PermissionRule, "decision" | "modes">): st
 }
 
 export function toolLabel(tool: string): string {
-  return mcpRuleLabel(tool) ?? { bash: "Command", edit: "Edit", file_write: "Write", file_edit: "Edit", web_fetch: "Fetch", browser: "Browser" }[tool] ?? tool;
+  return mcpRuleLabel(tool) ?? { bash: "Command", edit: "Edit", file_write: "Write", file_edit: "Edit", web_fetch: "Fetch", browser: "Browser", read: "Read", web_search: "Web search" }[tool] ?? tool;
 }
 
 const SCOPE_ORDER: Record<string, number> = { global: 0, project: 1, session: 2, builtin: 3 };

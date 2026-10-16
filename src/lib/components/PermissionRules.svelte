@@ -32,10 +32,12 @@
   const toolItems = TOOLS.map((t) => ({ value: t.value, label: t.label }));
   const scopeItems = SCOPES.map((s) => ({ value: s.value, label: s.label }));
   const placeholder = $derived(TOOLS.find((t) => t.value === tool)?.placeholder ?? "");
+  // A web_search rule covers every query, so it needs no pattern typed.
+  const ready = $derived(!!text.trim() || tool === "web_search");
 
   function add(e: SubmitEvent) {
     e.preventDefault();
-    if (!cid || !text.trim()) return;
+    if (!cid || !ready) return;
     addPermissionRule(cid, projectPath, scope, { ...ruleFromForm(tool, text), decision });
     text = "";
   }
@@ -78,7 +80,7 @@
       <Dropdown items={toolItems} bind:value={() => tool, (v) => (tool = v ?? "bash")} triggerClass="rule-pick" triggerTitle="What it applies to" contentClass="above-modal" />
       <TextField class="pattern" bind:value={text} {placeholder} aria-label="Pattern" spellcheck="false" />
       <Dropdown items={scopeItems} bind:value={() => scope, (v) => (scope = v as PermissionScope)} triggerClass="rule-pick" triggerTitle="Where it applies" contentClass="above-modal" />
-      <Button type="submit" disabled={!text.trim()}>Add</Button>
+      <Button type="submit" disabled={!ready}>Add</Button>
     </form>
     <p class="hint">
       A command rule matches the program and its arguments word by word. A final <code>*</code> matches any more arguments
