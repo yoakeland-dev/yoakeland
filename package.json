@@ -63,6 +63,13 @@
     "asarUnpack": [
       "build/**"
     ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "grantFileProtocolExtraPrivileges": false,
+      "onlyLoadAppFromAsar": true
+    },
     "icon": "electron/icon.png",
     "linux": {
       "target": [
