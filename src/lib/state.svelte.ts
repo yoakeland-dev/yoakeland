@@ -593,6 +593,15 @@ export class ServerState {
   peers = $state<PeerInfo[]>([]);
   /** Our own peerId on this server (peer_list's `you`; null on older servers). */
   selfPeerId = $state<string | null>(null);
+  /** server_identity's word on this connection's tier; follows peer_list once that names us. */
+  tierRestricted = $state(false);
+  /** True when the server holds this connection to the paired-device scope (a phone's code). The
+   * local socket and full-access credentials are never limited. */
+  get limited(): boolean {
+    if (this.connectionMode === "local") return false;
+    const me = this.peers.find((p) => p.peerId === this.selfPeerId);
+    return me ? !!me.restricted : this.tierRestricted;
+  }
   serverIdentity = $state<string | null>(null);
   /** What the UI calls this server everywhere (lists, badges, avatars). */
   get label(): string {
@@ -2437,6 +2446,7 @@ export class ServerState {
         const data = env.data as unknown as ServerIdentityData;
         this.serverIdentity = data.identity;
         this.awaitingApproval = false;
+        this.tierRestricted = !!data.restricted;
         this.version = data.version ?? null;
         if (data.serverId && this.serverId !== data.serverId) {
           this.serverId = data.serverId;
@@ -2555,6 +2565,14 @@ export class ServerState {
         const data = env.data as { message: string; fatal?: boolean; projectPath?: string };
         this.app.log(`error: ${data.message}`);
         if (sessionId && this.syncingSessions[sessionId]) this.setSessionSyncing(sessionId, false);
+        // A limited device is refused some requests outright. Say so, and end a folder browse that
+        // would otherwise wait for a listing that is never coming.
+        if (/isn't available from a paired device/.test(data.message)) {
+          this.app.toastAction(this.connectionId, "This device has limited access to the server. Ask its owner for full access (Settings → Access).");
+          if (data.message.startsWith("list_directory") && this.app.browsingConnectionId === this.connectionId) {
+            this.app.directoryListing = { path: this.app.directoryListing?.path ?? "", entries: [], error: "This device has limited access, so it can't browse folders on the server." };
+          }
+        }
         if (data.projectPath && this.refreshingProjects[data.projectPath]) {
           delete this.refreshingProjects[data.projectPath];
         }

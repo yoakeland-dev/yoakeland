@@ -39,6 +39,7 @@
     removeProject,
     loadCustomThemes,
     themesRevealPath,
+    listTokens,
   } from "../ipc";
   import { extractAccentFromImage, hexToHue, hslToHex, tokensFor, TERMINAL_THEME_PRESETS } from "../theme";
   import { APP_THEME_PRESETS } from "../themePresets";
@@ -237,6 +238,13 @@
     if (r) saveRole(key, { ...r, reasoningEffort: v || undefined });
   }
   const isLocalConnection = $derived(connected && server?.connectionMode === "local");
+  // People (tokens) can be managed from the server's own machine or by a full-access device; only
+  // the remote listener and shared password stay local-only. A phone's pairing code is limited.
+  const canManagePeople = $derived(connected && (isLocalConnection || !server?.limited));
+  $effect(() => {
+    if (canManagePeople && server && !isLocalConnection) listTokens(server.connectionId);
+  });
+  const limitedHere = $derived(connected && !isLocalConnection && !!server?.limited);
 
   // The profile is one identity on every server, so a change goes to all of them, not just the open one.
   const connectedIds = () => Object.values(app.servers).filter((v) => v.connectionStatus === "connected").map((v) => v.connectionId);
@@ -1669,9 +1677,16 @@
         <Tabs.Content value="access" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "access", query: settingsSearch }}>
             {@render pageHead("Access", true)}
-            {#if server?.connectionStatus === "connected" && !isLocalConnection}
-              <p class="notice">
-                <Icon name="warning" size={13} /> Access changes only work over the server's local socket. Connect from the server's machine to change them.
+            {#if connected}
+              <p class="notice tier" class:limited={limitedHere}>
+                <Icon name={limitedHere ? "warning" : "check"} size={13} />
+                {#if isLocalConnection}
+                  <strong>This computer.</strong> Full access to this server.
+                {:else if limitedHere}
+                  <strong>Limited access.</strong> This device paired with a phone's code, so it can chat and edit files in projects already open here, but not add folders, providers, MCP servers or settings, open terminals or manage people. Ask the server's owner for full access (the device list marks each device's tier), or pair again with a full-access code (<code>yoakeland pair</code> on the server).
+                {:else}
+                  <strong>Full access.</strong> You can manage providers, projects, people and settings on this server. The remote listener and shared password can only be changed from the server's own machine.
+                {/if}
               </p>
             {/if}
 
@@ -1703,7 +1718,7 @@
               <div class="section-head">
                 <h3 class="section-heading">People</h3>
                 {#if !addingPerson}
-                  <Button type="button" size="sm" disabled={!isLocalConnection} onclick={() => (addingPerson = true)}>
+                  <Button type="button" size="sm" disabled={!canManagePeople} onclick={() => (addingPerson = true)}>
                     <Icon name="plus" size={13} /> Add person
                   </Button>
                 {/if}
@@ -1743,15 +1758,15 @@
               {#if addingPerson}
                 <form class="inset-card" onsubmit={submitToken}>
                   <div class="form-grid">
-                    <label>Name <TextField type="text" placeholder="name" bind:value={tokenNameInput} disabled={!isLocalConnection} /></label>
+                    <label>Name <TextField type="text" placeholder="name" bind:value={tokenNameInput} disabled={!canManagePeople} /></label>
                     <label>
                       <span>Email <span class="optional">(optional)</span></span>
-                      <TextField type="email" placeholder="for git commits" bind:value={tokenEmailInput} disabled={!isLocalConnection} />
+                      <TextField type="email" placeholder="for git commits" bind:value={tokenEmailInput} disabled={!canManagePeople} />
                     </label>
                   </div>
                   <div class="btn-row align-end">
                     <Button type="button" variant="ghost" onclick={() => (addingPerson = false)}>Cancel</Button>
-                    <Button type="submit" variant="primary" disabled={!isLocalConnection || !tokenNameInput.trim()}>
+                    <Button type="submit" variant="primary" disabled={!canManagePeople || !tokenNameInput.trim()}>
                       <Icon name="plus" size={13} /> Add
                     </Button>
                   </div>
@@ -1764,12 +1779,12 @@
                     <span class="avatar-dot"><Icon name="user" size={13} /></span>
                     <div class="list-text">
                       <span class="list-title">{token.name}</span>
-                      <span class="list-meta">{token.email ?? "no email"}</span>
+                      <span class="list-meta">{token.email ?? "no email"} · {token.restricted ? "limited access" : "full access"}</span>
                     </div>
                     <Button type="button"
                       icon variant="ghost" destructive
                       onclick={() => onRemoveToken(token.name)}
-                      disabled={!isLocalConnection}
+                      disabled={!canManagePeople}
                       {@attach tip("Revoke access")}
                     >
                       <Icon name="user-x" size={13} />
@@ -2015,6 +2030,9 @@
     border: 1px solid var(--panel-border);
     font-size: var(--text-label-size);
     color: var(--text-dim);
+  }
+  .notice.tier.limited {
+    border-color: var(--warning, var(--panel-border));
   }
   .notice :global(.icon) {
     flex-shrink: 0;

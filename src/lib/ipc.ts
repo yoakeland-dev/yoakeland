@@ -385,7 +385,7 @@ function afterConnect(connectionId: ConnectionId) {
   // The sidebar groups sessions across every saved project, not just the currently open one.
   void listSessionsForProjects(connectionId, [CHAT_PROJECT, ...server.recentProjects]);
   if (server.currentProjectPath) listFiles(connectionId, server.currentProjectPath);
-  if (server.connectionMode === "local") listTokens(connectionId);
+  if (!server.limited) listTokens(connectionId);
   // Only the desktop app has a browser panel the agent can drive (§3.2 browser_host).
   if (isDesktop) void send(connectionId, { type: "browser_host", data: { enabled: true } });
   // Reconcile the chats on screen, and any a turn was running in when the connection dropped (its
@@ -1565,7 +1565,7 @@ export function answerPairing(connectionId: ConnectionId, credential: string, al
   app.dropToast(`pair-${credential}`);
 }
 
-function listTokens(connectionId: ConnectionId) {
+export function listTokens(connectionId: ConnectionId) {
   void send(connectionId, { type: "list_tokens", data: {} });
 }
 

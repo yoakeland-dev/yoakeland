@@ -108,8 +108,8 @@ import { haptic } from "../haptics";
   const connectedServers = $derived(serverEntries.filter(([, srv]) => srv.connectionStatus === "connected"));
   const presence = $derived(
     connectedServers.length === 0 ? "Offline"
-      : connectedServers.length === 1 ? `Online on ${connectedServers[0][1].label}`
-      : `Online on ${connectedServers.length} servers`,
+      : connectedServers.length === 1 ? `Online on ${connectedServers[0][1].label}${connectedServers[0][1].limited ? " (limited access)" : ""}`
+      : `Online on ${connectedServers.length} servers${connectedServers.some(([, srv]) => srv.limited) ? " (some limited)" : ""}`,
   );
 
   let userMenuOpen = $state(false);

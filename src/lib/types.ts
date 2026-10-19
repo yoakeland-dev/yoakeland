@@ -193,6 +193,8 @@ export interface ServerIdentityData {
   identity: string;
   serverId?: string;
   version?: string;
+  /** This connection is held to the paired-device scope (a phone's code). Absent: full access. */
+  restricted?: boolean;
 }
 
 export interface PeerListData {
@@ -523,6 +525,8 @@ export interface TokenInfo {
   name: string;
   email?: string;
   hasAvatar: boolean;
+  /** Devices on this credential are limited to the paired-device scope. */
+  restricted?: boolean;
 }
 
 // ---- Built-in terminal (SPEC.md §3.1/§3.2 terminal_*) ----
