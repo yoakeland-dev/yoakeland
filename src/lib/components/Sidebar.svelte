@@ -231,6 +231,41 @@ import { haptic } from "../haptics";
 
   let resizing = $state(false);
 
+  // The peek card fades and drifts in from just off the edge instead of crossing the whole
+  // sidebar width. Animations beat the CSS transform transition (same duration, so they end
+  // together), and the exit holds the card in place until it has faded.
+  let sidebarEl = $state<HTMLElement>();
+  let wasPeeking = false;
+  let leaving = $state(false);
+  let exitAnim: Animation | undefined;
+  $effect(() => {
+    const peek = app.sidebarPeek;
+    const el = sidebarEl;
+    if (!el || peek === wasPeeking) return;
+    wasPeeking = peek;
+    if (!app.sidebarCollapsed) return;
+    const ms = parseFloat(getComputedStyle(el).transitionDuration) * 1000;
+    if (!ms) return;
+    const from = { opacity: 0, transform: "translateX(-1.25rem)" };
+    const to = { opacity: 1, transform: "translateX(0)" };
+    exitAnim?.cancel();
+    const anim = el.animate(peek ? [from, to] : [to, from], { duration: ms, easing: "ease-out", fill: peek ? "none" : "forwards" });
+    // Keep the card's chrome (background, border, shadow) until the fade is done.
+    if (!peek) {
+      exitAnim = anim;
+      leaving = true;
+      // Then drop off-screen without a transition, or the slide to -100% would play visibly.
+      anim.finished.then(async () => {
+        el.style.transition = "none";
+        leaving = false;
+        anim.cancel();
+        await tick();
+        el.offsetWidth;
+        el.style.transition = "";
+      }, () => (leaving = false));
+    }
+  });
+
   // The slot shrinks in the flex layout (0 when collapsed); the panel itself stays fixed-width
   // and slides off via transform, so content never squashes mid-transition.
   const slotWidth = $derived(app.sidebarCollapsed || viewport.narrow ? 0 : app.sidebarWidth);
@@ -539,10 +574,15 @@ import { haptic } from "../haptics";
   {/if}
 {/snippet}
 
-<div class="sidebar-slot" class:resizing class:collapse-anim={collapsedByDrag} style="flex-basis: {slotWidth}px">
+<div class="sidebar-slot" class:resizing class:collapse-anim={collapsedByDrag} class:snap={app.sidebarSnap} style="flex-basis: {slotWidth}px">
   <aside
     class="sidebar"
+    bind:this={sidebarEl}
     class:collapsed={app.sidebarCollapsed}
+    class:peek={app.sidebarPeek && app.sidebarCollapsed}
+    class:leaving
+    onpointerenter={() => app.sidebarPeek && app.peekSidebar(true)}
+    onpointerleave={() => app.peekSidebar(false)}
     style={drawerStyle}
     {@attach swipe(() => ({
       axis: "x",
@@ -559,7 +599,6 @@ import { haptic } from "../haptics";
   >
     <div class="brand-row">
       <img class="brand-logo" src="logo.png" alt="" />
-      <span class="brand">yoakeland</span>
       <div class="tabs" role="tablist" aria-label="Sidebar">
         <button
           role="tab"
@@ -1000,6 +1039,26 @@ import { haptic } from "../haptics";
   .sidebar.collapsed {
     transform: translateX(-100%);
   }
+  /* Peek: a floating card over the chat, not a docked panel. The slot stays 0 wide so nothing
+     reflows; the shadow, border and radius say "temporary", and it slides back out on leave. */
+  .sidebar.collapsed.peek,
+  .sidebar.collapsed.leaving {
+    transform: translateX(0);
+    /* Under the window toggle (z 20), which stays put on top of the card. */
+    z-index: 19;
+    top: var(--chat-margin);
+    height: calc(100% - 2 * var(--chat-margin));
+    padding-top: 0;
+    background: var(--bg);
+    border: 1px solid var(--panel-border);
+    border-left: 0;
+    border-radius: 0 var(--radius-lg, 12px) var(--radius-lg, 12px) 0;
+    box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
+  }
+  .sidebar-slot.snap,
+  .sidebar-slot.snap .sidebar {
+    transition: none;
+  }
   .sidebar-slot.resizing .sidebar {
     transition: none;
   }
@@ -1023,13 +1082,6 @@ import { haptic } from "../haptics";
     flex-shrink: 0;
     border-radius: var(--radius-sm);
     object-fit: cover;
-  }
-  .brand {
-    font-family: var(--logo-font-family);
-    font-size: var(--text-body-size);
-    font-weight: 600;
-    letter-spacing: 0.01em;
-    color: var(--text);
   }
   .tabs {
     margin-left: auto;

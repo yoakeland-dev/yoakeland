@@ -3,8 +3,18 @@
 // main timeline.
 import type { ChatMessage, ToolCallEntry } from "./types";
 
-export function isSubagentCall(call: Pick<ToolCallEntry, "name" | "native">): boolean {
-  return call.name === "subagent" || (!!call.native && (call.name === "Task" || call.name === "Agent"));
+type CallLike = Pick<ToolCallEntry, "name" | "native"> & { args?: Record<string, unknown> };
+
+/** A CLI agent's own subagent call: Claude Code's Task/Agent, Codex's spawnAgent (its other
+ * collabAgentToolCalls, wait and close, are not), or Pi's subagent tool. */
+export function isNativeSubagent(call: CallLike): boolean {
+  if (!call.native) return false;
+  if (call.name === "collabAgentToolCall") return call.args?.tool === "spawnAgent";
+  return call.name === "Task" || call.name === "Agent" || call.name === "subagent";
+}
+
+export function isSubagentCall(call: CallLike): boolean {
+  return call.name === "subagent" || isNativeSubagent(call);
 }
 
 /** The call with this id among `calls` or anything nested inside them. */

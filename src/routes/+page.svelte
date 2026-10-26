@@ -275,6 +275,8 @@ import { haptic } from "$lib/haptics";
       {@attach tip(app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar", { keys: "sidebar.toggle", side: "bottom" })}
       aria-label={goBack ? "Back" : app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
       onclick={() => (goBack ? goBack() : app.toggleSidebar())}
+      onpointerenter={() => !goBack && app.peekSidebar(true)}
+      onpointerleave={() => app.peekSidebar(false)}
     >
       <Icon
         name={goBack

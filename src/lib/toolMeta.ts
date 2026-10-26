@@ -1,5 +1,6 @@
 // Shared between ToolCallCard and ToolCallGroup so both render the same icon/label for a tool name.
 import { humanizeTool, mcpToolParts } from "./extensions";
+import { isNativeSubagent } from "./subagents";
 import type { NativeToolFields, NativeToolKind } from "./types";
 
 export type ToolIconName =
@@ -58,7 +59,7 @@ type CallLike = { name: string; args?: Record<string, unknown> } & NativeToolFie
  * its kind. */
 export function metaFor(call: CallLike): { icon: ToolIconName; label: string } {
   // A CLI agent's own subagent (Claude Code's Task) reads the same as ours.
-  if (call.native && (call.name === "Task" || call.name === "Agent")) return toolMeta.subagent;
+  if (isNativeSubagent(call)) return toolMeta.subagent;
   if (call.native) {
     // The kind's label, not the agent's tool name: `commandExecution` and `Bash` should read the same.
     const k = KIND_META[call.kind ?? "other"] ?? KIND_META.other;
@@ -142,7 +143,7 @@ const MAX_CLAUSES = 3;
 export function briefFor(calls: CallLike[], opts: { capitalize?: boolean } = {}): string {
   // Native calls group by kind: agents disagree on tool names but not kinds.
   const keyOf = (c: CallLike) =>
-    c.native && (c.name === "Task" || c.name === "Agent") ? "subagent" : c.native ? `kind:${c.kind ?? "other"}` : mcpToolParts(c.name) ? `mcp:${mcpToolParts(c.name)!.server}` : c.name;
+    isNativeSubagent(c) ? "subagent" : c.native ? `kind:${c.kind ?? "other"}` : mcpToolParts(c.name) ? `mcp:${mcpToolParts(c.name)!.server}` : c.name;
   const counts = new Map<string, number>();
   for (const c of calls) counts.set(keyOf(c), (counts.get(keyOf(c)) ?? 0) + 1);
   // Past a few kinds the line stops being a glance: the busiest ones, then "N more".

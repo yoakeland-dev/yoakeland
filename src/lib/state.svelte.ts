@@ -161,7 +161,7 @@ function loadServerRecentProjects(serverId: string): string[] {
   try {
     const raw = localStorage.getItem(serverStorageKey(serverId, "recentProjects"));
     if (!raw) return [];
-    return (JSON.parse(raw) as unknown[]).filter(looksLikePath);
+    return (JSON.parse(raw) as unknown[]).filter(looksLikePath).filter((p) => p !== CHAT_PROJECT);
   } catch {
     return [];
   }
@@ -1038,6 +1038,7 @@ export class ServerState {
   }
 
   rememberProject(path: string) {
+    if (path === CHAT_PROJECT) return; // a chat with no folder, not a project
     if (!this.projects.includes(path)) this.projects = [...this.projects, path];
     const withoutIt = this.recentProjects.filter((p) => p !== path);
     this.recentProjects = [path, ...withoutIt].slice(0, 20);
@@ -2445,8 +2446,8 @@ export class ServerState {
       case "server_identity": {
         const data = env.data as unknown as ServerIdentityData;
         this.serverIdentity = data.identity;
-        this.awaitingApproval = false;
         this.tierRestricted = !!data.restricted;
+        this.awaitingApproval = false;
         this.version = data.version ?? null;
         if (data.serverId && this.serverId !== data.serverId) {
           this.serverId = data.serverId;
@@ -2564,7 +2565,6 @@ export class ServerState {
       case "error": {
         const data = env.data as { message: string; fatal?: boolean; projectPath?: string };
         this.app.log(`error: ${data.message}`);
-        if (sessionId && this.syncingSessions[sessionId]) this.setSessionSyncing(sessionId, false);
         // A limited device is refused some requests outright. Say so, and end a folder browse that
         // would otherwise wait for a listing that is never coming.
         if (/isn't available from a paired device/.test(data.message)) {
@@ -2573,6 +2573,7 @@ export class ServerState {
             this.app.directoryListing = { path: this.app.directoryListing?.path ?? "", entries: [], error: "This device has limited access, so it can't browse folders on the server." };
           }
         }
+        if (sessionId && this.syncingSessions[sessionId]) this.setSessionSyncing(sessionId, false);
         if (data.projectPath && this.refreshingProjects[data.projectPath]) {
           delete this.refreshingProjects[data.projectPath];
         }
@@ -2780,6 +2781,16 @@ class AppState {
   sidebarCollapsed = $state(
     viewport.narrow || (typeof localStorage !== "undefined" ? loadBool(SIDEBAR_COLLAPSED_KEY) : false),
   );
+  /** Collapsed sidebar floating over the chat while the toggle (or the sidebar itself) is hovered. Never persisted. */
+  sidebarPeek = $state(false);
+  sidebarSnap = $state(false);
+  #peekTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Hover in opens after a beat (so a pass over the corner doesn't flash it); out closes after a longer one so the pointer can travel to the panel. */
+  peekSidebar(on: boolean) {
+    clearTimeout(this.#peekTimer);
+    if (on && (!this.sidebarCollapsed || viewport.narrow)) return;
+    this.#peekTimer = setTimeout(() => (this.sidebarPeek = on), on ? 100 : 350);
+  }
   rightSidebarCollapsed = $state(
     typeof localStorage !== "undefined" ? loadBool(RIGHT_SIDEBAR_COLLAPSED_KEY) : false,
   );
@@ -2951,7 +2962,14 @@ class AppState {
 
   /** Sets (rather than flips) collapsed state; drag-to-collapse tracks the pointer live via this. */
   setSidebarCollapsed(collapsed: boolean) {
+    // Docking from a peek: the card is already on screen, so snap instead of animating.
+    if (!collapsed && this.sidebarPeek) {
+      this.sidebarSnap = true;
+      setTimeout(() => (this.sidebarSnap = false), 50);
+    }
     this.sidebarCollapsed = collapsed;
+    clearTimeout(this.#peekTimer);
+    this.sidebarPeek = false;
     if (!viewport.narrow) saveBool(SIDEBAR_COLLAPSED_KEY, collapsed);
   }
 
