@@ -1,11 +1,11 @@
 <script lang="ts" module>
   import { Marked } from "marked";
-  import { highlightCode } from "../highlight";
+  import { bareMermaid, highlightCode } from "../highlight";
   import { mathExtension } from "../math";
   import { renderMath } from "../mathRender";
   // Own instance rather than marked's global, so the extensions aren't registered app-wide.
   const math = mathExtension(renderMath);
-  const plain = new Marked(highlightCode, math);
+  const plain = new Marked(highlightCode, math, bareMermaid);
   let mentioning: Marked | undefined;
 </script>
 
@@ -13,6 +13,7 @@
   import type { Token, Links } from "marked";
   import { sanitizeMarkdown, loadRemoteImage } from "../sanitize";
   import { hasOpenFence } from "../fences";
+  import { showArtifact } from "../artifact";
   import { loadKatex } from "../mathRender";
   import { cachedMermaid, renderMermaid, downloadSvg, mermaidThemeFromCss } from "../mermaidRender";
   import DiagramViewer from "./DiagramViewer.svelte";
@@ -26,7 +27,7 @@
   // stays collapsed until it closes.
   let { text, mentions = false, live = false }: { text: string; mentions?: boolean; live?: boolean } = $props();
   const PARSE_OPTS = { breaks: true, gfm: true };
-  const md = $derived(mentions ? (mentioning ??= withMentions(new Marked(highlightCode, math), fileIconUrl)) : plain);
+  const md = $derived(mentions ? (mentioning ??= withMentions(new Marked(highlightCode, math, bareMermaid), fileIconUrl)) : plain);
   // Passing options to lexer/parser *replaces* the instance's defaults
   // (where md.use() put the mention extension), so merge instead.
   const opts = $derived({ ...md.defaults, ...PARSE_OPTS });
@@ -107,6 +108,23 @@
         .finally(() => (waitingOnMath = false));
     }
     drawDiagrams();
+    drawArtifacts();
+  }
+
+  // An ```artifact fence becomes its sandboxed page once it has closed; `shown` remembers the theme and
+  // source each block was last built for, so a re-render of the message leaves a running page alone.
+  const shown = new WeakMap<Element, string>();
+  function drawArtifacts() {
+    const themeKey = app.resolvedTheme + app.settings.accent;
+    for (const block of root.querySelectorAll<HTMLElement>(".artifact-block:not([data-streaming])")) {
+      const src = block.querySelector("code")?.textContent ?? "";
+      const key = themeKey + "\0" + src;
+      const out = block.querySelector<HTMLElement>(".artifact-out");
+      if (!out || !src.trim() || shown.get(block) === key) continue;
+      if (!shown.has(block)) block.setAttribute("data-collapsed", ""); // the page first, its source on request
+      shown.set(block, key);
+      showArtifact(out, src);
+    }
   }
 
   // A ```mermaid fence turns into its diagram once it has closed (an open one is still
@@ -158,7 +176,10 @@
   $effect(() => {
     void app.resolvedTheme;
     void app.settings.accent;
-    const id = requestAnimationFrame(() => root.querySelector(".mermaid-block[data-rendered]") && drawDiagrams());
+    const id = requestAnimationFrame(() => {
+      if (root.querySelector(".mermaid-block[data-rendered]")) drawDiagrams();
+      drawArtifacts();
+    });
     return () => cancelAnimationFrame(id);
   });
 
@@ -636,6 +657,18 @@
   }
   .markdown :global(.katex-error) {
     color: var(--danger);
+  }
+
+  /* Artifacts (artifact.ts): the page sits above its folded source. */
+  .markdown :global(.artifact-out:empty) {
+    display: none;
+  }
+  .markdown :global(.artifact-out iframe) {
+    display: block;
+    width: 100%;
+    height: 0;
+    border: 0;
+    color-scheme: normal;
   }
 
   /* Mermaid (see mermaidBlock in highlight.ts). Until the diagram is in, it's an ordinary code

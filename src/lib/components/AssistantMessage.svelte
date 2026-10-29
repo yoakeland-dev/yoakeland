@@ -2,7 +2,7 @@
   import { tip } from "../tooltip.svelte";
   import type { AssistantStep, ChatMessage, ToolCallEntry } from "../types";
   import { app } from "../state.svelte";
-  import { retryMessage } from "../ipc";
+  import { retryMessage, sendPrompt, summarizeMessage } from "../ipc";
   import { vendorMetaFor, titleFor, type Entry } from "../modelVendor";
   import { relTime, shortNum } from "../format";
   import { liveActivity } from "../activity.svelte";
@@ -18,6 +18,8 @@
   import VersionCycle from "./VersionCycle.svelte";
   import DotMatrix from "./DotMatrix.svelte";
   import CopyButton from "./CopyButton.svelte";
+  import MessageThread from "./MessageThread.svelte";
+  import SummaryCard from "./SummaryCard.svelte";
   import { speech, toggleSpeech } from "../speech.svelte";
 
   let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
@@ -26,6 +28,25 @@
     const cid = app.activeConnectionId;
     if (!cid) return;
     retryMessage(cid, sessionId, message.id);
+  }
+
+  const server = $derived(app.active);
+  let threadOpen = $state(false);
+  const summaryPending = $derived(!!server?.summaryPending[message.id]);
+
+  // Follow-up buttons belong to the newest reply, once the agent is idle; an older reply keeps only its summary.
+  const offerActions = $derived(!!server && server.messagesBySession[sessionId]?.at(-1)?.id === message.id && !server.activeTurnBySession[sessionId]);
+  function runAction(prompt: string) {
+    const cid = app.activeConnectionId;
+    if (cid) sendPrompt(cid, sessionId, prompt);
+  }
+
+  function summarize() {
+    const cid = app.activeConnectionId;
+    if (!cid || !server || summaryPending) return;
+    server.summaryPending[message.id] = "manual";
+    delete server.summaryError[message.id];
+    summarizeMessage(cid, sessionId, message.id);
   }
 
   type Segment =
@@ -186,7 +207,7 @@
     {:else if seg.kind === "workgroup"}
       <WorkGroup steps={seg.steps} {live} />
     {:else if seg.kind === "subagent"}
-      <SubagentCard call={seg.call} />
+      <SubagentCard call={seg.call} {sessionId} />
     {:else if seg.kind === "thinking"}
       <ThinkingBlock text={seg.text} />
     {:else if seg.text}
@@ -290,6 +311,20 @@
                 <Icon name={speech.id === message.id ? "player-stop" : "volume"} size={12} />
               </button>
             {/if}
+            {#if message.text && !message.summary}
+              <button class="action" onclick={summarize} disabled={summaryPending} aria-label="Summarize" {@attach tip("Summarize this reply")}>
+                <Icon name="sparkles" size={12} />
+              </button>
+            {/if}
+            <button
+              class="action"
+              class:on={threadOpen || !!message.thread?.length}
+              onclick={() => (threadOpen = !threadOpen)}
+              aria-label="Thread"
+              {@attach tip(message.thread?.length ? `Thread · ${message.thread.length / 2} ${message.thread.length === 2 ? "reply" : "replies"}` : "Ask about this reply in a thread")}
+            >
+              <Icon name="message-circle" size={12} />
+            </button>
             <button
               class="action"
               onclick={retry}
@@ -304,6 +339,21 @@
         {/if}
       </span>
     </div>
+  {/if}
+  {#if !message.streaming}
+    <SummaryCard
+      {sessionId}
+      id={message.id}
+      summary={message.summary}
+      ask={offerActions ? message.ask : undefined}
+      actions={offerActions ? message.actions : undefined}
+      pending={summaryPending}
+      error={server?.summaryError[message.id]}
+      onaction={runAction}
+    />
+    {#if threadOpen || message.thread?.length}
+      <MessageThread {message} {sessionId} />
+    {/if}
   {/if}
 </div>
 

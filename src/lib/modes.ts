@@ -44,7 +44,7 @@ export function modeHint(id: ChatMode, spec?: ModeSpec): string {
     case "accept_edits":
       return "Edits freely, asks to run.";
     case "auto":
-      return spec?.sandbox ? "Its own reviewer decides what to ask, in a sandbox." : spec ? "Its own reviewer decides what to ask. Commands are not sandboxed; the reviewer is the only check." : "Its own reviewer decides what to ask.";
+      return spec?.sandbox ? "Its own reviewer decides what to ask, in a sandbox." : spec ? "Its reviewer decides what to ask; with no sandbox, it is the only check." : "Its own reviewer decides what to ask.";
     case "autonomous":
       return spec?.sandbox ? "Edits and runs freely, sandboxed." : spec ? "Edits and runs freely, unconfined." : "Edits and runs freely.";
     case "plan":
@@ -78,23 +78,6 @@ export function sessionModes(
   return { provider, cli: !!provider && isCli(provider), specs, available };
 }
 
-// One turn of Run and back is a habit of the user's, not of a chat.
-const RUN_ONCE_KEY = "yoake.runOnce";
-export function getRunOnce(): boolean {
-  try {
-    return localStorage.getItem(RUN_ONCE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-export function setRunOnce(on: boolean) {
-  try {
-    localStorage.setItem(RUN_ONCE_KEY, on ? "1" : "0");
-  } catch {
-    /* a private window: the choice just doesn't outlive this one */
-  }
-}
-
 /** Puts a chat in `id`. Optimistic; mode_set (state.svelte.ts) confirms it once the round trip lands. */
 export function chooseMode(
   server: ServerState,
@@ -105,13 +88,8 @@ export function chooseMode(
   const cur = server.modeBySession[sessionId] ?? "read_write";
   if (id === cur) return;
   if (id === "plan") server.tierBeforePlan[sessionId] = cur;
-  const back =
-    cur === "plan" ? (server.tierBeforePlan[sessionId] ?? "read_write") : cur;
-  const once = id === "autonomous" && getRunOnce();
-  if (once) server.runOnce[sessionId] = back;
-  else delete server.runOnce[sessionId];
   server.modeBySession[sessionId] = id;
-  if (!once) server.setLastUsedMode(id);
+  server.setLastUsedMode(id);
   setMode(cid, sessionId, id);
 }
 

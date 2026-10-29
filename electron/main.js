@@ -9,6 +9,7 @@ import { createOsAlerts } from "./osAlerts.js";
 import { lanHosts } from "./lanHosts.js";
 import { createGuards } from "./agentGuard.js";
 import { createOAuthListener } from "./oauthListener.js";
+import { createDiscordRpc, fetchDiscordApplication } from "./discordRpc.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = app.isPackaged ? undefined : process.env.YOAKE_DEV_URL; // set by `npm run electron:dev`
@@ -126,6 +127,15 @@ function handle(name, fn) {
 }
 
 const emit = (channel, payload) => win?.webContents.send(channel, payload);
+
+// Discord Rich Presence lives in the main process (it needs the local IPC socket). The renderer
+// sends the already-templated activity and the settings that decide whether to connect at all.
+const discord = createDiscordRpc({ onStatus: (s) => emit("yoake-discord-status", s) });
+handle("discord_configure", ({ config }) => discord.configure(config));
+handle("discord_presence", ({ activity }) => discord.setPresence(activity));
+handle("discord_status", () => discord.status());
+// The settings preview reads this to show the application's real icon and art.
+handle("discord_assets", ({ clientId }) => fetchDiscordApplication(clientId));
 
 for (const [name, fn] of Object.entries(backend.commands(emit, app.getPath("userData")))) handle(name, fn);
 
@@ -249,6 +259,12 @@ function lockDownWebviews() {
     });
     if (contents.getType() !== "webview") return;
     contents.on("destroyed", () => guards.unguard(contents.id));
+    // Keys typed inside the page never reach the app's window listener, so global binds went dead
+    // while the browser panel had focus. Hand modified keys to the renderer; bare keys are typing.
+    contents.on("before-input-event", (_e, i) => {
+      if (i.type === "keyDown" && (i.control || i.meta || i.alt))
+        emit("yoake-guest-key", { key: i.key, code: i.code, ctrlKey: i.control, metaKey: i.meta, altKey: i.alt, shiftKey: i.shift });
+    });
     contents.setWindowOpenHandler(({ url }) => {
       if (WEB.test(url) && guards.allows(contents.id, url)) void contents.loadURL(url);
       return { action: "deny" };
@@ -295,6 +311,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  discord.shutdown();
   backend.disconnectAll();
   if (process.platform !== "darwin") app.quit();
 });

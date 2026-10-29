@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { app, CHAT_SIDEBAR_MIN_WIDTH, chatSidebarMinCss } from "../state.svelte";
   import ChatHeader from "./ChatHeader.svelte";
   import MessageList from "./MessageList.svelte";
@@ -14,6 +14,7 @@
   import { matches } from "../keybinds.svelte";
   import { wallpaperGL } from "../wallpaperGL";
   import { viewport } from "../viewport.svelte";
+  import { setChatFocus } from "../editorPresence.svelte";
 
   // `panelEl` lets +page.svelte measure this panel: the corner handle where
   // the right sidebar meets the terminal needs it for its clamp math.
@@ -32,6 +33,18 @@
   const server = $derived(app.active);
   const messages = $derived(server?.messagesBySession[sessionId] ?? []);
   const isSyncing = $derived(server?.syncingSessions[sessionId] ?? false);
+  // `inert` while syncing blurs the composer and nothing gives focus back, so typing lands nowhere.
+  let wasSyncing = false;
+  $effect(() => {
+    const now = isSyncing;
+    if (wasSyncing && !now && !viewport.narrow) {
+      void tick().then(() => {
+        if (document.activeElement === document.body && sessionId === app.active?.currentSessionId)
+          bodyEl?.querySelector("textarea")?.focus();
+      });
+    }
+    wasSyncing = now;
+  });
   // A session still loading its history isn't a new chat: staying docked avoids the hero and
   // wallpaper flashing in and morphing back out when the transcript lands.
   const isEmpty = $derived(messages.length === 0 && !isSyncing);
@@ -207,6 +220,8 @@
         class:syncing={isSyncing && messages.length > 0}
         inert={isSyncing}
         onkeydown={onChatKeydown}
+        onfocusin={() => setChatFocus(sessionId)}
+        onpointerdown={() => setChatFocus(sessionId)}
         style:flex-basis={swapped ? sbW : null}
       >
         <MessageList bind:this={list} bind:scrolledUp {sessionId} paddingTop="calc(var(--header-height) + 20px)" />

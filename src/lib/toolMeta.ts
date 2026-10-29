@@ -53,6 +53,9 @@ const KIND_META: Record<NativeToolKind, { icon: ToolIconName; label: string; ver
   other: { icon: "tool", label: "Tool", verb: (n) => `used ${n} tool${n === 1 ? "" : "s"}` },
 };
 
+/** The MCP server that gives a CLI agent the browser panel (browser_mcp.go). */
+const BROWSER_MCP = "yoake-browser";
+
 type CallLike = { name: string; args?: Record<string, unknown> } & NativeToolFields;
 
 /** Icon/label for any call: yoakeland's own tools by name, a native one by
@@ -66,6 +69,7 @@ export function metaFor(call: CallLike): { icon: ToolIconName; label: string } {
     return { icon: k.icon, label: k.label };
   }
   const mcp = mcpToolParts(call.name);
+  if (mcp?.server === BROWSER_MCP) return toolMeta.browser; // a CLI agent's route to the same panel
   if (mcp) return { icon: "plug-connected", label: mcp.tool ? `${mcp.server}: ${humanizeTool(mcp.tool)}` : mcp.server };
   return toolMeta[call.name] ?? { icon: "square", label: call.name };
 }
@@ -143,7 +147,7 @@ const MAX_CLAUSES = 3;
 export function briefFor(calls: CallLike[], opts: { capitalize?: boolean } = {}): string {
   // Native calls group by kind: agents disagree on tool names but not kinds.
   const keyOf = (c: CallLike) =>
-    isNativeSubagent(c) ? "subagent" : c.native ? `kind:${c.kind ?? "other"}` : mcpToolParts(c.name) ? `mcp:${mcpToolParts(c.name)!.server}` : c.name;
+    isNativeSubagent(c) ? "subagent" : c.native ? `kind:${c.kind ?? "other"}` : mcpToolParts(c.name)?.server === BROWSER_MCP ? "browser" : mcpToolParts(c.name) ? `mcp:${mcpToolParts(c.name)!.server}` : c.name;
   const counts = new Map<string, number>();
   for (const c of calls) counts.set(keyOf(c), (counts.get(keyOf(c)) ?? 0) + 1);
   // Past a few kinds the line stops being a glance: the busiest ones, then "N more".

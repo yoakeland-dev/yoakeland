@@ -19,6 +19,8 @@ import { decodePairingCode } from "./pairing";
 import { handleBrowserRequest } from "./browserAgent.svelte";
 import type { UsageReport } from "./usage";
 import { parseThemeFiles } from "./theme";
+import { setDiscordRpcStatus } from "./discordRpc.svelte";
+import type { DiscordRpcStatus } from "./platform";
 
 let wired = false;
 
@@ -234,12 +236,14 @@ export function wireEvents() {
     // A chat's real directory is only in session summaries; ask once its first output exists.
     if ((env.type === "tool_result" || env.type === "turn_completed") && env.sessionId) learnChatRoot(connectionId, server, env.sessionId);
     if (env.type === "steer_rejected" && env.sessionId) sendPrompt(connectionId, env.sessionId, (env.data as { prompt: string }).prompt);
-    // Run for one turn only: back to where the chat was once that turn is over.
-    if (env.type === "turn_completed" && env.sessionId && server.runOnce[env.sessionId]) {
-      const back = server.runOnce[env.sessionId];
-      delete server.runOnce[env.sessionId];
-      server.modeBySession[env.sessionId] = back;
-      setMode(connectionId, env.sessionId, back);
+    // A long reply gets its summary card; a short one is its own summary.
+    if (env.type === "turn_completed" && env.sessionId && app.settings.autoSummary) {
+      const done = env.data as { finishReason?: string };
+      const msg = done.finishReason === "stop" ? server.messagesBySession[env.sessionId]?.find((m) => m.turnId === env.turnId && m.role === "assistant") : undefined;
+      if (msg && msg.text.length >= AUTO_SUMMARY_CHARS && !msg.summary && !server.summaryPending[msg.id]) {
+        server.summaryPending[msg.id] = "auto";
+        summarizeMessage(connectionId, env.sessionId, msg.id);
+      }
     }
     if (merging?.append && env.sessionId) {
       const started = env.type === "turn_started";
@@ -267,6 +271,8 @@ export function wireEvents() {
   });
 
   listen("yoake-themes-changed", () => void loadCustomThemes());
+  listen<DiscordRpcStatus>("yoake-discord-status", setDiscordRpcStatus);
+  listen<KeyboardEventInit>("yoake-guest-key", (k) => window.dispatchEvent(new KeyboardEvent("keydown", { ...k, cancelable: true })));
   listen<{ connectionId: string; message: string }>("yoake-log", (p) => app.log(p.message));
 
   listen("yoake-close-requested", () => void closeApp());
@@ -890,6 +896,10 @@ export function navigateSessionHistory(connectionId: ConnectionId, direction: "b
   }
 }
 
+export function cancelSubagent(connectionId: ConnectionId, sessionId: string, toolCallId: string) {
+  void send(connectionId, { type: "cancel_subagent", sessionId, data: { toolCallId } });
+}
+
 export function cancelTurn(connectionId: ConnectionId, sessionId: string, turnId: string) {
   void send(connectionId, { type: "cancel_turn", sessionId, turnId, data: { sessionId, turnId } });
 }
@@ -1289,6 +1299,23 @@ export function setModelOptions(
 export function compactContext(connectionId: ConnectionId, sessionId: string, instructions = "") {
   const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
   void send(connectionId, { type: "compact_context", sessionId, turnId: crypto.randomUUID(), data: { sessionId, instructions, projectPath } });
+}
+
+/** Asks about the chat without adding to it (§3.1 side_question), mid-turn too. With `anchorMessageId` it
+ * is a reply in that message's thread and the exchange is kept; without, it is a /btw and nothing is.
+ * `side_answer` events carrying `requestId` stream the answer. */
+export function sideQuestion(connectionId: ConnectionId, sessionId: string, requestId: string, question: string, anchorMessageId?: string) {
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "side_question", sessionId, data: { sessionId, requestId, question, anchorMessageId, projectPath } });
+}
+
+/** Replies shorter than this aren't worth a summary. */
+export const AUTO_SUMMARY_CHARS = 800;
+
+/** Has the utility model write a short summary of one reply (§3.1 summarize_message); `message_summary` answers. */
+export function summarizeMessage(connectionId: ConnectionId, sessionId: string, messageId: string) {
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "summarize_message", sessionId, data: { sessionId, messageId, projectPath } });
 }
 
 /** Fetches one provider's available models (§3.1), called lazily per picker tab. */

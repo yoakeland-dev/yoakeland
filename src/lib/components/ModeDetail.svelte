@@ -29,8 +29,8 @@
 
 <div class="detail">
   <p class="hint">{modeHint(mode, spec)}</p>
-  {#if spec && mode !== "plan"}
-    <div class="strip">
+  <div class="strip">
+    {#if spec && mode !== "plan"}
       {#each CELLS as [key, label] (key)}
         {#if key === "run" && shellOff && spec.policy.run !== "deny"}
           <span class="cell deny danger" {@attach tip("Run: turned off, this project has no sandbox")}><i></i>Run: off</span>
@@ -40,9 +40,9 @@
           <span class={`cell ${spec.policy[key]}`} {@attach tip(`${label}: ${WORD[spec.policy[key]]}`)}><i></i>{label}</span>
         {/if}
       {/each}
-    </div>
-  {/if}
-  {#if note}<p class="note">{note}</p>{/if}
+    {/if}
+  </div>
+  {#if cli}<p class="note">{note}</p>{/if}
 </div>
 
 <style>
@@ -51,23 +51,39 @@
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
-    min-height: 3.6rem;
   }
+  /* Every mode takes the same room (two hint lines, one strip row, two note lines for a CLI agent),
+     so the popover doesn't resize as the pointer moves along the dial. */
   .hint {
     margin: 0;
     font-size: 0.76rem;
     line-height: 1.4;
     color: var(--text);
+    min-height: 2.8em;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
   .note {
     margin: 0;
     font-size: 0.68rem;
+    line-height: 1.3;
     color: var(--text-dim);
+    min-height: 2.6em;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
   /* Filled: free. Half: asks. Empty and faint: not allowed. */
   .strip {
     display: flex;
     gap: 0.75rem;
+    height: 1rem;
+    align-items: center;
   }
   .cell {
     display: inline-flex;

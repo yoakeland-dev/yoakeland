@@ -45,6 +45,11 @@
   let showAll = $state(false);
   const visible = $derived(showAll ? sessions : sessions.slice(0, LIMIT));
 
+  // Running chats stay visible even while collapsed.
+  const runningSessions = $derived(
+    open ? [] : sessions.filter((s) => !!server?.activeTurnBySession[s.sessionId]),
+  );
+
   const slideDuration = $derived(Math.round(180 * app.settings.animationSpeed));
 
   let renaming = $state(false);
@@ -178,6 +183,12 @@
           <span>{showAll ? "Show less" : `Show ${sessions.length - LIMIT} more`}</span>
         </button>
       {/if}
+    </div>
+  {:else if runningSessions.length}
+    <div class="rows" transition:slide={{ duration: slideDuration }}>
+      {#each runningSessions as s (s.sessionId)}
+        <ChatRow {connectionId} session={s} variant={archived ? "archived" : "running"} />
+      {/each}
     </div>
   {/if}
 </div>

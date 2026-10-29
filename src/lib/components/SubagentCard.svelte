@@ -11,8 +11,10 @@
   import SubagentCard from "./SubagentCard.svelte";
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
+  import { app } from "../state.svelte";
+  import { cancelSubagent } from "../ipc";
 
-  let { call, open = false }: { call: ToolCallEntry; open?: boolean } = $props();
+  let { call, open = false, sessionId = "" }: { call: ToolCallEntry; open?: boolean; sessionId?: string } = $props();
 
   // Only where it starts; the user's own toggling wins afterwards.
   let expanded = $state(untrack(() => open));
@@ -20,13 +22,35 @@
 
   const run = $derived(call.subagent);
   const calls = $derived(run?.calls ?? []);
-  const running = $derived(IN_FLIGHT.has(call.status));
+  // A CLI's spawn call can report done while the agent it started is still working: its own calls say so.
+  const running = $derived(IN_FLIGHT.has(call.status) || calls.some((c) => IN_FLIGHT.has(c.status)));
   const failed = $derived(call.status === "error" || call.status === "denied");
   const asking = $derived(calls.find((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer"));
   const latest = $derived(calls.findLast((c) => IN_FLIGHT.has(c.status)) ?? calls[calls.length - 1]);
   const prompt = $derived(typeof call.args?.prompt === "string" ? call.args.prompt : "");
   // Its report is the call's result; while it works, whatever it has written so far.
   const report = $derived(call.output || (running ? run?.text : "") || "");
+
+  // yoakeland's own subagents report their model (subagent_status); a CLI's Task may name one in its args.
+  const model = $derived(run?.model || (typeof call.args?.model === "string" ? call.args.model : ""));
+  // Only yoakeland's own can be stopped alone; a CLI's subagents end with their turn.
+  const stoppable = $derived(running && !call.native && call.name === "subagent" && !!sessionId);
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!running || !run?.startedAt) return;
+    now = Date.now();
+    const t = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(t);
+  });
+  const elapsed = $derived.by(() => {
+    if (!running || !run?.startedAt) return "";
+    const s = Math.max(0, Math.floor((now - run.startedAt) / 1000));
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  });
+  function stop() {
+    const cid = app.activeConnectionId;
+    if (cid) cancelSubagent(cid, sessionId, call.toolCallId);
+  }
 
   const status = $derived(
     asking ? (asking.status === "awaiting_answer" ? "needs an answer" : "needs approval") : running ? "working" : failed ? "failed" : "done",
@@ -52,6 +76,7 @@
 </script>
 
 <div class="subagent" class:running class:failed class:asking={!!asking}>
+  <div class="headrow">
   <button type="button" class="head" onclick={() => (expanded = !expanded)} aria-expanded={expanded}>
     <span class="icon" class:spin={running && !asking}>
       {#if running && !asking}
@@ -61,11 +86,16 @@
       {/if}
     </span>
     <span class="title">{subagentTitle(call)}</span>
+    {#if model}<span class="model" title="Model">{model}</span>{/if}
     <span class="meta">
-      {#if running && latest}{asking ? status : activityFor(asking ?? latest)}{:else if counts}{counts}{:else if failed}failed{/if}
+      {#if running}{asking ? status : latest ? activityFor(latest) : "starting"}{elapsed ? ` · ${elapsed}` : ""}{:else if counts}{counts}{:else if failed}failed{/if}
     </span>
     <span class="chevron" class:open={expanded}><Icon name="chevron-right" size={13} /></span>
   </button>
+  {#if stoppable}
+    <button type="button" class="stop" onclick={stop} title="Stop this subagent" aria-label="Stop this subagent"><Icon name="player-stop" size={13} /></button>
+  {/if}
+  </div>
 
   <div class="accordion" class:open={expanded}>
     <div class="accordion-inner">
@@ -78,7 +108,7 @@
         {/if}
         {#each steps as step (step.key)}
           {#if step.sub}
-            <SubagentCard call={step.sub} />
+            <SubagentCard call={step.sub} {sessionId} />
           {:else}
             <ToolCallGroup calls={step.calls} />
           {/if}
@@ -104,7 +134,36 @@
     container-type: inline-size;
     margin: 0.43rem 0;
   }
+  .headrow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .stop {
+    flex: none;
+    display: flex;
+    padding: 0.2rem;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .stop:hover {
+    color: var(--danger);
+  }
+  .model {
+    flex: none;
+    max-width: 30%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
   .head {
+    flex: 1;
+    min-width: 0;
     width: 100%;
     display: flex;
     align-items: center;

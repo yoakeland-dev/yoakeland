@@ -1,7 +1,8 @@
 <script lang="ts" module>
   import { EditorView, basicSetup } from "codemirror";
-  import { Compartment, EditorState } from "@codemirror/state";
-  import { keymap } from "@codemirror/view";
+  import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
+  import { Decoration, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
+  import type { FileDiff } from "../../types";
   import { matches } from "../../keybinds.svelte";
   import { indentWithTab } from "@codemirror/commands";
   import { gotoLine } from "@codemirror/search";
@@ -33,7 +34,76 @@
     { tag: t.emphasis, fontStyle: "italic" },
   ]);
 
+  // The agent's latest edit to this file (state.svelte.ts `Touched.diff`): added lines are tinted and the
+  // lines it removed show struck through above where they were. Cleared when the doc is reloaded.
+  class Removed extends WidgetType {
+    lines: string[];
+    constructor(lines: string[]) {
+      super();
+      this.lines = lines;
+    }
+    eq(o: Removed) {
+      return o.lines.join("\n") === this.lines.join("\n");
+    }
+    toDOM() {
+      const el = document.createElement("div");
+      el.className = "cm-removed";
+      for (const l of this.lines) el.appendChild(document.createElement("div")).textContent = l || " ";
+      return el;
+    }
+  }
+
+  const showChanges = StateEffect.define<DecorationSet>();
+  const changes = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(deco, tr) {
+      for (const e of tr.effects) if (e.is(showChanges)) return e.value;
+      return deco.map(tr.changes);
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+
+  /** The first changed line (1-based) and the decorations for `diff` against `state`'s doc. */
+  function changeDecorations(state: EditorState, diff: FileDiff | undefined) {
+    const marks: { from: number; deco: Decoration; side: number }[] = [];
+    let first = 0;
+    const doc = state.doc;
+    for (const h of diff?.hunks ?? []) {
+      let ln = h.newStart;
+      let gone: string[] = [];
+      const flush = () => {
+        if (!gone.length) return;
+        const at = ln > doc.lines ? doc.length : doc.line(Math.max(ln, 1)).from;
+        marks.push({ from: at, deco: Decoration.widget({ widget: new Removed(gone), block: true, side: -1 }), side: -1 });
+        first ||= Math.min(Math.max(ln, 1), doc.lines);
+        gone = [];
+      };
+      for (const l of h.lines) {
+        if (l.type === "-") gone.push(l.content);
+        else {
+          flush();
+          if (l.type === "+" && ln >= 1 && ln <= doc.lines) {
+            marks.push({ from: doc.line(ln).from, deco: Decoration.line({ class: "cm-added" }), side: 0 });
+            first ||= ln;
+          }
+          ln++;
+        }
+      }
+      flush();
+    }
+    marks.sort((a, b) => a.from - b.from || a.side - b.side);
+    return { set: Decoration.set(marks.map((m) => m.deco.range(m.from)), true), first };
+  }
+
   const theme = EditorView.theme({
+    ".cm-added": { backgroundColor: "color-mix(in srgb, var(--success, #3fb950) 16%, transparent)" },
+    ".cm-removed": {
+      padding: "0 0.5rem",
+      backgroundColor: "color-mix(in srgb, var(--error, #e5484d) 14%, transparent)",
+      color: "var(--text-dim)",
+      textDecoration: "line-through",
+      whiteSpace: "pre-wrap",
+    },
     "&": { height: "100%", color: "var(--code-fg, var(--text))", backgroundColor: "var(--code-bg, transparent)" },
     ".cm-scroller": { fontFamily: "var(--code-font-family, ui-monospace, monospace)", fontSize: "var(--code-font-size, 0.8rem)" },
     ".cm-gutters": { backgroundColor: "transparent", color: "var(--text-dim)", border: "none" },
@@ -107,6 +177,7 @@
   import { readFile, readMedia, writeFile } from "../../ipc";
   import { refreshWhenVisible } from "../../refresh.svelte";
   import { mentionText } from "../../mentions";
+  import { reportEditorLanguage, editorPresence } from "../../editorPresence.svelte";
   import Icon from "../Icon.svelte";
 
   let {
@@ -216,6 +287,7 @@
             theme,
             syntaxHighlighting(highlight),
             language.of([]),
+            changes,
             keymap.of([indentWithTab]),
             EditorView.updateListener.of((u) => {
               if (u.docChanged) dirty = true;
@@ -241,7 +313,7 @@
       if (desc) languageName = desc.name;
       if (desc) desc.load().then((support) => view?.dispatch({ effects: language.reconfigure(support) }));
     } else {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: r.content } });
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: r.content }, effects: showChanges.of(Decoration.none) });
     }
     dirty = false;
     conflict = null;
@@ -333,6 +405,19 @@
   // A background tab checks once it's brought forward, not on every change.
   refreshWhenVisible(() => server?.fsTickByProject[projectPath] ?? 0, () => visible, checkDisk, { delay: 300, skipFirst: true });
 
+  // The agent's latest edit to this file, drawn once the editor holds the content it made (`version`
+  // moves with each reload), and scrolled to unless there are local edits to keep in view.
+  const edit = $derived(server?.touchedBySession[sessionId]?.[path]);
+  $effect(() => {
+    const diff = edit?.diff;
+    void version;
+    if (!view) return;
+    const { set, first } = changeDecorations(view.state, diff);
+    view.dispatch({
+      effects: [showChanges.of(set), ...(first && !untrack(() => dirty) ? [EditorView.scrollIntoView(view.state.doc.line(first).from, { y: "center" })] : [])],
+    });
+  });
+
   // Only mounting loads; a reconnect (new connection id) mustn't reload over unsaved edits.
   $effect(() => {
     if (host) untrack(load);
@@ -348,6 +433,10 @@
     void app.settings.codeFontFamily;
     void app.settings.codeFontSize;
     requestAnimationFrame(() => view?.requestMeasure());
+  });
+  $effect(() => {
+    void editorPresence.path; // re-report when this tab becomes the active one
+    reportEditorLanguage(sessionId, path, languageName);
   });
 
   // A reveal of this same file with a new range (a mention clicked again) just moves the selection.

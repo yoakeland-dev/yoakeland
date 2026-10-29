@@ -32,3 +32,10 @@ test("sizes", () => {
   assert.equal(parseTokens("12000"), 12000);
   assert.equal(parseTokens("k"), null);
 });
+
+test("/btw takes the rest as the question and needs one", () => {
+  assert.deepEqual(parseSlashCommand("/btw why that file?"), { kind: "btw", question: "why that file?" });
+  assert.deepEqual(parseSlashCommand("/btw one\ntwo"), { kind: "btw", question: "one\ntwo" });
+  assert.equal(parseSlashCommand("/btw").kind, "invalid");
+  assert.equal(parseSlashCommand("/btwx hi"), null);
+});

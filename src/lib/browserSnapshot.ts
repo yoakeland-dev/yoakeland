@@ -154,3 +154,23 @@ export const scrollJs = (ref: string | undefined, direction: string) =>
   el.scrollIntoView({ block: "center", behavior: "instant" });
 })()`
     : `window.scrollBy({ top: ${direction === "up" ? -1 : 1} * innerHeight * 0.8, behavior: "instant" })`;
+
+/** Picks the <option> of a dropdown whose value or label is `wanted`, as a user's choice would. */
+export const selectJs = (ref: string, wanted: string) => String.raw`(() => {
+  const el = window.__yoakeRefs && window.__yoakeRefs.get(${JSON.stringify(ref)});
+  if (!el || !el.isConnected) throw new Error("that ref is not on the page any more; take a new snapshot");
+  if (el.tagName !== "SELECT") throw new Error("that ref is not a dropdown; use click on it");
+  const want = ${JSON.stringify(wanted)};
+  const lower = want.trim().toLowerCase();
+  const opts = [...el.options];
+  const o = opts.find((o) => o.value === want) || opts.find((o) => o.label.trim().toLowerCase() === lower);
+  if (!o) throw new Error("no option " + JSON.stringify(want) + "; the options are: " + opts.map((o) => JSON.stringify(o.label.trim())).join(", "));
+  if (o.disabled) throw new Error("that option is disabled");
+  el.scrollIntoView({ block: "center", behavior: "instant" });
+  if (el.multiple) o.selected = true; else el.value = o.value;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+})()`;
+
+export const hasTextJs = (text: string) => `!!(document.body && document.body.innerText.includes(${JSON.stringify(text)}))`;

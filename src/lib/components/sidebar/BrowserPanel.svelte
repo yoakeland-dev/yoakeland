@@ -4,8 +4,8 @@
   // lockDownWebviews in electron/main.js for what a page may and may not do). The viewport can
   // be fit to the panel, forced to a device size (scaled down to fit), or held at an aspect ratio.
   import { browserGuard, browserUnguard, isDesktop, openUrl } from "../../platform";
-  import { registerBrowser, type BrowserController } from "../../browserAgent.svelte";
-  import { SNAPSHOT_JS, clickJs, focusJs, locateJs, scrollJs } from "../../browserSnapshot";
+  import { registerBrowser, type BrowserController, type BrowserOutput } from "../../browserAgent.svelte";
+  import { SNAPSHOT_JS, clickJs, focusJs, hasTextJs, locateJs, scrollJs, selectJs } from "../../browserSnapshot";
   import Icon from "../Icon.svelte";
   import Dropdown, { type DropdownItem } from "../Dropdown.svelte";
   import EmptyState from "./EmptyState.svelte";
@@ -25,6 +25,7 @@
     executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
     sendInputEvent(event: { type: string; x?: number; y?: number; button?: string; clickCount?: number; keyCode?: string; modifiers?: string[] }): void;
     insertText(text: string): Promise<void>;
+    capturePage(): Promise<{ toDataURL(): string }>;
   }
   interface Tab {
     id: string;
@@ -55,6 +56,7 @@
   let activeId = $state(tabs[0].id);
   const active = $derived(tabs.find((t) => t.id === activeId) ?? tabs[0]);
   const views = new Map<string, Webview>();
+  const ready = new Set<string>(); // tab ids whose webview has fired dom-ready
 
   let address = $state("");
   let editing = $state(false);
@@ -103,6 +105,7 @@
       tab.canForward = w.canGoForward();
     };
     const handlers: Record<string, (e: any) => void> = {
+      "dom-ready": () => ready.add(tab.id),
       "did-navigate": sync,
       "did-navigate-in-page": sync,
       "page-title-updated": (e) => (tab.title = e.title),
@@ -248,13 +251,14 @@
 
   const controller: BrowserController = {
     async run(action, args, guard) {
+      await untilReady(active.id);
       const w = views.get(active.id);
       if (!guard || !w) return runAction(action, args);
       // Page-initiated navigation off the approved hosts is stopped by the main process while
       // the action runs; the agent is told, and must use navigate (which asks the user).
       const id = w.getWebContentsId();
       await browserGuard(id, guard.hosts);
-      let out: string;
+      let out: BrowserOutput;
       try {
         out = await runAction(action, args);
       } catch (e) {
@@ -272,12 +276,51 @@
     },
   };
 
-  async function runAction(action: string, args: Record<string, unknown>): Promise<string> {
+  /** The tab's pixels as a JPEG no wider than SHOT_WIDTH: a provider takes what fits, and every capture stays in the chat's context. */
+  const SHOT_WIDTH = 1280;
+  async function screenshot(tab: Tab, w: Webview): Promise<BrowserOutput> {
+    const img = new Image();
+    // A pane that isn't drawing (hidden, or no GPU surface) can leave capturePage pending forever.
+    const shot = await Promise.race([w.capturePage(), sleep(8000).then(() => undefined)]);
+    if (!shot) throw new Error("the screenshot timed out: the browser pane isn't drawing (is this chat on screen?)");
+    img.src = shot.toDataURL();
+    await img.decode().catch(() => {});
+    if (!img.naturalWidth) throw new Error("nothing to capture: the browser pane is hidden or the page hasn't drawn yet");
+    const scale = Math.min(1, SHOT_WIDTH / img.naturalWidth);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    const g = canvas.getContext("2d")!;
+    g.fillStyle = "#fff"; // a page with no background of its own captures transparent, which JPEG turns black
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    g.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const data = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
+    return { output: `Screenshot of ${tab.url} (${tab.title})`, image: { mimeType: "image/jpeg", data, width: canvas.width, height: canvas.height } };
+  }
+
+  /** Runs one of browserSnapshot's scripts. A throw inside it comes back as its own message, not
+   * Electron's generic "Script failed to execute" (the real text only reaches the page console). */
+  async function call<T = unknown>(w: Webview, code: string, gesture?: boolean): Promise<T> {
+    const r = (await w.executeJavaScript(`try { ({ ok: ${code} }) } catch (e) { ({ err: String((e && e.message) || e) }) }`, gesture)) as { ok: T; err?: string };
+    if (r.err) throw new Error(r.err);
+    return r.ok;
+  }
+
+  /** A webview takes commands only after dom-ready; a panel just mounted (or in a chat that isn't on screen) isn't there yet. */
+  async function untilReady(id: string) {
+    for (let t = 0; isDesktop && !ready.has(id) && t < 8000; t += 100) await sleep(100);
+  }
+
+  /** The panel's tabs as the agent numbers them (from 1). */
+  const tabList = () => `Tabs:\n${tabs.map((t, i) => `${i + 1}.${t.id === activeId ? " (selected)" : ""} ${t.title || "New tab"} — ${t.url}`).join("\n")}`;
+
+  async function runAction(action: string, args: Record<string, unknown>): Promise<BrowserOutput> {
     {
-      const tab = active;
-      const w = views.get(tab.id);
+      let tab = active;
+      let w = views.get(tab.id);
       if (!w) throw new Error("the browser isn't ready yet; try again");
       const ref = typeof args.ref === "string" ? args.ref : "";
+      let note = "";
       switch (action) {
         case "navigate": {
           tab.error = "";
@@ -291,16 +334,16 @@
         case "snapshot":
           break;
         case "click": {
-          const at = (await w.executeJavaScript(locateJs(ref))) as { x: number; y: number; w: number; h: number; visible: boolean };
+          const at = (await call(w, locateJs(ref))) as { x: number; y: number; w: number; h: number; visible: boolean };
           // A real click where the element is when it can be aimed; a synthetic one when the pane
           // is hidden or the element can't be hit.
           if (at.visible && at.w > 0 && at.x >= 0 && at.y >= 0 && at.x < at.w && at.y < at.h) {
             for (const type of ["mouseDown", "mouseUp"]) w.sendInputEvent({ type, x: at.x, y: at.y, button: "left", clickCount: 1 });
-          } else await w.executeJavaScript(clickJs(ref), true);
+          } else await call(w, clickJs(ref), true);
           break;
         }
         case "type": {
-          await w.executeJavaScript(focusJs(ref), true);
+          await call(w, focusJs(ref), true);
           await w.insertText(String(args.text ?? ""));
           if (args.submit) press(w, "Enter");
           break;
@@ -309,7 +352,7 @@
           press(w, String(args.key ?? ""));
           break;
         case "scroll":
-          await w.executeJavaScript(scrollJs(ref || undefined, String(args.direction ?? "down")));
+          await call(w, scrollJs(ref || undefined, String(args.direction ?? "down")));
           break;
         case "evaluate": {
           const value = await w.executeJavaScript(String(args.expression), true);
@@ -325,12 +368,65 @@
         case "reload":
           w.reload();
           break;
+        case "hover": {
+          const at = (await call(w, locateJs(ref))) as { x: number; y: number; w: number; h: number; visible: boolean };
+          if (!at.visible || at.x < 0 || at.y < 0 || at.x >= at.w || at.y >= at.h) throw new Error("that element can't be reached with the pointer; scroll it into view or make the pane visible");
+          w.sendInputEvent({ type: "mouseMove", x: at.x, y: at.y });
+          await sleep(150); // a hover menu opens on the next frames
+          break;
+        }
+        case "select":
+          await call(w, selectJs(ref, String(args.text ?? "")), true);
+          break;
+        case "wait": {
+          const text = typeof args.text === "string" ? args.text : "";
+          const ms = Math.min(Math.max(Number(args.ms) || 0, 0), 30_000);
+          if (!text) await sleep(ms);
+          else {
+            const limit = ms || 10_000;
+            let t = 0;
+            while (!(await w.executeJavaScript(hasTextJs(text))) && t < limit) {
+              await sleep(200);
+              t += 200;
+            }
+            // An error, so the card shows a failure; the page goes along for the agent to look at.
+            if (t >= limit) throw new Error(`Timed out after ${limit} ms waiting for ${JSON.stringify(text)}. The page as it is:\n\n${await snapshot(tab, w)}`);
+          }
+          break;
+        }
+        case "tabs": {
+          const n = Math.floor(Number(args.tab));
+          const target = tabs[n - 1];
+          switch (args.op) {
+            case "list":
+              return tabList();
+            case "new":
+              addTab();
+              return tabList();
+            case "select":
+            case "close":
+              if (!target) throw new Error(`there is no tab ${n}; ${tabList()}`);
+              if (args.op === "select") activeId = target.id;
+              else closeTab(target.id);
+              break;
+            default:
+              throw new Error("tabs needs op list, new, select or close");
+          }
+          tab = active;
+          await untilReady(tab.id);
+          w = views.get(tab.id);
+          if (!w) throw new Error("the browser isn't ready yet; try again");
+          note = `${tabList()}\n\n`;
+          break;
+        }
+        case "screenshot":
+          return screenshot(tab, w);
         default:
           throw new Error(`unknown browser action ${action}`);
       }
       await settle(tab);
       if (tab.error && ["navigate", "back", "forward", "reload"].includes(action)) throw new Error(`couldn't load the page: ${tab.error}`);
-      return snapshot(tab, w);
+      return note + (await snapshot(tab, w));
     }
   }
 

@@ -4,6 +4,7 @@
   import { windowControls } from "$lib/platform";
   import { wireEvents, autoConnect, loadCustomThemes } from "$lib/ipc";
   import { startNotifications } from "$lib/notifications.svelte";
+  import { syncDiscordRpc } from "$lib/discordRpc.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import RightSidebar from "$lib/components/RightSidebar.svelte";
@@ -221,6 +222,12 @@ import { haptic } from "$lib/haptics";
     },
     onCancel: () => (viewport.drawer = null),
   } as const;
+
+  // Discord Rich Presence is desktop-only and off by default. One effect covers both halves: the
+  // main-process connection settings and the current chat/project it shows.
+  $effect(() => {
+    syncDiscordRpc();
+  });
 
   onMount(() => {
     wireEvents();

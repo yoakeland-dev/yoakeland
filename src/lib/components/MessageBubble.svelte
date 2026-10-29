@@ -2,6 +2,7 @@
   import { tip } from "../tooltip.svelte";
   import { fade as fadeTransition } from "svelte/transition";
   import { isPhotoAvatar } from "../avatar";
+  import { viewport } from "../viewport.svelte";
   import { app } from "../state.svelte";
   import { basename } from "../format";
   import { startEditingMessage, withdrawPrompt } from "../ipc";
@@ -59,12 +60,34 @@
   const maxHeight = $derived(
     capped ? `${COLLAPSED_MAX}px` : fullHeight ? `calc(${fullHeight}px + 1.42rem)` : "none",
   );
+  // Stacked (avatar + name in a strip above the bubble) on a phone, or when the chat pane itself is
+  // thin (e.g. docked to the side) -- the window-wide `viewport.narrow` alone misses that.
+  let rowWidth = $state(0);
+  const narrow = $derived(viewport.narrow || (rowWidth > 0 && rowWidth < 520));
   const clipPadBottom = $derived(capped ? "3rem" : "0.71rem");
 </script>
 
-<div class="row" class:queued={queued || steering}>
+{#snippet avatarBody()}
+  {#if authorAvatar && isPhotoAvatar(authorAvatar)}
+    <img src={authorAvatar} alt="" />
+  {:else}
+    {authorAvatar || "🐣"}
+  {/if}
+{/snippet}
+
+<div class="row" class:queued={queued || steering} class:stacked={narrow} bind:clientWidth={rowWidth}>
+  {#if narrow}
+    <div class="strip">
+      <span class="avatar">
+        {@render avatarBody()}
+      </span>
+      {#if author}
+        <span class="author">{author}</span>
+      {/if}
+    </div>
+  {/if}
   <div class="column">
-    {#if author}
+    {#if !narrow && author}
       <span class="author">{author}</span>
     {/if}
     <div class="bubble">
@@ -125,13 +148,11 @@
       {/if}
     </div>
   </div>
-  <span class="avatar">
-    {#if authorAvatar && isPhotoAvatar(authorAvatar)}
-      <img src={authorAvatar} alt="" />
-    {:else}
-      {authorAvatar || "🐣"}
-    {/if}
-  </span>
+  {#if !narrow}
+    <span class="avatar">
+      {@render avatarBody()}
+    </span>
+  {/if}
 </div>
 
 <style>
@@ -163,11 +184,23 @@
     align-items: flex-start;
     gap: 8px;
   }
+  .row.stacked {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+  }
   .column {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     max-width: 70%;
+  }
+  .row.stacked .column {
+    max-width: 85%;
+  }
+  .row.stacked .avatar {
+    /* Nothing to slide along in a strip. */
+    position: static;
   }
   .author {
     font-size: 0.72rem;
@@ -297,6 +330,16 @@
   }
   .chevron.open {
     transform: rotate(180deg);
+  }
+
+  .strip {
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    margin-bottom: 0.25rem;
+  }
+  .strip .author {
+    margin: 0;
   }
 
   /* Phone: no hover, so the row's actions stay in view (quietly), with a finger-sized hit area

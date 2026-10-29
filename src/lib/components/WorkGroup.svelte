@@ -5,6 +5,7 @@
   import { heldLabel } from "../heldLabel.svelte";
   import ToolCallGroup from "./ToolCallGroup.svelte";
   import Icon from "./Icon.svelte";
+  import { scrollFade } from "../scrollFade";
 
   // Used only when `steps` contains a thought; pure tool-call runs render as a plain
   // ToolCallGroup instead. `live` covers a thought step, which carries no status of its own.
@@ -77,7 +78,7 @@
              once nothing's left running. -->
         {#each steps as step (step.kind === "thought" ? `thought-${step.at}` : `cluster-${step.calls[0]?.toolCallId}`)}
           {#if step.kind === "thought"}
-            <p class="thought-text">{step.text.trimEnd()}</p>
+            <p class="thought-text scroll-cap" {@attach scrollFade}>{step.text.trimEnd()}</p>
           {:else}
             <ToolCallGroup calls={step.calls} />
           {/if}

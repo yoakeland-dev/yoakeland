@@ -37,6 +37,8 @@ import codeIcon from "@tabler/icons/outline/code.svg?raw";
 import eyeIcon from "@tabler/icons/outline/eye.svg?raw";
 import downloadIcon from "@tabler/icons/outline/download.svg?raw";
 import expandIcon from "@tabler/icons/outline/arrows-maximize.svg?raw";
+import { matchInlineMath, pendingMath } from "./math";
+import { renderMath } from "./mathRender";
 
 for (const [name, lang] of Object.entries({
   bash, c, cpp, csharp, css, diff, dockerfile, go, ini, java, javascript, json, kotlin, lua, makefile,
@@ -73,14 +75,74 @@ function mermaidBlock(text: string): string {
   );
 }
 
+/** A ```artifact fence: an HTML page the agent wrote, shown in a sandboxed frame (.artifact-out, filled in
+ * by Markdown.svelte once the fence has closed) with its source folded away underneath. */
+function artifactBlock(text: string): string {
+  const lines = text.split("\n").length;
+  return (
+    `<div class="code-block artifact-block" data-artifact><div class="code-head">` +
+    `<button type="button" class="code-toggle" title="Show or hide the source">${chevronIcon}` +
+    `<span class="code-lang">artifact</span><span class="code-lines">${lines} line${lines === 1 ? "" : "s"}</span></button>` +
+    button("code-copy", "Copy source", copyIcon + checkIcon) +
+    `</div><div class="artifact-out" data-opaque></div>` +
+    `<div class="code-body"><div class="code-clip"><pre><code class="hljs">${escapeHtml(text)}</code></pre></div></div></div>\n`
+  );
+}
+
+// Models put formulas in fences too. A whole LaTeX document is still code.
+const MATH_FENCES = new Set(["math", "katex", "mhchem", "latex", "tex"]);
+const LATEX_DOCUMENT = /\\(?:documentclass|usepackage|begin\{document\}|section|begin\{(?:itemize|enumerate|tabular)\})/;
+function fencedMath(text: string): string | undefined {
+  if (LATEX_DOCUMENT.test(text)) return undefined;
+  const tex = text.trim().replace(/^\$\$([\s\S]*)\$\$$/, "$1").replace(/^\\\[([\s\S]*)\\\]$/, "$1").trim();
+  return tex ? (renderMath(tex, true) ?? pendingMath(tex, true)) + "\n" : undefined;
+}
+
+// A diagram written without its fence: a first line that is just the diagram's type, then its body.
+const MERMAID_HEAD =
+  "(?:(?:flowchart|graph)[ \\t]+(?:TB|TD|BT|RL|LR)|sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|gantt|journey|mindmap|timeline|gitGraph|pie(?:[ \\t]+showData)?(?:[ \\t]+title[^\\n]*)?)[ \\t]*;?";
+const bareMermaidStart = new RegExp(`^ {0,3}${MERMAID_HEAD}\\n(?=[^\\n]*\\S)`);
+export const bareMermaid: MarkedExtension = {
+  extensions: [
+    {
+      name: "bareMermaid",
+      level: "block",
+      start(src) {
+        const i = src.search(new RegExp(`(?:^|(?<=\\n)) {0,3}${MERMAID_HEAD}\\n`));
+        return i < 0 ? undefined : i;
+      },
+      tokenizer(src) {
+        const head = bareMermaidStart.exec(src);
+        if (!head) return undefined;
+        const body = /^(?:[^\n]+(?:\n|$))+/.exec(src.slice(head[0].length)); // up to the first blank line
+        if (!body) return undefined;
+        const raw = head[0] + body[0];
+        return { type: "bareMermaid", raw, text: raw.trim() };
+      },
+      renderer: (t) => mermaidBlock(t.text),
+    },
+  ],
+};
+
 /** No highlightAuto: it re-guesses on every streamed token and guesses wrong on short snippets.
  * The toggle and copy clicks are handled by Markdown.svelte's delegated onClick, since this is raw HTML,
  * not a component. .code-clip is the grid row the collapse animates (see Markdown.svelte). */
 export const highlightCode: MarkedExtension = {
   renderer: {
+    // `$x$` or `\ce{H2O}` written as inline code is still a formula; anything else stays code.
+    codespan({ text }: Tokens.Codespan) {
+      const m = matchInlineMath(text);
+      if (m && m.raw === text) return renderMath(m.tex, m.display) ?? pendingMath(m.tex, m.display);
+      return `<code>${escapeHtml(text)}</code>`;
+    },
     code({ text, lang }: Tokens.Code) {
       const id = (lang ?? "").trim().split(/\s/)[0].toLowerCase();
-      if (id === "mermaid") return mermaidBlock(text);
+      if (id === "mermaid" || id === "mmd") return mermaidBlock(text);
+      if (id === "artifact") return artifactBlock(text);
+      if (MATH_FENCES.has(id)) {
+        const math = fencedMath(text);
+        if (math) return math;
+      }
       const known = !!id && !!hljs.getLanguage(id);
       const body = known ? hljs.highlight(text, { language: id, ignoreIllegals: true }).value : escapeHtml(text);
       const lines = text.split("\n").length;

@@ -100,12 +100,21 @@ export interface ToolCallRequestedData extends NativeToolFields {
   args: Record<string, unknown>;
 }
 
+/** A picture a tool returned (a browser screenshot), base64 with no `data:` prefix (§3.2 tool_result). */
+export interface ToolImage {
+  mimeType: string;
+  data: string;
+  width?: number;
+  height?: number;
+}
+
 export interface ToolResultData {
   toolName: string;
   output: string;
   error: string;
   /** Native tool calls only: the file changes the agent made (§3.2). */
   diffs?: FileDiff[];
+  images?: ToolImage[];
 }
 
 export interface TurnCompletedData {
@@ -172,12 +181,49 @@ export interface HistoryMessage {
   toolCallId?: string;
   parentToolCallId?: string;
   diffs?: FileDiff[];
+  images?: ToolImage[];
   error?: string;
   provider?: string;
   model?: string;
   createdAt?: string;
   generationMs?: number;
   usage?: { inputTokens: number; outputTokens: number; costUsd: number };
+  summary?: string;
+  ask?: string;
+  actions?: QuickAction[];
+  thread?: ThreadMessage[];
+}
+
+/** A follow-up offered under a reply: a short button label and the full prompt it sends. */
+export interface QuickAction {
+  label: string;
+  prompt: string;
+}
+
+/** One turn of a side thread on a message (§3.1 side_question). */
+export interface ThreadMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** `side_answer`: a streamed answer to a /btw or a thread reply; the last has `done`. */
+export interface SideAnswerData {
+  requestId: string;
+  anchorMessageId?: string;
+  delta?: string;
+  done?: boolean;
+  text?: string;
+  error?: string;
+}
+
+/** `message_summary`: the answer to summarize_message. */
+export interface MessageSummaryData {
+  messageId: string;
+  requestId?: string;
+  summary?: string;
+  ask?: string;
+  actions?: QuickAction[];
+  error?: string;
 }
 
 /** `session_history` (§3.2): the reply to get_session_history. */
@@ -617,6 +663,8 @@ export interface ToolCallEntry extends NativeToolFields {
   diff?: FileDiff | null;
   /** Native tool calls: the file changes the agent's tool made (§3.2 tool_result). */
   diffs?: FileDiff[];
+  /** What the call showed the model: a screenshot. */
+  images?: ToolImage[];
   permission?: PermissionRequestData;
   question?: AskUserQuestionData;
   /** `message.text.length` when this call was requested, so the UI can render the card inline
@@ -634,6 +682,9 @@ export interface SubagentRun {
   calls: ToolCallEntry[];
   text: string;
   thinking?: string;
+  /** From subagent_status: the model running it and when it began (yoakeland's own subagents). */
+  model?: string;
+  startedAt?: number;
   /** Its own turn_completed arrived (fallback subagents only; a CLI's Task ends with its result). */
   finish?: TurnCompletedData;
 }
@@ -674,6 +725,12 @@ export interface ChatMessage {
   usage?: { inputTokens: number; outputTokens: number; costUsd: number };
   /** On a `compaction` row (§4g): where the context was compacted. */
   compaction?: Compaction;
+  /** A short summary of this reply (summarize_message), shown as a card under it. */
+  summary?: string;
+  ask?: string;
+  actions?: QuickAction[];
+  /** The side thread opened on this reply; kept by the server, never part of the chat's context. */
+  thread?: ThreadMessage[];
 }
 
 export interface Compaction {

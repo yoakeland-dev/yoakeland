@@ -28,10 +28,13 @@
   import { mentionText, MENTION_RE } from "../mentions";
   import { pickableSkills, skillKindOf, slashToSkill } from "../extensions";
   import { parseSlashCommand, SLASH_COMMANDS } from "../slashCommands";
+  import { askBtw } from "../sideChat";
   import { liveActivity } from "../activity.svelte";
   import { sessionModes } from "../modes";
   import Icon from "./Icon.svelte";
   import AskCard from "./AskCard.svelte";
+  import { primaryAction } from "./SummaryCard.svelte";
+  import BtwCard from "./BtwCard.svelte";
   import DotMatrix from "./DotMatrix.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import ModePicker from "./ModePicker.svelte";
@@ -417,8 +420,9 @@
   // The composer's own commands (/compact, /autocompact) share the "/" picker. Claude Code and the
   // API providers have them; any other coding agent compacts on its own terms and gets neither.
   const hasCompactCommands = $derived(!isCli || agentKind === "claude");
+  // /btw works on any agent that has a plain model to ask (the server says if not).
   const commandMatches = $derived(
-    skillQuery?.sign === "/" && hasCompactCommands ? SLASH_COMMANDS.filter((c) => c.name.startsWith(skillQuery.query.toLowerCase())) : [],
+    skillQuery?.sign === "/" ? SLASH_COMMANDS.filter((c) => (hasCompactCommands || c.name === "btw") && c.name.startsWith(skillQuery.query.toLowerCase())) : [],
   );
   const slashMatches = $derived([
     ...commandMatches.map((c) => ({ key: `/${c.name}`, name: c.name, hint: c.argumentHint, description: c.description, command: true, scope: "" })),
@@ -651,11 +655,13 @@
 
   /** Runs a /compact or /autocompact typed as the whole message; false = not one, send it as a message. */
   function runCommand(value: string): boolean {
-    const cmd = hasCompactCommands ? parseSlashCommand(value) : null;
+    const cmd = parseSlashCommand(value);
     // Claude Code runs its own /compact (and takes instructions after it), so that one is just sent.
-    if (!cmd || !cid || (cmd.kind === "compact" && isCli)) return false;
+    if (!cmd || !cid || (cmd.kind !== "btw" && !hasCompactCommands) || (cmd.kind === "compact" && isCli)) return false;
     const say = (title: string) => app.toastAction(cid, title);
-    if (cmd.kind === "compact") {
+    if (cmd.kind === "btw") {
+      askBtw(cid, sessionId, cmd.question);
+    } else if (cmd.kind === "compact") {
       if (turnId) say("Wait for this turn to finish, then /compact");
       else compactContext(cid, sessionId, cmd.instructions);
     } else if (cmd.kind === "invalid") say(cmd.message);
@@ -760,6 +766,16 @@
       e.preventDefault();
       return;
     }
+    // Ctrl/Cmd+Enter on an empty composer sends the summary box's first follow-up.
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !text.trim() && !turnId && !asks.length) {
+      const prompt = primaryAction(sessionId, server?.messagesBySession[sessionId]?.at(-1));
+      const cid = app.activeConnectionId;
+      if (prompt && cid) {
+        e.preventDefault();
+        sendPrompt(cid, sessionId, prompt);
+        return;
+      }
+    }
     if (e.key === "Escape" && (editingId || turnId)) {
       e.preventDefault();
       if (editingId) cancelEdit();
@@ -789,6 +805,7 @@
     {#if asks.length}
       <AskCard bind:this={askCard} {sessionId} {asks} />
     {/if}
+    <BtwCard {sessionId} />
 
     <div class="dock">
       <ChatNotices {sessionId} />

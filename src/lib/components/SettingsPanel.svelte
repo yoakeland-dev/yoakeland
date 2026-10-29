@@ -67,6 +67,9 @@
   import ServerAvatar from "./ServerAvatar.svelte";
   import Kbd from "./Kbd.svelte";
   import { tip } from "../tooltip.svelte";
+  import { previewDiscordActivity, refreshDiscordRpcStatus, rpcStatus } from "../discordRpc.svelte";
+  import { DEFAULT_DISCORD_CLIENT_ID, DEFAULT_DISCORD_RPC, DISCORD_EDITOR_TEMPLATE_VARS, DISCORD_EDITOR_TIMER_SCOPES, DISCORD_PRESENCE_MODES, DISCORD_STATUS_DISPLAY_TYPES, DISCORD_TEMPLATE_VARS, discordAppIconCdnUrl, discordAssetCdnUrl, resolveDiscordClientId, type DiscordApplicationInfo } from "../discordRpcSettings";
+  import { discordAssets } from "../platform";
   import {
     ACTIONS,
     bindsFor,
@@ -89,6 +92,87 @@
   let cid = $derived(selectedConnectionId ?? app.activeConnectionId);
   let server = $derived(cid ? app.servers[cid] : null);
   const serverItems = $derived(Object.entries(app.servers).map(([id, s]) => ({ value: id, label: s.label })));
+
+  // ---- Integrations tab (Discord Rich Presence) ----
+  const discordSettings = $derived(app.settings.discordRpc);
+  const DISCORD_ACTIVITY_LABELS = { playing: "Playing", listening: "Listening to", watching: "Watching", competing: "Competing in" } as const;
+  let discordPreviewKind = $state<"chat" | "editor">("chat");
+  // Chat/editor/buttons collapse to keep the page short; switching the preview opens its card group.
+  let discordOpen = $state<Record<"chat" | "editor" | "buttons", boolean>>({ chat: true, editor: false, buttons: false });
+  $effect(() => {
+    if (discordPreviewKind === "editor") discordOpen.editor = true;
+    else discordOpen.chat = true;
+  });
+  const discordPreview = $derived(previewDiscordActivity(app.settings.discordRpc, discordPreviewKind));
+  const discordHasId = $derived(!!resolveDiscordClientId(discordSettings));
+  const discordAppId = $derived(resolveDiscordClientId(discordSettings));
+  // The application's public profile (icon hash, uploaded art) backs the preview images;
+  // Discord's main-process fetch sidesteps CORS, so the renderer just resolves keys.
+  let discordApp = $state<DiscordApplicationInfo | null>(null);
+  $effect(() => {
+    if (!isDesktop || !discordHasId) {
+      discordApp = null;
+      return;
+    }
+    const id = discordAppId;
+    void discordAssets(id).then(
+      (app_) => {
+        if (discordAppId === id) discordApp = app_;
+      },
+      () => {
+        if (discordAppId === id) discordApp = null;
+      },
+    );
+  });
+  const discordAssetIds = $derived(new Map((discordApp?.assets ?? []).map((a) => [a.name, a.id])));
+  const discordIconSrc = $derived(
+    discordApp?.icon ? discordAppIconCdnUrl(discordAppId, discordApp.icon) : "",
+  );
+  const discordAppName = $derived(discordSettings.name.trim() || discordApp?.name.trim() || "yoakeland");
+  const discordLargeSrc = $derived(discordImageSrc(discordPreview?.assets?.large_image ?? ""));
+  const discordSmallSrc = $derived(discordImageSrc(discordPreview?.assets?.small_image ?? ""));
+  // Ticks only while the preview is showing a timer, so the settings page stays idle otherwise.
+  let discordNow = $state(Date.now());
+  let discordElapsed = $derived(
+    discordPreview?.timestamps ? formatElapsed(discordNow - discordPreview.timestamps.start) : "",
+  );
+  $effect(() => {
+    if (!discordPreview?.timestamps) return;
+    discordNow = Date.now();
+    const id = setInterval(() => (discordNow = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+  function formatElapsed(ms: number): string {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    const mm = String(minutes).padStart(2, "0");
+    const ss = String(seconds).padStart(2, "0");
+    return hours > 0 ? `${hours}:${mm}:${ss}` : `${minutes}:${ss}`;
+  }
+  /** Preview source for an asset key: a public URL as-is, a known asset key via Discord's CDN, and
+   * the application's own icon for the bare "logo"/empty default. Unknown keys get no image, which
+   * the card mockup shows as the Discord stand-in. */
+  function discordImageSrc(key: string): string {
+    const value = key.trim();
+    if (/^https?:\/\//i.test(value)) return value;
+    const assetId = discordAssetIds.get(value);
+    if (assetId) return discordAssetCdnUrl(discordAppId, assetId);
+    // "logo" is the convention for the app's own picture in the example keys.
+    if (discordIconSrc && (value === "logo" || value === "")) return discordIconSrc;
+    return value === "logo" || value === "" ? "/logo.png" : "";
+  }
+  const discordStatusText = $derived(
+    !discordSettings.enabled
+      ? "Off"
+      : rpcStatus.connected
+        ? "Connected to Discord"
+        : (rpcStatus.error ?? "Looking for a running Discord client…"),
+  );
+  $effect(() => {
+    if (app.showSettings && app.settingsTab === "integrations") refreshDiscordRpcStatus();
+  });
 
   // ---- Providers tab (credentials only; model selection lives in ModelPicker.svelte) ----
   // OpenRouter can be added two ways: pasting a key (the form below, also the only way from a browser)
@@ -543,13 +627,14 @@
 
   // ---- Search: dims non-matching rows rather than hiding them, so the page doesn't reflow.
   // Every tab's content stays mounted (bits-ui only toggles `hidden`), so all are indexed. ----
-  const ALL_TABS = ["profile", "appearance", "terminal", "keyboard", "servers", "general", "providers", "projects", "safety", "notifications", "access", "audit"];
+  const ALL_TABS = ["profile", "appearance", "terminal", "keyboard", "integrations", "servers", "general", "providers", "projects", "safety", "notifications", "access", "audit"];
   // No physical keyboard to bind on a phone.
   const TAB_ORDER = $derived(viewport.narrow ? ALL_TABS.filter((t) => t !== "keyboard") : ALL_TABS);
   const TAB_LABELS: Record<string, string> = {
     profile: "profile you name avatar picture",
     appearance: "appearance look theme fonts",
     terminal: "terminal shell colors",
+    integrations: "integrations discord rich presence rpc activity status",
     keyboard: "keyboard shortcuts keybinds keybindings hotkeys keys",
     servers: "servers connections remote",
     general: "general server name titles",
@@ -622,6 +707,14 @@
             ".field:not(.search-dim), .setting-row:not(.search-dim), .cli-card:not(.search-dim), .provider-form:not(.search-dim), li:not(.search-dim)",
           );
         heading?.classList.toggle("search-dim", !lit);
+      });
+      // A hit inside a closed Discord group reveals itself by opening it.
+      node.querySelectorAll<HTMLDetailsElement>("details.discord-group").forEach((group) => {
+        const hit =
+          !!q &&
+          (wholeTab ||
+            !!group.querySelector(".field:not(.search-dim), .setting-row:not(.search-dim)"));
+        if (hit) group.open = true;
       });
       firstMatchByTab[tab] = first;
       // A per-key write, never a read-then-assign: reading tabHasMatch here would make this
@@ -840,6 +933,7 @@
           {@render tab("appearance", "Appearance", "palette")}
           {@render tab("terminal", "Terminal", "terminal-2")}
           {#if !viewport.narrow}{@render tab("keyboard", "Keyboard", "keyboard")}{/if}
+          {@render tab("integrations", "Integrations", "brand-discord")}
           {@render tab("servers", "Servers", "server")}
 
           <div class="tabs-group-label" {@attach tip("These apply to one server. Pick which at the top of each page.")}>
@@ -1226,6 +1320,350 @@
           </div>
         </Tabs.Content>
 
+        <Tabs.Content value="integrations" class="tab-panel">
+          <div class="tab-body" use:searchable={{ tab: "integrations", query: settingsSearch }}>
+            {@render pageHead("Integrations", false)}
+            <section class="settings-section">
+              <h3 class="section-heading">Discord Rich Presence</h3>
+              {#if !isDesktop}
+                <p class="hint">Discord Rich Presence is only available in the desktop app.</p>
+              {:else}
+                <div class="setting-row">
+                  {@render rowText("Show what I'm working on", "Shares your current project and chat on your Discord profile. Off by default, and only the fields below are sent.")}
+                  {@render toggle(app.settings.discordRpc.enabled, (v) => ((app.settings.discordRpc.enabled = v), apply()))}
+                </div>
+                <div class="setting-row">
+                  {@render rowText("Presence", "Auto shows the editor card while the editor is focused and the chat card when you return to the composer.")}
+                  {@render segmented(
+                    DISCORD_PRESENCE_MODES,
+                    app.settings.discordRpc.mode,
+                    (v) => {
+                      app.settings.discordRpc.mode = v as typeof app.settings.discordRpc.mode;
+                      apply();
+                    },
+                  )}
+                </div>
+                <div class="setting-row">
+                  {@render rowText("Hide on plain chats", "Never shows a card while a chat with no repository is open — only project work appears.")}
+                  {@render toggle(app.settings.discordRpc.hideOnChats, (v) => ((app.settings.discordRpc.hideOnChats = v), apply()))}
+                </div>
+                <div class="setting-row">
+                  {@render rowText("Connection", "Discord must be running on this computer. It is found again automatically if it starts later.")}
+                  <span class="discord-status" class:on={rpcStatus.connected} class:error={discordSettings.enabled && !rpcStatus.connected && !!rpcStatus.error}>
+                    <span class="dot"></span>{discordStatusText}
+                  </span>
+                </div>
+                <div class="field">
+                  <span class="row-label">Application ID</span>
+                  <TextField
+                    bind:value={app.settings.discordRpc.clientId}
+                    onchange={apply}
+                    placeholder={DEFAULT_DISCORD_CLIENT_ID || "Discord application id"}
+                  />
+                  <p class="hint">
+                    {#if DEFAULT_DISCORD_CLIENT_ID}
+                      Leave blank to use yoakeland's built-in application. Use your own application id from the Discord Developer Portal to customize the name and art.
+                    {:else}
+                      No built-in application id is configured yet. Paste an application id from the Discord Developer Portal to turn this on.
+                    {/if}
+                    {#if discordSettings.enabled && !discordHasId}
+                      <strong>Rich Presence can't connect until an id is set.</strong>
+                    {/if}
+                  </p>
+                </div>
+              {/if}
+            </section>
+
+            {#if isDesktop}
+              <section class="settings-section">
+                <h3 class="section-heading">Preview</h3>
+                <div class="discord-preview-switch">
+                  {@render segmented(
+                    [
+                      { value: "chat", label: "Chat" },
+                      { value: "editor", label: "Editor" },
+                    ],
+                    discordPreviewKind,
+                    (v) => (discordPreviewKind = v as "chat" | "editor"),
+                  )}
+                </div>
+                <div class="discord-card">
+                  <div class="discord-activity">
+                    <div class="discord-art">
+                      {#if discordLargeSrc}
+                        <img src={discordLargeSrc} alt="" />
+                      {:else}
+                        <div class="discord-art-fallback"><Icon name="brand-discord" size={22} /></div>
+                      {/if}
+                      {#if discordPreview?.assets?.small_image}
+                        <div class="discord-badge">
+                          {#if discordSmallSrc}
+                            <img src={discordSmallSrc} alt="" />
+                          {:else}
+                            <Icon name="brand-discord" size={10} />
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                    <div class="discord-body">
+                      <div class="discord-card-head">
+                        {DISCORD_ACTIVITY_LABELS[discordSettings.activityType]} <strong>{discordAppName}</strong>
+                      </div>
+                      {#if discordPreview}
+                        {#if discordPreview.details}
+                          {#if discordPreview.details_url}
+                            <a class="discord-details" href={discordPreview.details_url} target="_blank" rel="noreferrer">
+                              {discordPreview.details}
+                            </a>
+                          {:else}
+                            <div class="discord-details">{discordPreview.details}</div>
+                          {/if}
+                        {/if}
+                        {#if discordPreview.state}
+                          {#if discordPreview.state_url}
+                            <a class="discord-state" href={discordPreview.state_url} target="_blank" rel="noreferrer">
+                              {discordPreview.state}
+                            </a>
+                          {:else}
+                            <div class="discord-state">{discordPreview.state}</div>
+                          {/if}
+                        {/if}
+                        {#if discordElapsed}
+                          <div class="discord-time">{discordElapsed} elapsed</div>
+                        {/if}
+                      {:else}
+                        <p class="hint">Nothing would show right now.</p>
+                      {/if}
+                    </div>
+                  </div>
+                  {#if discordPreview?.buttons?.length}
+                    <div class="discord-buttons">
+                      {#each discordPreview.buttons as b (b.label)}
+                        <span class="discord-button">{b.label}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h3 class="section-heading">Card</h3>
+                <div class="field">
+                  <span class="row-label">Application name</span>
+                  <TextField bind:value={app.settings.discordRpc.name} onchange={apply} placeholder={discordAppName} />
+                  <p class="hint">Overrides the name Discord takes from the application. Leave blank to use it as-is.</p>
+                </div>
+                <div class="setting-row">
+                  {@render rowText("Activity type", "How Discord labels the card beside your name.")}
+                  {@render segmented(
+                    [
+                      { value: "playing", label: "Playing" },
+                      { value: "listening", label: "Listening" },
+                      { value: "watching", label: "Watching" },
+                      { value: "competing", label: "Competing" },
+                    ],
+                    app.settings.discordRpc.activityType,
+                    (v) => {
+                      app.settings.discordRpc.activityType = v as typeof app.settings.discordRpc.activityType;
+                      apply();
+                    },
+                  )}
+                </div>
+                <div class="setting-row">
+                  {@render rowText("Status text", "Which line appears next to your name in the member list.")}
+                  {@render segmented(
+                    DISCORD_STATUS_DISPLAY_TYPES,
+                    app.settings.discordRpc.statusDisplayType,
+                    (v) => {
+                      app.settings.discordRpc.statusDisplayType = v as typeof app.settings.discordRpc.statusDisplayType;
+                      apply();
+                    },
+                  )}
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <details class="discord-group" bind:open={discordOpen.chat}>
+                  <summary class="discord-group-head">
+                    <span class="section-heading">Chat card</span>
+                    <span class="hint">Lines, idle text and artwork shown while chatting</span>
+                    <span class="discord-chevron"><Icon name="chevron-down" size={14} /></span>
+                  </summary>
+                  <div class="discord-group-body">
+                    <div class="field">
+                      <span class="row-label">Details</span>
+                      <TextField bind:value={app.settings.discordRpc.details} onchange={apply} placeholder={"{status} in {project}"} />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Details link</span>
+                      <TextField bind:value={app.settings.discordRpc.detailsUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">State</span>
+                      <TextField bind:value={app.settings.discordRpc.state} onchange={apply} placeholder={"{chat}"} />
+                      <p class="hint">
+                        Variables: {DISCORD_TEMPLATE_VARS.map((v) => `{${v}}`).join(" ")}. Leave a line empty to hide it.
+                      </p>
+                    </div>
+                    <div class="field">
+                      <span class="row-label">State link</span>
+                      <TextField bind:value={app.settings.discordRpc.stateUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                    <div class="setting-row">
+                      {@render rowText("Show when idle", "Keep a card visible while no chat is open.")}
+                      {@render toggle(app.settings.discordRpc.showWhenIdle, (v) => ((app.settings.discordRpc.showWhenIdle = v), apply()))}
+                    </div>
+                    {#if app.settings.discordRpc.showWhenIdle}
+                      <div class="field">
+                        <span class="row-label">Idle details</span>
+                        <TextField bind:value={app.settings.discordRpc.idleDetails} onchange={apply} placeholder="Taking a break" />
+                      </div>
+                      <div class="field">
+                        <span class="row-label">Idle state</span>
+                        <TextField bind:value={app.settings.discordRpc.idleState} onchange={apply} placeholder="yoakeland" />
+                      </div>
+                    {/if}
+                    <div class="field">
+                      <span class="row-label">Large image</span>
+                      <TextField bind:value={app.settings.discordRpc.largeImage} onchange={apply} placeholder="logo or https://…" />
+                      <p class="hint">An asset key from your Discord application (previewed below when it resolves), or a public image URL (GIF and AVIF are allowed for URLs).</p>
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Large image text</span>
+                      <TextField bind:value={app.settings.discordRpc.largeText} onchange={apply} placeholder="yoakeland" />
+                      <p class="hint">Shown when hovering the image.</p>
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Large image link</span>
+                      <TextField bind:value={app.settings.discordRpc.largeUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Small image</span>
+                      <TextField bind:value={app.settings.discordRpc.smallImage} onchange={apply} placeholder="Optional" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Small image text</span>
+                      <TextField bind:value={app.settings.discordRpc.smallText} onchange={apply} placeholder="Optional" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Small image link</span>
+                      <TextField bind:value={app.settings.discordRpc.smallUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                  </div>
+                </details>
+              </section>
+
+              <section class="settings-section">
+                <details class="discord-group" bind:open={discordOpen.editor}>
+                  <summary class="discord-group-head">
+                    <span class="section-heading">Editor card</span>
+                    <span class="hint">Lines and artwork shown while a file is open</span>
+                    <span class="discord-chevron"><Icon name="chevron-down" size={14} /></span>
+                  </summary>
+                  <div class="discord-group-body">
+                    <p class="hint">
+                      When the editor has no file open, the chat card is used instead. Variables:
+                      {DISCORD_EDITOR_TEMPLATE_VARS.map((v) => `{${v}}`).join(" ")}.
+                    </p>
+                    <div class="field">
+                      <span class="row-label">Details</span>
+                      <TextField bind:value={app.settings.discordRpc.editorDetails} onchange={apply} placeholder={"Editing {file}"} />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Details link</span>
+                      <TextField bind:value={app.settings.discordRpc.editorDetailsUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">State</span>
+                      <TextField bind:value={app.settings.discordRpc.editorState} onchange={apply} placeholder={"{project} · {language}"} />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">State link</span>
+                      <TextField bind:value={app.settings.discordRpc.editorStateUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                    <div class="setting-row">
+                      {@render rowText("Timer restarts", "Per file resets on every tab switch; per workspace keeps counting across files.")}
+                      {@render segmented(
+                        DISCORD_EDITOR_TIMER_SCOPES,
+                        app.settings.discordRpc.editorTimerScope,
+                        (v) => {
+                          app.settings.discordRpc.editorTimerScope = v as typeof app.settings.discordRpc.editorTimerScope;
+                          apply();
+                        },
+                      )}
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Large image</span>
+                      <TextField bind:value={app.settings.discordRpc.editorLargeImage} onchange={apply} placeholder={"logo, {languageKey} or https://…"} />
+                      <p class="hint">Use {"{languageKey}"} if your application has uploaded per-language art (for example "typescript").</p>
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Large image text</span>
+                      <TextField bind:value={app.settings.discordRpc.editorLargeText} onchange={apply} placeholder={"{language}"} />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Large image link</span>
+                      <TextField bind:value={app.settings.discordRpc.editorLargeUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Small image</span>
+                      <TextField bind:value={app.settings.discordRpc.editorSmallImage} onchange={apply} placeholder="Optional" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Small image text</span>
+                      <TextField bind:value={app.settings.discordRpc.editorSmallText} onchange={apply} placeholder="Optional" />
+                    </div>
+                    <div class="field">
+                      <span class="row-label">Small image link</span>
+                      <TextField bind:value={app.settings.discordRpc.editorSmallUrl} onchange={apply} placeholder="https://… (optional)" />
+                    </div>
+                  </div>
+                </details>
+              </section>
+
+              <section class="settings-section">
+                <details class="discord-group" bind:open={discordOpen.buttons}>
+                  <summary class="discord-group-head">
+                    <span class="section-heading">Buttons</span>
+                    <span class="hint">Up to two links under the activity</span>
+                    <span class="discord-chevron"><Icon name="chevron-down" size={14} /></span>
+                  </summary>
+                  <div class="discord-group-body">
+                    <div class="setting-row">
+                      {@render rowText("Show buttons", "Up to two links under the activity.")}
+                      {@render toggle(app.settings.discordRpc.showButtons, (v) => ((app.settings.discordRpc.showButtons = v), apply()))}
+                    </div>
+                    {#if app.settings.discordRpc.showButtons}
+                      <div class="field">
+                        <span class="row-label">Button 1 label</span>
+                        <TextField bind:value={app.settings.discordRpc.button1Label} onchange={apply} placeholder="Website" />
+                      </div>
+                      <div class="field">
+                        <span class="row-label">Button 1 URL</span>
+                        <TextField bind:value={app.settings.discordRpc.button1Url} onchange={apply} placeholder="https://…" />
+                      </div>
+                      <div class="field">
+                        <span class="row-label">Button 2 label</span>
+                        <TextField bind:value={app.settings.discordRpc.button2Label} onchange={apply} placeholder="Optional" />
+                      </div>
+                      <div class="field">
+                        <span class="row-label">Button 2 URL</span>
+                        <TextField bind:value={app.settings.discordRpc.button2Url} onchange={apply} placeholder="https://…" />
+                      </div>
+                      <p class="hint">Only http(s) links are accepted by Discord; a button needs both a label and a URL.</p>
+                    {/if}
+                    <div class="btn-row">
+                      <Button type="button" variant="ghost" onclick={() => ((app.settings.discordRpc = { ...DEFAULT_DISCORD_RPC }), apply())}>
+                        Reset to defaults
+                      </Button>
+                    </div>
+                  </div>
+                </details>
+              </section>
+            {/if}
+          </div>
+        </Tabs.Content>
+
         <Tabs.Content value="keyboard" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "keyboard", query: settingsSearch }}>
             {@render pageHead("Keyboard", false)}
@@ -1351,6 +1789,10 @@
               <div class="setting-row">
                 {@render rowText("Auto-generate chat titles", "Names new threads from their first message.")}
                 {@render toggle(server?.autoGenerateTitleEnabled ?? true, onAutoGenerateTitleToggle, !connected)}
+              </div>
+              <div class="setting-row">
+                {@render rowText("Summarize long replies", "Adds a short summary card under each long reply, written by the Titles & summaries model. Any reply can also be summarized from its actions.")}
+                {@render toggle(app.settings.autoSummary, (v) => ((app.settings.autoSummary = v), apply()))}
               </div>
             </section>
             <section class="settings-section">
@@ -2860,5 +3302,193 @@
     :global(.ui-field.ctrl-wide) {
       width: min(15rem, 100%);
     }
+  }
+  .discord-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.43rem;
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .discord-status .dot {
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--text-dim);
+    opacity: 0.5;
+  }
+  .discord-status.on {
+    color: var(--text);
+  }
+  .discord-status.on .dot {
+    background: var(--success);
+    opacity: 1;
+  }
+  .discord-status.error .dot {
+    background: var(--danger);
+    opacity: 1;
+  }
+  .discord-preview-switch {
+    max-width: 24rem;
+    margin-bottom: 0.57rem;
+  }
+  /* Second-level collapsibles so the Discord page is three short cards, not one long list. */
+  .discord-group {
+    border: 1px solid var(--panel-border);
+    border-radius: 0.57rem;
+    background: transparent;
+  }
+  .discord-group-head {
+    display: flex;
+    align-items: center;
+    gap: 0.71rem;
+    list-style: none;
+    padding: 0.57rem 0.71rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .discord-group-head::-webkit-details-marker {
+    display: none;
+  }
+  .discord-group-head .hint {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .discord-chevron {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--text-dim);
+    transition: rotate calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .discord-group[open] .discord-chevron {
+    rotate: 180deg;
+  }
+  .discord-group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.86rem;
+    padding: 0.29rem 0.71rem 0.71rem;
+    border-top: 1px solid var(--panel-border);
+  }
+  .discord-group[open] .discord-group-head .section-heading {
+    color: var(--text);
+  }
+  .discord-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.57rem;
+    max-width: 24rem;
+    padding: 0.86rem 1rem;
+    border-radius: 0.57rem;
+    border: 1px solid var(--panel-border);
+    background: color-mix(in srgb, var(--panel-bg) 84%, black);
+  }
+  .discord-activity {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.71rem;
+  }
+  .discord-art {
+    position: relative;
+    flex-shrink: 0;
+    width: 3.71rem;
+    height: 3.71rem;
+    margin: 0.07rem 0.21rem 0.21rem 0;
+    border-radius: 0.43rem;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+  .discord-art img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .discord-art-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    color: var(--text-dim);
+  }
+  .discord-badge {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.36rem;
+    height: 1.36rem;
+    overflow: hidden;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--panel-bg) 84%, black);
+    background: var(--panel-bg);
+    color: var(--text-dim);
+  }
+  .discord-badge img {
+    border-radius: 50%;
+  }
+  .discord-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.07rem;
+    min-width: 0;
+  }
+  .discord-card-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.29rem;
+    margin-bottom: 0.14rem;
+    font-size: var(--text-label-size);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .discord-card-head strong {
+    color: var(--text);
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  .discord-details {
+    font-size: var(--text-body-size);
+    font-weight: 600;
+    color: var(--text);
+    overflow-wrap: anywhere;
+    text-decoration: none;
+  }
+  .discord-state,
+  .discord-time {
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+    overflow-wrap: anywhere;
+    text-decoration: none;
+  }
+  a.discord-details:hover,
+  a.discord-state:hover {
+    text-decoration: underline;
+  }
+  .discord-buttons {
+    display: flex;
+    gap: 0.43rem;
+  }
+  .discord-button {
+    flex: 1;
+    padding: 0.36rem 0.57rem;
+    border-radius: 0.29rem;
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    font-size: var(--text-label-size);
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

@@ -4,7 +4,7 @@ import type { CliKind, ModelInfo, ProviderInfo } from "./types";
  * toggles, the picker's tabs and message footers all read from. */
 export const CLI_AGENTS: Record<CliKind, { title: string; icon: string; cli: string; defaultName: string }> = {
   cli_claude: { title: "Claude", icon: "claude", cli: "claude", defaultName: "claude-subscription" },
-  cli_codex: { title: "Codex", icon: "openai", cli: "codex", defaultName: "codex-subscription" },
+  cli_codex: { title: "Codex", icon: "codex", cli: "codex", defaultName: "codex-subscription" },
   cli_cursor: { title: "Cursor", icon: "cursor", cli: "cursor-agent", defaultName: "cursor-agent" },
   cli_kimi: { title: "Kimi", icon: "kimi", cli: "kimi", defaultName: "kimi-cli" },
   cli_opencode: { title: "OpenCode", icon: "opencode", cli: "opencode", defaultName: "opencode" },
@@ -138,21 +138,27 @@ export function openRouterVendorMeta(modelId: string): {
 
 /** OpenRouter names read "Vendor: Model Name"; the vendor prefix moves to the bottom line
  * (vendorMetaFor). CLI providers with no real displayName ("sonnet", or codex's id-as-name)
- * get title-cased as a floor until the server sends a proper one. */
+ * get title-cased as a floor until the server sends a proper one. ACP agents (opencode)
+ * report ids as `<vendor>/<model>`; the vendor is already the bottom line, so the prefix
+ * is stripped rather than reading "OpenCode/Grok Code". */
 export function titleFor(entry: Entry): string {
-  const raw = entry.model.displayName || entry.model.id;
   if (isOpenRouter(entry.provider)) {
-    const idx = raw.indexOf(":");
-    if (idx > 0 && idx < 30) return raw.slice(idx + 1).trim();
-    return raw;
+    const name = entry.model.displayName || entry.model.id;
+    const idx = name.indexOf(":");
+    if (idx > 0 && idx < 30) return name.slice(idx + 1).trim();
+    return name;
   }
-  if (
-    isCli(entry.provider) &&
-    (!entry.model.displayName || entry.model.displayName === entry.model.id)
-  ) {
-    return prettifySlug(raw);
+  if (isCli(entry.provider)) {
+    // A displayName distinct from the id is a real name; keep it (minus a stray
+    // `<vendor>/` prefix, in case the agent names carry one). Otherwise the id is
+    // the raw slug: drop the vendor segment, then title-case it.
+    const raw = entry.model.displayName || entry.model.id;
+    const noVendor = raw.replace(/^[^/]+\//, "");
+    if (entry.model.displayName && entry.model.displayName !== entry.model.id)
+      return noVendor;
+    return prettifySlug(noVendor);
   }
-  return raw;
+  return entry.model.displayName || entry.model.id;
 }
 
 /** The built-in claude-/codex-subscription providers read as just "subscription". */
@@ -161,7 +167,7 @@ export function providerLabel(p: ProviderInfo): string {
 }
 
 export function vendorMetaFor(entry: Entry): { label: string; icon: string } {
-  if (entry.provider.kind === "cli_codex") return { label: "ChatGPT", icon: "openai" };
+  if (entry.provider.kind === "cli_codex") return { label: "ChatGPT", icon: "codex" };
   if (isCli(entry.provider)) {
     const m = cliMeta(entry.provider);
     return { label: m.title, icon: m.icon };

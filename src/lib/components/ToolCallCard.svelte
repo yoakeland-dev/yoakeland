@@ -4,7 +4,9 @@
   import type { ToolCallEntry } from "../types";
   import { metaFor, summaryFor } from "../toolMeta";
   import DiffView from "./DiffView.svelte";
+  import ToolImages from "./ToolImages.svelte";
   import Icon from "./Icon.svelte";
+  import { scrollFade } from "../scrollFade";
 
   let { call }: { call: ToolCallEntry } = $props();
 
@@ -59,6 +61,7 @@
     {/if}
     <span class="status">{statusLabel[call.status]}</span>
   </button>
+  {#if call.images?.length}<ToolImages images={call.images} />{/if}
   <div class="accordion" class:open={expanded}>
     <div class="accordion-inner">
       <div class="body">
@@ -69,7 +72,7 @@
             {/each}
           </div>
         {/if}
-        <pre class="args selectable">{JSON.stringify(call.args, null, 2)}</pre>
+        <pre class="args scroll-cap selectable" {@attach scrollFade}>{JSON.stringify(call.args, null, 2)}</pre>
         {#if call.diff}
           <DiffView diff={call.diff} />
         {/if}
@@ -77,10 +80,10 @@
           <DiffView diff={d} />
         {/each}
         {#if call.output}
-          <pre class="output selectable">{call.output}</pre>
+          <pre class="output scroll-cap selectable" {@attach scrollFade}>{call.output}</pre>
         {/if}
         {#if call.error}
-          <pre class="output error selectable">{call.error}</pre>
+          <pre class="output error scroll-cap selectable" {@attach scrollFade}>{call.error}</pre>
         {/if}
       </div>
     </div>
@@ -239,7 +242,6 @@
     background: rgba(0, 0, 0, 0.25);
     border-radius: var(--radius-sm);
     font-size: 0.75rem;
-    overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-word;
   }

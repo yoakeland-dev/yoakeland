@@ -172,3 +172,12 @@
   outline: 2px solid var(--text);
   outline-offset: 2px;
 }
+
+/* A block that can get very long (thoughts, tool args/output): cap it and scroll inside, so
+   collapsing its header never means scrolling far back up. Add `{@attach scrollFade}` for edge fades. */
+.scroll-cap {
+  max-height: 14rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-border) transparent;
+}

@@ -26,7 +26,7 @@
     </div>
     <div class="list">
       {#each all as call (call.toolCallId)}
-        <SubagentCard {call} open={IN_FLIGHT.has(call.status)} />
+        <SubagentCard {call} {sessionId} open={IN_FLIGHT.has(call.status)} />
       {/each}
     </div>
   </div>

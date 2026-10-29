@@ -6,10 +6,13 @@ export type SlashCommand =
   /** `tokens`: this chat compacts at that size; 0 = back to the server's setting; null = leave it. */
   | { kind: "autocompact"; auto: boolean | null; tokens: number | null }
   | { kind: "autocompact-help" }
+  /** A question about the chat that neither waits for the turn nor becomes part of it. */
+  | { kind: "btw"; question: string }
   | { kind: "invalid"; message: string };
 
 export const SLASH_COMMANDS = [
   { name: "compact", argumentHint: "[what to keep]", description: "Summarize the conversation now" },
+  { name: "btw", argumentHint: "<question>", description: "Ask a side question without interrupting or adding to the chat" },
   { name: "autocompact", argumentHint: "on | off | 400k | default", description: "Change when this chat compacts itself" },
 ] as const;
 
@@ -23,10 +26,11 @@ export function parseTokens(word: string): number | null {
 
 /** The command a message is, or null when it's an ordinary message (a path like `/etc/hosts`, or a skill). */
 export function parseSlashCommand(text: string): SlashCommand | null {
-  const m = /^\/(compact|autocompact)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const m = /^\/(compact|autocompact|btw)(?:\s+([\s\S]*))?$/.exec(text.trim());
   if (!m) return null;
   const arg = (m[2] ?? "").trim();
   if (m[1] === "compact") return { kind: "compact", instructions: arg };
+  if (m[1] === "btw") return arg ? { kind: "btw", question: arg } : { kind: "invalid", message: "Use /btw followed by your question" };
   if (!arg) return { kind: "autocompact-help" };
   const word = arg.toLowerCase();
   if (word === "off") return { kind: "autocompact", auto: false, tokens: null };

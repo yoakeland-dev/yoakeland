@@ -137,7 +137,7 @@
     }
     // SPEC.md §3.2 isLegacy: sort below current models rather than
     // disappearing, so a session pinned to one can still re-select it.
-    // A CLI's own "default" model is the "Agent default" row above the list.
+    // A CLI's own "default" model is the agent picking for itself; not offered.
     return list
       .filter((e) => !(isCli(e.provider) && e.model.id === "default"))
       .sort((a, b) => Number(!!a.model.isLegacy) - Number(!!b.model.isLegacy));
@@ -215,11 +215,6 @@
     open = false;
   }
 
-  // A CLI agent with no model uses its own default (§6b set_provider).
-  function pickAgentDefault(providerName: string) {
-    if (cid) setProvider(cid, sessionId, providerName);
-    open = false;
-  }
   const activeCliName = $derived(activeTab.startsWith("cli:") && !search.trim() ? activeTab.slice(4) : null);
 
   /** Arrow-key roving focus across `.entry` rows, matching the keyboard
@@ -326,7 +321,7 @@
               type="button"
               class="tab"
               class:active={activeTab === "favorites"}
-              {@attach tip("Favorites")}
+              {@attach tip("Favorites", { side: "left" })}
               onclick={() => (activeTab = "favorites")}
             >
               <Icon name="star" size={15} />
@@ -339,7 +334,7 @@
                   type="button"
                   class="tab"
                   class:active={activeTab === `cli:${p.name}`}
-                  {@attach tip(`${meta.title} (${p.name})`)}
+                  {@attach tip(`${meta.title} (${p.name})`, { side: "left" })}
                   onclick={() => (activeTab = `cli:${p.name}`)}
                 >
                   <LobeIcon name={meta.icon} fallback="openrouter" size={16} />
@@ -353,7 +348,7 @@
                 type="button"
                 class="tab"
                 class:active={activeTab === `vendor:${v}`}
-                {@attach tip(VENDOR_META[v].label)}
+                {@attach tip(VENDOR_META[v].label, { side: "left" })}
                 onclick={() => (activeTab = `vendor:${v}`)}
               >
                 <LobeIcon
@@ -369,7 +364,7 @@
                 type="button"
                 class="tab"
                 class:active={activeTab === "openrouter"}
-                {@attach tip("OpenRouter")}
+                {@attach tip("OpenRouter", { side: "left" })}
                 onclick={() => (activeTab = "openrouter")}
               >
                 <LobeIcon name="openrouter" size={16} />
@@ -379,7 +374,7 @@
             <button
               type="button"
               class="tab settings"
-              {@attach tip("Manage providers")}
+              {@attach tip("Manage providers", { side: "left" })}
               onclick={manageProviders}
             >
               <Icon name="settings" size={15} />
@@ -417,33 +412,9 @@
               tabindex="-1"
               onkeydown={handleListKeydown}
             >
-              {#if activeCliName}
-                {@const selected = currentProvider?.name === activeCliName && !currentModel}
-                <div
-                  class="entry"
-                  class:selected
-                  role="option"
-                  aria-selected={selected}
-                  tabindex="0"
-                  onclick={() => pickAgentDefault(activeCliName)}
-                  onkeydown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      pickAgentDefault(activeCliName);
-                    }
-                  }}
-                >
-                  <div class="entry-main">
-                    <span class="entry-name">Agent default</span>
-                    <span class="entry-vendor">Whatever model the agent is configured to use</span>
-                  </div>
-                </div>
-                {#if !server?.modelsByProvider[activeCliName]}
-                  <p class="hint loading"><span class="spin"><Icon name="loader-2" size={12} /></span> Asking the agent for its models…</p>
-                {/if}
-              {/if}
-              {#if tabModels.length === 0}
-                {#if !activeCliName}
+              {#if activeCliName && !server?.modelsByProvider[activeCliName]}
+                <p class="hint loading"><span class="spin"><Icon name="loader-2" size={12} /></span> Asking the agent for its models…</p>
+              {:else if tabModels.length === 0}
                 <p class="hint">
                   {search.trim()
                     ? "No models match."
@@ -451,7 +422,6 @@
                       ? "Star a model to pin it here."
                       : "No models for this provider."}
                 </p>
-                {/if}
               {:else}
                 {#each tabModels as entry, i (modelKey(entry.provider.name, entry.model.id))}
                   {@const vendor = vendorMetaFor(entry)}

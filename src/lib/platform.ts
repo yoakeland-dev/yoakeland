@@ -2,6 +2,14 @@
 // this file.
 
 import { canUseRtc, openRtc, openRtcAny, type Wire } from "./rtc";
+import type { DiscordActivity, DiscordApplicationInfo, DiscordRpcSettings } from "./discordRpcSettings";
+
+export interface DiscordRpcStatus {
+  enabled: boolean;
+  connected: boolean;
+  clientId: string;
+  error: string | null;
+}
 
 interface YoakeBridge {
   invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
@@ -26,6 +34,10 @@ interface YoakeBridge {
   quit(): Promise<void>;
   placeTrafficLights(x: number, y: number): Promise<void>;
   styleOverlay(symbolColor: string, height: number): Promise<void>;
+  discordConfigure(config: DiscordRpcSettings): Promise<DiscordRpcStatus>;
+  discordPresence(activity: DiscordActivity | null): Promise<void>;
+  discordStatus(): Promise<DiscordRpcStatus>;
+  discordAssets(clientId: string): Promise<DiscordApplicationInfo>;
 }
 
 const bridge = typeof window !== "undefined" ? (window as { yoake?: YoakeBridge }).yoake : undefined;
@@ -184,6 +196,18 @@ export const closeAck = (): Promise<void> => bridge?.closeAck() ?? Promise.resol
 export const quitApp = (): Promise<void> => bridge?.quit() ?? Promise.resolve();
 
 export const setWindowChrome = (on: boolean): Promise<void> => bridge?.setWindowChrome(on) ?? Promise.resolve();
+
+/** Desktop only: Discord Rich Presence needs the app's local IPC socket. */
+export const discordConfigure = (config: DiscordRpcSettings): Promise<DiscordRpcStatus> =>
+  bridge?.discordConfigure(config) ??
+  Promise.resolve({ enabled: false, connected: false, clientId: "", error: null });
+export const discordPresence = (activity: DiscordActivity | null): Promise<void> =>
+  bridge?.discordPresence(activity) ?? Promise.resolve();
+export const discordStatus = (): Promise<DiscordRpcStatus> =>
+  bridge?.discordStatus() ?? Promise.resolve({ enabled: false, connected: false, clientId: "", error: null });
+/** Desktop only: a Discord application's public profile (name, icon hash, uploaded asset keys). */
+export const discordAssets = (clientId: string): Promise<DiscordApplicationInfo | null> =>
+  bridge?.discordAssets(clientId) ?? Promise.resolve(null);
 
 // Measures the DOM, so call it after layout or theme changes.
 export function syncNativeChrome() {

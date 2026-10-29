@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
+  import { scrollFade } from "../scrollFade";
 
   // Collapsed by default; the reply's model chip shows it's still going.
   let { text }: { text: string } = $props();
@@ -16,7 +17,7 @@
 </button>
 <div class="accordion" class:open>
   <div class="accordion-inner">
-    <pre class="thinking selectable">{text.trimEnd()}</pre>
+    <pre class="thinking scroll-cap selectable" {@attach scrollFade}>{text.trimEnd()}</pre>
   </div>
 </div>
 

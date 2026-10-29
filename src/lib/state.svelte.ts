@@ -42,14 +42,17 @@ import type {
   ToolCallEntry,
   ToolCallRequestedData,
   ToolResultData,
+  ToolImage,
   TurnCompletedData,
   ContextData,
   SpendData,
   TerminalSummary,
   QueuedPrompt,
   SubagentRun,
+  SideAnswerData,
+  MessageSummaryData,
 } from "./types";
-import { findCall, findCallInMessages } from "./subagents";
+  import { findCall, findCallInMessages, IN_FLIGHT } from "./subagents";
 
 import {
   DIFF_COLORS,
@@ -66,6 +69,25 @@ import { viewport } from "./viewport.svelte";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 import { scanShellEvents } from "./terminalShellIntegration";
+import { DEFAULT_DISCORD_RPC, type DiscordRpcSettings } from "./discordRpcSettings";
+
+/** A file the agent has edited in this chat: `working` from the call until its result, then `done`.
+ * `diff` is the latest edit's change, kept until the next turn starts so the editor can show it. */
+export interface Touched {
+  state: "working" | "done";
+  diff?: FileDiff;
+}
+
+/** One streaming answer to a side question. */
+export interface SideRun {
+  sessionId: string;
+  /** The message a thread reply belongs to; empty for a /btw. */
+  anchor: string;
+  question: string;
+  text: string;
+  done: boolean;
+  error?: string;
+}
 
 export type ConnectionMode = "local" | "remote";
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -90,6 +112,7 @@ const LAST_USED_MODE_KEY = "yoake.lastUsedMode";
 // one of these with neither `sessionId` nor a current session is dropped, not processed against "".
 const SESSION_SCOPED_EVENTS = new Set([
   "turn_started",
+  "turn_context",
   "user_message",
   "model_delta",
   "tool_call_requested",
@@ -102,6 +125,8 @@ const SESSION_SCOPED_EVENTS = new Set([
   "plan_written",
   "steer_accepted",
   "steer_rejected",
+  "side_answer",
+  "message_summary",
 ]);
 
 // Catches a path handler passed straight to `onclick`: it receives the DOM event instead of
@@ -398,6 +423,8 @@ export interface AppSettings {
   uiFontFamily: string;
   codeFontFamily: string;
   codeWrapLines: boolean;
+  /** Summarize each long reply in a card under it (the utility model's job; see summarizeMessage). */
+  autoSummary: boolean;
   /** Code block syntax colors: same choice as the terminal's. See highlight.ts. */
   codeUseAppTheme: boolean;
   codeColorTheme: string;
@@ -448,6 +475,8 @@ export interface AppSettings {
   osNotifications: "all" | "urgent" | "off";
   /** The first-run setup (Onboarding.svelte) has been finished or skipped. */
   onboarded: boolean;
+  /** Opt-in Discord Rich Presence. Off by default; see discordRpcSettings.ts for the template fields. */
+  discordRpc: DiscordRpcSettings;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -460,6 +489,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   uiFontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   codeFontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
   codeWrapLines: true,
+  autoSummary: true,
   codeUseAppTheme: true,
   codeColorTheme: "dracula",
   animationSpeed: 1,
@@ -486,7 +516,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   keybinds: {},
   osNotifications: "all",
   onboarded: false,
+  discordRpc: { ...DEFAULT_DISCORD_RPC },
 };
+
+function loadDiscordRpc(raw: unknown): DiscordRpcSettings {
+  return { ...DEFAULT_DISCORD_RPC, ...(raw && typeof raw === "object" ? raw : {}) };
+}
 
 function loadSettings(): AppSettings {
   try {
@@ -498,9 +533,10 @@ function loadSettings(): AppSettings {
     if (!loaded.trustedCaByHostPort) loaded.trustedCaByHostPort = {};
     if (!loaded.trustedCaByServer) loaded.trustedCaByServer = {};
     if (!loaded.keybinds) loaded.keybinds = {};
+    loaded.discordRpc = loadDiscordRpc(loaded.discordRpc);
     return loaded;
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, discordRpc: { ...DEFAULT_DISCORD_RPC } };
   }
 }
 
@@ -619,6 +655,17 @@ export class ServerState {
   }
   // Last-known state of the optional TCP listener; no "get current state" event exists (§3.2).
   remoteAccessEnabled = $state<boolean | null>(null);
+
+  /** Side answers (a /btw or a thread reply) streaming in, by requestId. A thread reply is dropped
+   * once it lands on its message; a /btw stays until dismissed. */
+  sideRuns = $state<Record<string, SideRun>>({});
+  /** Files each chat's agent has edited, by project-relative path (explorer markers, editor diff). */
+  touchedBySession = $state<Record<string, Record<string, Touched>>>({});
+  /** The /btw each chat is showing (a requestId into sideRuns). */
+  btwBySession = $state<Record<string, string>>({});
+  /** Messages being summarized, by id: "auto" fails silently, "manual" says why. */
+  summaryPending = $state<Record<string, "auto" | "manual">>({});
+  summaryError = $state<Record<string, string>>({});
 
   // Same push-only pattern as remoteAccessEnabled.
   autoGenerateTitleEnabled = $state<boolean | null>(null);
@@ -751,8 +798,6 @@ export class ServerState {
   modeBySession = $state<Record<string, ChatMode>>({});
   /** The tier a chat was in before Plan, which approving the plan defaults back to. */
   tierBeforePlan = $state<Record<string, ChatMode>>({});
-  /** Chats on Run for one turn only, and the mode they go back to when it ends (modes.ts). */
-  runOnce = $state<Record<string, ChatMode>>({});
   webToolsEnabledByProject = $state<Record<string, boolean>>({});
   // write_plan's output (§4c), keyed by session so a re-write lands in place rather than stacking.
   planBySession = $state<Record<string, { path: string; content: string; updatedAt: number }>>({});
@@ -959,9 +1004,34 @@ export class ServerState {
     for (const sessionId of chats) {
       const msg = this.findAssistantMessage(sessionId, this.activeTurnBySession[sessionId]);
       if (msg) msg.streaming = false;
+      this.finalizeStaleCalls(sessionId, undefined, "Lost to the disconnect");
     }
     this.activeTurnBySession = {};
+    this.saveChatHistory();
     return chats;
+  }
+
+  /** Every tool call a turn left in flight (a cancelled turn's stragglers, or a connection
+   * dropping mid-turn) would render — and stream to the status bar's "running" count — forever;
+   * settling them keeps a turn's end a real end. Without a turnId, every in-flight call in the
+   * session goes. */
+  private finalizeStaleCalls(sessionId: string, turnId: string | undefined, errorLabel: string) {
+    const msgs = this.messagesBySession[sessionId];
+    if (!msgs) return;
+    const sweep = (calls: ToolCallEntry[]) => {
+      for (const c of calls) {
+        if (c.subagent) sweep(c.subagent.calls);
+        if (IN_FLIGHT.has(c.status)) {
+          c.status = "error";
+          c.error = errorLabel;
+        }
+      }
+    };
+    for (const m of msgs) {
+      if (m.role !== "assistant" || (turnId !== undefined && m.turnId !== turnId)) continue;
+      m.streaming = false;
+      sweep(m.toolCalls);
+    }
   }
 
   /** Chats otherwise live only in memory and vanish on restart even though the server-side
@@ -1297,15 +1367,24 @@ export class ServerState {
    * truth: `messagesBySession` is otherwise just a cache of turns this client has streamed,
    * so this is what shows history for a session opened cold. Skipped mid-stream so a reconnect
    * response can't clobber live-streaming state. */
+  /** Marks a file as touched by `sessionId`'s agent. Only the edit tools name their file in `args`. */
+  touch(sessionId: string, name: string, args: Record<string, unknown> | undefined, t: Touched, onlyNew = false) {
+    const path = typeof args?.path === "string" ? args.path.replace(/^\.\//, "").replace(/^\/+/, "") : "";
+    if (!path || (name !== "file_write" && name !== "file_edit")) return;
+    const files = (this.touchedBySession[sessionId] ??= {});
+    if (!onlyNew || !files[path]) files[path] = t;
+  }
+
   applySessionHistory(sessionId: string, messages: HistoryMessage[]) {
     if (this.activeTurnBySession[sessionId]) return;
-    const toolResults = new Map<string, { content: string; diffs?: FileDiff[]; error?: string }>();
+    const toolResults = new Map<string, { content: string; diffs?: FileDiff[]; images?: ToolImage[]; error?: string }>();
     for (const m of messages) {
-      if (m.role === "tool" && m.toolCallId) toolResults.set(m.toolCallId, { content: m.content, diffs: m.diffs, error: m.error });
+      if (m.role === "tool" && m.toolCallId) toolResults.set(m.toolCallId, { content: m.content, diffs: m.diffs, images: m.images, error: m.error });
     }
 
     const toEntry = (tc: HistoryToolCall, text: string, thinking: string | undefined): ToolCallEntry => {
       const result = toolResults.get(tc.id);
+      this.touch(sessionId, tc.name, tc.args, { state: "done" }, true);
       return {
         toolCallId: tc.id,
         name: tc.name,
@@ -1315,9 +1394,13 @@ export class ServerState {
         kind: tc.kind,
         locations: tc.locations,
         diffs: result?.diffs,
-        status: result?.error ? (result.error.includes("permission denied") ? "denied" : "error") : "done",
+        images: result?.images,
+        // No result entry means the turn that recorded the call was cancelled (or failed) before
+        // the call was ever answered — older sessions, persisted before the server paired its
+        // cancelled turns' calls. Stored as an error, never as a running spinner.
+        status: result ? (result.error ? (result.error.includes("permission denied") ? "denied" : "error") : "done") : "error",
         output: result?.content ?? "",
-        error: result?.error || undefined,
+        error: result?.error || (result ? undefined : "Cancelled with the turn"),
         textOffset: text.length,
         thinkingOffset: thinking?.length ?? 0,
       };
@@ -1402,6 +1485,10 @@ export class ServerState {
         // "Retry" on a merged bubble targets its *last* round-trip's id, matching alternateIds.
         cur.id = m.id || cur.id;
         cur.alternateIds = m.alternateIds ?? cur.alternateIds;
+        cur.summary = m.summary;
+        cur.ask = m.ask;
+        cur.actions = m.actions;
+        cur.thread = m.thread;
 
         // The backend has been observed persisting the same toolCallId twice; dedupe here too,
         // or a duplicate key crashes the keyed {#each}. Text/reasoning append before tool calls
@@ -1454,6 +1541,13 @@ export class ServerState {
     // A stacked question's id is "<call>#<i>": it belongs to the ask_user_question call.
     const call = env.toolCallId ? findCall(run.calls, env.toolCallId.split("#")[0]) : undefined;
     switch (env.type) {
+      case "subagent_status": {
+        const data = env.data as { model?: string; startedAt?: string };
+        if (data?.model) run.model = data.model;
+        const at = Date.parse(data?.startedAt ?? "");
+        if (!Number.isNaN(at)) run.startedAt = at;
+        break;
+      }
       case "model_delta": {
         const data = env.data as { content?: string; reasoning?: string };
         if (data?.reasoning) run.thinking = (run.thinking ?? "") + data.reasoning;
@@ -1508,6 +1602,7 @@ export class ServerState {
           call.output = data.output;
           call.error = data.error;
           if (data.diffs?.length) call.diffs = data.diffs;
+          if (data.images?.length) call.images = data.images;
           // A chat's workspace is the point of it: show it the first time the agent writes a file.
           if (data.diffs?.length && this.projectBySession[sessionId] === CHAT_PROJECT && !this.filesShown.has(sessionId)) {
             this.filesShown.add(sessionId);
@@ -1518,9 +1613,20 @@ export class ServerState {
         this.bumpFs(this.projectBySession[sessionId]);
         break;
       }
-      case "turn_completed":
-        run.finish = env.data as unknown as TurnCompletedData;
+      case "turn_completed": {
+        const data = env.data as unknown as TurnCompletedData;
+        run.finish = data;
+        // Same settle here: a subagent's turn can end (the parent cancelled, or it hit a stop
+        // without results) stranding its inner calls in flight.
+        const label = data.finishReason === "cancelled" ? "Cancelled with the turn" : "Turn ended without a result";
+        for (const c of run.calls) {
+          if (IN_FLIGHT.has(c.status)) {
+            c.status = "error";
+            c.error = label;
+          }
+        }
         break;
+      }
     }
   }
 
@@ -1575,7 +1681,6 @@ export class ServerState {
     delete this.spendBySession[sessionId];
     delete this.modeBySession[sessionId];
     delete this.tierBeforePlan[sessionId];
-    delete this.runOnce[sessionId];
     delete this.planBySession[sessionId];
     delete this.syncingSessions[sessionId];
     delete this.composerDraftBySession[sessionId];
@@ -1933,6 +2038,7 @@ export class ServerState {
       case "tool_call_requested": {
         const msg = this.assistantFor(sessionId, env.turnId);
         const data = env.data as unknown as ToolCallRequestedData;
+        this.touch(sessionId, data.name, data.args, { state: "working" });
         if (msg && env.toolCallId) {
           // The backend has been observed sending this event twice for the same toolCallId;
           // without a dedupe the duplicate crashes the keyed {#each} and freezes the message list.
@@ -2015,6 +2121,9 @@ export class ServerState {
             entry.error = data.error;
             entry.snapshotting = false;
             if (data.diffs?.length) entry.diffs = data.diffs;
+            if (data.images?.length) entry.images = data.images;
+            // A failed edit changed nothing, so it mustn't replace the diff of the one before it.
+            if (!data.error) this.touch(sessionId, entry.name, entry.args, { state: "done", diff: data.diffs?.[0] });
           }
         }
         if (env.toolCallId) this.removeAsk(env.toolCallId);
@@ -2082,6 +2191,23 @@ export class ServerState {
       case "turn_started": {
         const queued = this.unqueue(sessionId, env.turnId);
         if (queued && env.turnId) this.addUserMessage(sessionId, env.turnId, queued.text, queued.attachments);
+        for (const t of Object.values(this.touchedBySession[sessionId] ?? {})) t.diff = undefined;
+        break;
+      }
+      case "turn_context": {
+        // Mid-turn context reading (turn_context, §3.2): the server omits the
+        // window when this reading doesn't know one, so keep the previous.
+        const data = env.data as unknown as Partial<ContextData>;
+        const prev = this.contextBySession[sessionId];
+        this.contextBySession[sessionId] = {
+          ...prev,
+          estimatedTokens: data.estimatedTokens ?? prev?.estimatedTokens ?? 0,
+          maxTokens: data.maxTokens || prev?.maxTokens || 0,
+          windowTokens: data.windowTokens || prev?.windowTokens,
+          budgetTokens: data.budgetTokens ?? prev?.budgetTokens,
+          autoCompactOff: data.autoCompactOff ?? prev?.autoCompactOff,
+          source: data.source ?? "provider",
+        };
         break;
       }
       case "turn_completed": {
@@ -2119,6 +2245,14 @@ export class ServerState {
           msg.streaming = false;
           msg.finish = data;
         }
+        for (const t of Object.values(this.touchedBySession[sessionId] ?? {})) t.state = "done";
+        // A turn's end is a real end: anything still showing in-flight for it (a cancel landed
+        // between a tool_call_requested and its tool_result) settles as an error, not a spinner.
+        this.finalizeStaleCalls(
+          sessionId,
+          env.turnId,
+          data.finishReason === "cancelled" ? "Cancelled with the turn" : "Turn ended without a result",
+        );
         this.bumpFs(this.projectBySession[sessionId]);
         // Swap the optimistic placeholder ids for the server's real ones as soon as known, so
         // retry/edit work immediately without waiting on a reopen (v2.13 userMessageId/messageId).
@@ -2553,6 +2687,42 @@ export class ServerState {
         if (ctx) this.contextBySession[sessionId] = { ...ctx, estimatedTokens: data.tokensAfter, source: "estimated" };
         break;
       }
+      case "side_answer": {
+        const d = env.data as unknown as SideAnswerData;
+        const run = this.sideRuns[d.requestId];
+        if (!run) break;
+        if (d.delta) run.text += d.delta;
+        if (!d.done) break;
+        run.done = true;
+        run.error = d.error;
+        if (run.anchor && !d.error) {
+          const msg = this.messagesBySession[sessionId]?.find((m) => m.id === run.anchor);
+          if (msg) {
+            msg.thread = [...(msg.thread ?? []), { role: "user", content: run.question }, { role: "assistant", content: d.text ?? run.text }];
+            delete this.sideRuns[d.requestId];
+            this.saveChatHistory();
+          }
+        }
+        break;
+      }
+      case "message_summary": {
+        const d = env.data as unknown as MessageSummaryData;
+        const how = this.summaryPending[d.messageId];
+        delete this.summaryPending[d.messageId];
+        if (d.error) {
+          if (how === "manual") this.summaryError[d.messageId] = d.error;
+          break;
+        }
+        delete this.summaryError[d.messageId];
+        const msg = this.messagesBySession[sessionId]?.find((m) => m.id === d.messageId);
+        if (msg) {
+          msg.summary = d.summary;
+          msg.ask = d.ask;
+          msg.actions = d.actions;
+          this.saveChatHistory();
+        }
+        break;
+      }
       case "plan_written": {
         const data = env.data as { path: string; content: string };
         this.planBySession = {
@@ -2593,6 +2763,7 @@ export class ServerState {
               : `⚠ ${data.message}`;
             msg.text = msg.text ? `${msg.text}\n\n${note}` : note;
           }
+          this.finalizeStaleCalls(sessionId, env.turnId, "Failed: " + data.message);
           delete this.activeTurnBySession[sessionId];
           this.saveChatHistory();
         }
@@ -2822,7 +2993,9 @@ class AppState {
   /** themes.json entries, loaded by loadCustomThemes (ipc.ts). */
   customThemes = $state<AppTheme[]>([]);
 
-  settings = $state<AppSettings>(typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS });
+  settings = $state<AppSettings>(
+    typeof localStorage !== "undefined" ? loadSettings() : { ...DEFAULT_SETTINGS, discordRpc: { ...DEFAULT_DISCORD_RPC } },
+  );
 
   // Only one directory-browse flow (§3.1) is ever open at once, so these stay global rather
   // than per-server; `browsingConnectionId` guards against a late response from an abandoned browse.

@@ -7,9 +7,10 @@ let loading: Promise<void> | undefined;
 const cache = new Map<string, string>();
 const CACHE_MAX = 500;
 
-/** Resolves once KaTeX and its stylesheet (woff2 fonts only, see vite.config.js) are in. */
+/** Resolves once KaTeX, its stylesheet (woff2 fonts only, see vite.config.js) and mhchem (`\ce{H2O}`,
+ * `\pu{1.5e-3 mol}`: chemistry and units, registered on KaTeX by importing it) are in. */
 export function loadKatex(): Promise<void> {
-  return (loading ??= Promise.all([import("katex"), import("katex/dist/katex.min.css")]).then(
+  return (loading ??= Promise.all([import("katex"), import("katex/dist/katex.min.css"), import("katex/contrib/mhchem")]).then(
     ([m]) => void (katex = m.default),
     (e) => {
       loading = undefined; // let a later formula try again

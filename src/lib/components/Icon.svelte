@@ -121,6 +121,7 @@
   import brandGithub from "@tabler/icons/outline/brand-github.svg?raw";
   import brandVscode from "@tabler/icons/outline/brand-vscode.svg?raw";
   import brandDocker from "@tabler/icons/outline/brand-docker.svg?raw";
+  import brandDiscord from "@tabler/icons/outline/brand-discord.svg?raw";
   import browser from "@tabler/icons/outline/browser.svg?raw";
   import arrowsDiff from "@tabler/icons/outline/arrows-diff.svg?raw";
   import robot from "@tabler/icons/outline/robot.svg?raw";
@@ -244,6 +245,7 @@
     "brand-github": brandGithub,
     "brand-vscode": brandVscode,
     "brand-docker": brandDocker,
+    "brand-discord": brandDiscord,
     "browser": browser,
     "arrows-diff": arrowsDiff,
     "robot": robot,

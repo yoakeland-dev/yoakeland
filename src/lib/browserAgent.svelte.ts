@@ -3,10 +3,13 @@
 // same one the user watches, then answers with browser_response.
 import { app, type ConnectionId } from "./state.svelte";
 
+/** What an action gives back: the text, or the text with a screenshot's capture (base64, §3.2 browser_response). */
+export type BrowserOutput = string | { output: string; image: { mimeType: string; data: string; width: number; height: number } };
+
 /** One chat's browser panel, as the agent drives it. */
 export interface BrowserController {
   /** `guard.hosts`: stop any page-initiated navigation off these hosts while the action runs. */
-  run(action: string, args: Record<string, unknown>, guard?: { hosts: string[] }): Promise<string>;
+  run(action: string, args: Record<string, unknown>, guard?: { hosts: string[] }): Promise<BrowserOutput>;
 }
 
 const controllers = new Map<string, BrowserController>();
@@ -69,7 +72,7 @@ interface BrowserRequest {
 
 export async function handleBrowserRequest(connectionId: ConnectionId, req: BrowserRequest, send: (data: object) => void) {
   const server = app.servers[connectionId];
-  const reply = (r: { output?: string; error?: string }) => send({ requestId: req.requestId, ...r });
+  const reply = (r: { output?: string; image?: object; error?: string }) => send({ requestId: req.requestId, ...r });
   if (!server) return reply({ error: "the app lost this connection" });
   try {
     const args = { ...(req.args ?? {}) };
@@ -94,7 +97,8 @@ export async function handleBrowserRequest(connectionId: ConnectionId, req: Brow
     const guard = req.blockCrossOrigin
       ? { hosts: [...(serverHost ? [serverHost] : LOCAL_HOSTS), ...(req.allowedHosts ?? [])] }
       : undefined;
-    reply({ output: await c.run(req.action, args, guard) });
+    const out = await c.run(req.action, args, guard);
+    reply(typeof out === "string" ? { output: out } : out);
   } catch (e) {
     reply({ error: e instanceof Error ? e.message : String(e) });
   }

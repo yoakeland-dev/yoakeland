@@ -32,6 +32,8 @@
   import EmptyState from "./sidebar/EmptyState.svelte";
   import { agentBrowsers } from "../browserAgent.svelte";
 
+  import { setChatFocus, setEditorFocus } from "../editorPresence.svelte";
+
   let {
     sessionId,
     ownsChrome = true,
@@ -77,6 +79,14 @@
   });
 
   const pick = (id: SidebarPanel | undefined) => server?.openSidebarPanel(sessionId, id);
+
+  /** Swapping the layout or picking a panel is a deliberate surface choice, so Discord presence
+   * follows the surface that now holds the main area (the raw focus events can't see a swap). */
+  function selectPresenceSurface(id: SidebarPanel | undefined, afterToggleTo?: boolean) {
+    const swappedNow = afterToggleTo ?? !!server?.chatSidebarSwappedBySession[sessionId];
+    if (id === "explorer" && swappedNow) setEditorFocus(sessionId, true);
+    else setChatFocus(sessionId);
+  }
 
   // Tabs that don't fit the strip go behind a "…" menu; the open one always stays in view. The
   // title only shows when every tab fits with room to spare for it.
@@ -164,7 +174,7 @@
               class:active={p.id === panel}
               aria-selected={p.id === panel}
               {@attach tip(p.label)}
-              onclick={() => pick(p.id)}
+              onclick={() => (pick(p.id), selectPresenceSurface(p.id))}
             >
               <Icon name={p.icon as any} size={14} />
             </button>
@@ -177,7 +187,7 @@
               <DropdownMenu.Portal>
                 <DropdownMenu.Content class="context-menu" align="start" sideOffset={4}>
                   {#each overflow as p (p.id)}
-                    <DropdownMenu.Item class="context-menu-item" onSelect={() => pick(p.id)}>
+                    <DropdownMenu.Item class="context-menu-item" onSelect={() => (pick(p.id), selectPresenceSurface(p.id))}>
                       <Icon name={p.icon as any} size={13} />
                       <span>{p.label}</span>
                     </DropdownMenu.Item>
@@ -194,12 +204,15 @@
         class="tab desk-only"
         class:active={swapped}
         {@attach tip(swapped ? "Put the chat back in the middle" : "Give tools the main area, chat on the side")}
-        onclick={() => server?.toggleChatSidebarSwapped(sessionId)}
+        onclick={() => {
+          server?.toggleChatSidebarSwapped(sessionId);
+          selectPresenceSurface(server?.chatSidebarPanelBySession[sessionId], server?.chatSidebarSwappedBySession[sessionId]);
+        }}
       >
         <Icon name="switch-horizontal" size={14} />
       </button>
       {#if current}
-        <button type="button" class="tab" {@attach tip("All tools")} onclick={() => pick(undefined)}>
+        <button type="button" class="tab" {@attach tip("All tools")} onclick={() => (pick(undefined), selectPresenceSurface(undefined))}>
           <Icon name="layout-grid" size={14} />
         </button>
       {/if}
@@ -212,7 +225,7 @@
         </div>
         <div class="grid">
           {#each panels as p (p.id)}
-            <button type="button" class="card" onclick={() => pick(p.id)}>
+            <button type="button" class="card" onclick={() => (pick(p.id), selectPresenceSurface(p.id))}>
               <span class="card-icon"><Icon name={p.icon as any} size={17} /></span>
               <span class="card-label">{p.label}</span>
               <span class="card-hint">{p.hint}</span>

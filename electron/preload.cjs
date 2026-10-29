@@ -16,9 +16,10 @@ const COMMANDS = new Set([
   "pair_tcp", "disconnect", "send_envelope", "spawn_detached_unix_server", "server_latest_release",
   "server_install", "read_text_file", "read_file_bytes", "load_credential", "store_credential",
   "oauth_listen", "oauth_wait", "oauth_wait_params", "oauth_cancel", "oauth_expect_state", "shell:notify", "shell:badge",
+  "discord_configure", "discord_presence", "discord_status", "discord_assets",
 ]);
 
-const EVENTS = ["yoake-event", "yoake-log", "yoake-disconnected", "yoake-notification-open", "yoake-themes-changed", "yoake-close-requested"];
+const EVENTS = ["yoake-event", "yoake-log", "yoake-disconnected", "yoake-notification-open", "yoake-themes-changed", "yoake-close-requested", "yoake-discord-status", "yoake-guest-key"];
 
 contextBridge.exposeInMainWorld("yoake", {
   invoke: (cmd, args) => (COMMANDS.has(cmd) ? call(cmd, args) : Promise.reject("unknown command")),
@@ -53,4 +54,8 @@ contextBridge.exposeInMainWorld("yoake", {
   setWindowChrome: (on) => call("shell:set_window_chrome", { on }),
   placeTrafficLights: (x, y) => call("shell:place_traffic_lights", { x, y }),
   styleOverlay: (symbolColor, height) => call("shell:style_overlay", { symbolColor, height }),
+  discordConfigure: (config) => call("discord_configure", { config }),
+  discordPresence: (activity) => call("discord_presence", { activity }),
+  discordStatus: () => call("discord_status"),
+  discordAssets: (clientId) => call("discord_assets", { clientId }),
 });

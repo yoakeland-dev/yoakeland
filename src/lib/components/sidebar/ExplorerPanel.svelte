@@ -13,6 +13,7 @@
   import { fileIconUrl, folderIcon } from "../../fileIcons";
   import { fuzzyFilter } from "../../fuzzy";
   import { keyLabel, matches as keyMatches } from "../../keybinds.svelte";
+  import { reportEditorFile, setEditorFocus } from "../../editorPresence.svelte";
   import type { TreeEntry } from "../../types";
   import ContextMenu, { type ContextMenuItem } from "../ContextMenu.svelte";
   import Icon from "../Icon.svelte";
@@ -61,6 +62,20 @@
 
   const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
   /** A typed name may be a path ("docs/api/intro.md"); null if it's empty or climbs out of the project. */
+  /** Whether this chat's agent is changing (or has changed) the file, or anything under the folder. */
+  function touchOf(path: string, isDir: boolean): "working" | "done" | undefined {
+    const files = server?.touchedBySession[sessionId];
+    if (!files) return undefined;
+    if (!isDir) return files[path]?.state;
+    let found: "done" | undefined;
+    for (const [p, t] of Object.entries(files)) {
+      if (!p.startsWith(path + "/")) continue;
+      if (t.state === "working") return "working";
+      found = "done";
+    }
+    return found;
+  }
+
   function normalize(p: string): string | null {
     const out: string[] = [];
     for (const seg of p.split("/")) {
@@ -117,6 +132,14 @@
     { delay: 300, skipFirst: true },
   );
 
+  // Publish the tab that's actually on screen so Discord presence can follow the editor.
+  // The active-session read matters: a session switch does not change this component's props.
+  $effect(() => {
+    void app.active?.currentSessionId;
+    const onScreen = visible && (wide || showing === "editor");
+    reportEditorFile(sessionId, projectPath, onScreen ? active : null);
+  });
+
   function toggle(dir: string) {
     expanded[dir] = !expanded[dir];
     if (expanded[dir]) void load(dir);
@@ -132,6 +155,8 @@
     }
     active = path;
     showing = "editor";
+    // Selecting a file is editing, even when the click landed on the tree (no editor focus yet).
+    setEditorFocus(sessionId, true);
   }
 
   async function closeTab(path: string) {
@@ -341,6 +366,7 @@
   {#if naming && naming.kind !== "rename" && naming.dir === dir}{@render nameRow(depth)}{/if}
   {#each children[dir] ?? [] as e (e.name)}
     {@const path = join(dir, e.name)}
+    {@const touch = touchOf(path, e.isDir)}
     {#if naming?.kind === "rename" && naming.path === path}
       {@render nameRow(depth)}
     {:else}
@@ -365,6 +391,7 @@
           <img class="ficon" src={fileIconUrl(e.name)} alt="" />
         {/if}
         <span class="label" class:link={e.isSymlink}>{e.name}</span>
+        {#if touch}<span class="touch" class:working={touch === "working"} {@attach tip(touch === "working" ? "The agent is changing this" : "Changed by the agent in this chat")}></span>{/if}
       </button>
     {/if}
     {#if e.isDir && expanded[path]}{@render folder(path, depth + 1)}{/if}
@@ -448,7 +475,15 @@
   {/if}
 
   {#if wide || showing === "editor"}
-    <div class="editors">
+    <div
+      class="editors"
+      onpointerdown={() => setEditorFocus(sessionId, true)}
+      onfocusin={() => setEditorFocus(sessionId, true)}
+      onfocusout={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (!next || !e.currentTarget.contains(next)) setEditorFocus(sessionId, false);
+      }}
+    >
       {#if tabs.length || !wide}
         <div class="tabs" onwheel={wheelSideways}>
           {#if !wide}
@@ -691,6 +726,28 @@
     min-height: 0;
     overflow: auto;
     padding: var(--space-half) 0 var(--space-2);
+  }
+  .touch {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    margin-left: auto;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  .touch.working {
+    background: var(--accent);
+    animation: touch-pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes touch-pulse {
+    50% {
+      opacity: 0.3;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .touch.working {
+      animation: none;
+    }
   }
   .row {
     display: flex;

@@ -1,10 +1,9 @@
 <script lang="ts">
   import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
-  import { slide } from "svelte/transition";
   import { app } from "../state.svelte";
   import { setWebToolsEnabled, setRuntimeSettings, refreshModels } from "../ipc";
-  import { LADDER, MODES, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable, getRunOnce, setRunOnce } from "../modes";
+  import { LADDER, MODES, PLAN, MODE_BY_ID, modeHint, sessionModes, chooseMode, nearestAvailable } from "../modes";
   import type { ChatMode } from "../types";
   import Icon from "./Icon.svelte";
   import ModeDetail from "./ModeDetail.svelte";
@@ -51,17 +50,6 @@
   let hovered = $state<ChatMode | null>(null);
   const shown = $derived<ChatMode>(hovered ?? currentMode);
 
-  let runOnce = $state(getRunOnce());
-  const runOnceActive = $derived(!!server?.runOnce[sessionId]);
-  // Flipped while already on Run, it applies to this chat right away.
-  function toggleRunOnce() {
-    runOnce = !runOnce;
-    setRunOnce(runOnce);
-    if (!server || currentMode !== "autonomous") return;
-    if (runOnce) server.runOnce[sessionId] = server.lastUsedMode && server.lastUsedMode !== "autonomous" ? server.lastUsedMode : "read_write";
-    else delete server.runOnce[sessionId];
-  }
-
   // Plan is a phase in front of the dial: while planning, the dial says where the plan lands.
   function pick(id: ChatMode) {
     if (!cid || !server) return;
@@ -96,7 +84,7 @@
       <span class="crossfade a"><Icon name={currentMeta.icon as any} size={13} /></span>
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
-    <span class="trigger-label"><SlideText text={currentMeta.label + (runOnceActive ? " · 1 turn" : "")} {dir} /></span>
+    <span class="trigger-label"><SlideText text={currentMeta.label} {dir} /></span>
     {#if unsandboxed}<span class="danger-dot" class:off={shellOff} aria-label="No sandbox"></span>{/if}
   </Popover.Trigger>
 
@@ -152,12 +140,6 @@
 
       <ModeDetail mode={shown} spec={info.specs?.[shown]} cli={cliProvider} {unsandboxed} {shellOff} />
 
-      {#if shown === "autonomous" || (currentMode === "autonomous" && !hovered)}
-        <label class="line" transition:slide={{ duration: 160 * (app.settings.animationSpeed || 0) }}>
-          <span>Just this turn</span>
-          <Switch checked={runOnce} onchange={toggleRunOnce} />
-        </label>
-      {/if}
       {#if !cliProvider && projectPath}
         <label class="line foot">
           <span>Web search <em>this project</em></span>
