@@ -9,6 +9,8 @@
   let { calls }: { calls: ToolCallEntry[] } = $props();
 
   let expanded = $state(false);
+  // Cards mount on first open, not with every collapsed group.
+  let opened = $state(false);
 
   const IN_FLIGHT = new Set(["requested", "awaiting_permission", "running"]);
   const isRunning = $derived(calls.some((c) => IN_FLIGHT.has(c.status)));
@@ -44,7 +46,7 @@
 </script>
 
 <div class="group">
-  <button class="head" onclick={() => (expanded = !expanded)}>
+  <button class="head" onclick={() => (expanded = !expanded, (opened = true))}>
     <span class="icon-slot">
       {#if held.flashing}
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
@@ -66,9 +68,11 @@
   <div class="accordion" class:open={expanded}>
     <div class="accordion-inner">
       <div class="body">
-        {#each calls as call (call.toolCallId)}
-          <ToolCallCard {call} />
-        {/each}
+        {#if opened}
+          {#each calls as call (call.toolCallId)}
+            <ToolCallCard {call} />
+          {/each}
+        {/if}
       </div>
     </div>
   </div>

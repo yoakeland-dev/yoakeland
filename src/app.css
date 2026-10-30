@@ -1,5 +1,13 @@
-@import url("https://fonts.googleapis.com/css2?family=Questrial&display=swap");
 @import "./lib/ui.css";
+
+/* Questrial (SIL OFL), latin subset. */
+@font-face {
+  font-family: "Questrial";
+  src: url("./lib/fonts/Questrial-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 
 @font-face {
   font-family: "Departure Mono";
@@ -9,11 +17,13 @@
 }
 
 :root {
+  /* A chat mention's icon, for a mask (the glyph takes the chip's text color). */
+  --chat-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1'/%3E%3C/svg%3E");
   color-scheme: dark;
 
   --bg: #0b0c11;
   --panel-bg: #16181f;
-  --panel-border: rgba(255, 255, 255, 0.07);
+  --panel-border: var(--wash-2);
   /* The two halves of --panel-border, so a hairline can sit a touch lighter
      along its top edge than along its bottom one — what keeps a 1px border
      from reading as a flat outline. Applied at each border, in the same rule
@@ -21,12 +31,12 @@
      `border-block-color: var(--panel-border-top) var(--panel-border-bottom);`
      Deliberately not an inset top highlight: that would also paint on the
      controls that stay borderless until hovered (chips, triggers, pills). */
-  --panel-border-top: rgba(255, 255, 255, 0.1);
-  --panel-border-bottom: rgba(255, 255, 255, 0.045);
+  --panel-border-top: var(--wash-2);
+  --panel-border-bottom: var(--wash-2);
   --sidebar-fg: #cfd2dc;
   --sidebar-fg-dim: #83879a;
-  --sidebar-hover: rgba(255, 255, 255, 0.06);
-  --sidebar-active: rgba(255, 255, 255, 0.1);
+  --sidebar-hover: var(--wash-2);
+  --sidebar-active: var(--wash-3);
 
   --text: #e7e8ee;
   --text-dim: #9498a8;
@@ -49,10 +59,18 @@
   --info: var(--info-base);
 
   --bubble-user-bg: #232838;
-  --bubble-border: rgba(255, 255, 255, 0.08);
+  --bubble-border: var(--wash-3);
 
   --statusbar-bg: #10141c;
   --statusbar-fg: #9498a8;
+
+  /* Washes: the four tints a surface takes at rest, hover, active and edge. Mixed from --text
+     rather than white, so they follow whichever theme, accent hue or light/dark mode is on and
+     the Quiet Room dimming. Never write rgba(255,255,255,x) in a component. */
+  --wash-1: color-mix(in srgb, var(--text) 4%, transparent);
+  --wash-2: color-mix(in srgb, var(--text) 6%, transparent);
+  --wash-3: color-mix(in srgb, var(--text) 9%, transparent);
+  --wash-4: color-mix(in srgb, var(--text) 14%, transparent);
 
   /* Radii follow the inset rule: a child's radius is its container's radius
      minus the gap between their edges (padding + border), so the curves stay
@@ -65,9 +83,11 @@
                     minus the ~3px inset such things sit at
      --radius-pill (999px) is for true binary toggles/tags. -md and -xl are
      legacy aliases; new rules should pick lg/sm/xs by depth. */
-  --radius-lg: 12px;
-  --radius-sm: 7px;
+  --radius-lg: 10px;
+  --radius-sm: 6px;
   --radius-xs: 4px;
+  /* The floating composer and the ask card that joins it. */
+  --radius-float: 14px;
   --radius-md: var(--radius-sm);
   --radius-xl: var(--radius-lg);
   --radius-pill: 999px;
@@ -221,7 +241,7 @@
      which has to be a solid-ish tone of its own (a translucent pill only
      frosts once it's hovered). */
   --float-bg: var(--panel-bg);
-  --float-hover-bg: rgba(255, 255, 255, 0.06);
+  --float-hover-bg: var(--wash-2);
   --float-blur: none;
   /* The outline of a floating surface, split into the same two halves
      --panel-border is (see above) — an exact alias of it in opaque mode, and a
@@ -240,6 +260,13 @@
      Select/Menu/Dialog all keep a closing surface mounted for exactly as
      long as its CSS animation runs (PresenceManager), so an out-keyframe
      here is enough — no JS timing to coordinate. */
+  /* Depth is tonal first; shadow only separates what floats. Three roles, no one-offs:
+     pop for menus, dropdowns, toasts and composer popups; dialog for centered cards and
+     pickers; drawer for the mobile sidebar sliding over the page. */
+  --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --shadow-dialog: 0 20px 60px rgba(0, 0, 0, 0.4);
+  --shadow-drawer: 12px 0 40px rgba(0, 0, 0, 0.35);
+
   --float-enter-duration: calc(0.16s * var(--anim-speed, 1));
   --float-exit-duration: calc(0.12s * var(--anim-speed, 1));
   --dialog-enter-duration: calc(0.18s * var(--anim-speed, 1));
@@ -307,8 +334,8 @@
      at all over the flat panel fill most of these surfaces sit on. */
   --float-blur: blur(16px);
   --float-border: color-mix(in srgb, var(--text) 14%, transparent);
-  --float-border-top: color-mix(in srgb, var(--text) 20%, transparent);
-  --float-border-bottom: color-mix(in srgb, var(--text) 9%, transparent);
+  --float-border-top: color-mix(in srgb, var(--text) 14%, transparent);
+  --float-border-bottom: color-mix(in srgb, var(--text) 14%, transparent);
 }
 
 /* data-window-chrome is set by applyWindowChrome (state.svelte.ts). */
@@ -390,6 +417,18 @@
   color: var(--accent);
 }
 
+/* The lamp: a chat is waiting on you. One dot, used on its sidebar row, its tab and its hover card. */
+.lamp {
+  display: block;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  margin: 3px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
 * {
   box-sizing: border-box;
   user-select: none;
@@ -417,7 +456,7 @@ body {
    paints those custom ones on the main thread, so every scroll frame repainted them. */
 body {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  scrollbar-color: var(--wash-4) transparent;
 }
 
 button {
@@ -485,7 +524,7 @@ pre {
 }
 .picker-trigger:hover,
 .picker-trigger.open {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--wash-2);
   color: var(--text);
 }
 .picker-trigger .trigger-icon {
@@ -570,7 +609,7 @@ pre {
   border: 1px solid var(--float-border);
   border-block-color: var(--float-border-top) var(--float-border-bottom);
   border-radius: var(--radius-lg);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-pop);
   z-index: var(--z-popover);
   animation: floatIn var(--float-enter-duration) ease-out;
 }

@@ -12,6 +12,8 @@
   let { steps, live }: { steps: AssistantStep[]; live: boolean } = $props();
 
   let expanded = $state(false);
+  // The steps mount on first open, not with every collapsed group.
+  let opened = $state(false);
 
   const IN_FLIGHT = new Set(["requested", "awaiting_permission", "running"]);
   const allCalls = $derived(steps.flatMap((s) => (s.kind === "cluster" ? s.calls : [])));
@@ -46,7 +48,7 @@
 </script>
 
 <div class="group">
-  <button class="head" onclick={() => (expanded = !expanded)}>
+  <button class="head" onclick={() => (expanded = !expanded, (opened = true))}>
     <span class="icon-slot">
       {#if held.flashing}
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
@@ -76,6 +78,7 @@
              the run ending) breaks them up, same as AssistantMessage.svelte
              already clusters them. One final "Done" stop closes the chain
              once nothing's left running. -->
+        {#if opened}
         {#each steps as step (step.kind === "thought" ? `thought-${step.at}` : `cluster-${step.calls[0]?.toolCallId}`)}
           {#if step.kind === "thought"}
             <p class="thought-text scroll-cap" {@attach scrollFade}>{step.text.trimEnd()}</p>
@@ -83,6 +86,7 @@
             <ToolCallGroup calls={step.calls} />
           {/if}
         {/each}
+        {/if}
         {#if !isRunning}
           <div class="done-stop">
             <span class="done-icon" class:err={hasError}><Icon name={hasError ? "alert-circle" : "circle-check"} size={14} /></span>

@@ -65,7 +65,7 @@
       {#each shown as t (t.key)}
         {#snippet card()}<ChatCard connectionId={t.cid} session={t.session} />{/snippet}
         <Tabs.Trigger value={t.key} class="chrome-surface live-tab {t.status}" {@attach tip(card, { side: "bottom" })}>
-          <span class="status"><Icon name={STATUS_ICON[t.status]} size={13} /></span>
+          <span class="status">{#if t.status === "action"}<span class="lamp"></span>{:else}<Icon name={STATUS_ICON[t.status]} size={13} />{/if}</span>
           <span class="name">{sessionTitle(t.session)}</span>
         </Tabs.Trigger>
       {/each}
@@ -114,6 +114,9 @@
   /* Same card as the chat island (.chrome-surface), the whole of it the button. */
   .live :global(.live-tab) {
     flex-shrink: 0;
+    /* Filled, not outlined: the chrome island's edge is dropped for these. */
+    border-color: transparent;
+    background: var(--wash-1);
     display: flex;
     align-items: center;
     gap: 0.43rem;
@@ -144,7 +147,6 @@
   }
   /* A chat that's waiting on you gets a warm edge, the cue the sidebar's card used to give. */
   .live :global(.live-tab.action) {
-    border-color: color-mix(in srgb, var(--warning) 45%, transparent);
     color: var(--text);
   }
   .live :global(.live-tab .name) {

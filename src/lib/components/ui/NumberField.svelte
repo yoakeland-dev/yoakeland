@@ -72,7 +72,7 @@
 </script>
 
 <div class="ui-field num {cls}" class:invalid class:disabled>
-  <button type="button" class="ui-mini" aria-label="Decrease" tabindex="-1" disabled={disabled || value <= min} onpointerdown={(e) => hold(-1, e)} onpointerup={release} onpointerleave={stop} onpointercancel={stop}>
+  <button type="button" class="ui-mini" aria-label="Decrease" tabindex="-1" class:limit={disabled || value <= min} aria-disabled={disabled || value <= min} onpointerdown={(e) => hold(-1, e)} onpointerup={release} onpointerleave={stop} onpointercancel={stop}>
     <Icon name="minus" size={13} />
   </button>
   <span class="mid">
@@ -95,12 +95,20 @@
     />
     {#if unit}<span class="affix">{unit}</span>{/if}
   </span>
-  <button type="button" class="ui-mini" aria-label="Increase" tabindex="-1" disabled={disabled || value >= max} onpointerdown={(e) => hold(1, e)} onpointerup={release} onpointerleave={stop} onpointercancel={stop}>
+  <button type="button" class="ui-mini" aria-label="Increase" tabindex="-1" class:limit={disabled || value >= max} aria-disabled={disabled || value >= max} onpointerdown={(e) => hold(1, e)} onpointerup={release} onpointerleave={stop} onpointercancel={stop}>
     <Icon name="plus" size={13} />
   </button>
 </div>
 
 <style>
+  /* Not `disabled`: Chromium keeps a button's :hover stale once it is disabled under the cursor. */
+  .ui-mini.limit,
+  .ui-mini.limit:hover {
+    background: none;
+    color: var(--text-dim);
+    opacity: 0.35;
+    pointer-events: none;
+  }
   .num {
     padding: 0 0.21rem;
     width: auto;
@@ -115,8 +123,9 @@
   }
   .mid input {
     flex: none;
-    width: 4em;
-    text-align: right;
+    field-sizing: content;
+    min-width: 3ch;
+    text-align: center;
     font-variant-numeric: tabular-nums;
   }
 </style>

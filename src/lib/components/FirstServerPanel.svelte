@@ -1,16 +1,19 @@
 <script lang="ts">
   // Shown in place of the chat panel whenever there's no active connection
   // (app.active is null), rather than an empty panel.
-  import ConnectForm from "./ConnectForm.svelte";
+  import { app } from "../state.svelte";
+  import Button from "./ui/Button.svelte";
+  import Icon from "./Icon.svelte";
 </script>
 
 <div class="wrap">
   <div class="card">
-    <h1>Connect a server</h1>
-    <p class="sub">
-      Yoakeland runs as its own process. Connect to one already running, or launch one here.
-    </p>
-    <ConnectForm />
+    <h1>No server connected</h1>
+    <p class="sub">Yoakeland runs as its own process. Add a server to get started.</p>
+    <Button type="button" onclick={() => app.openAddServer()}>
+      <Icon name="plus" size={14} />
+      Add server
+    </Button>
   </div>
 </div>
 
@@ -26,11 +29,7 @@
   }
   .card {
     width: min(28rem, 100%);
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    border-radius: var(--radius-lg);
-    padding: 1.7rem;
+    text-align: center;
   }
   h1 {
     margin: 0 0 var(--space-half);

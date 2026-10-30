@@ -583,7 +583,7 @@
     color: var(--text-dim);
   }
   .tab.active {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     color: var(--text);
   }
   .tab-main {

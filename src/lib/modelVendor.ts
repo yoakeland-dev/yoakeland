@@ -8,7 +8,6 @@ export const CLI_AGENTS: Record<CliKind, { title: string; icon: string; cli: str
   cli_cursor: { title: "Cursor", icon: "cursor", cli: "cursor-agent", defaultName: "cursor-agent" },
   cli_kimi: { title: "Kimi", icon: "kimi", cli: "kimi", defaultName: "kimi-cli" },
   cli_opencode: { title: "OpenCode", icon: "opencode", cli: "opencode", defaultName: "opencode" },
-  cli_gemini: { title: "Gemini", icon: "gemini", cli: "gemini", defaultName: "gemini-cli" },
   cli_grok: { title: "Grok", icon: "grok", cli: "grok", defaultName: "grok-cli" },
   cli_deepseek: { title: "DeepSeek", icon: "deepseek", cli: "dsh", defaultName: "deepseek-cli" },
   cli_amp: { title: "Amp", icon: "amp", cli: "amp", defaultName: "amp-cli" },
@@ -61,7 +60,36 @@ export function directVendorOf(p: ProviderInfo, model?: string): Vendor {
 export function isOpenRouter(p: ProviderInfo): boolean {
   return p.kind === "api_key" && p.httpProvider === "openrouter";
 }
-export function isCli(p: ProviderInfo): p is ProviderInfo & { kind: CliKind } {
+/** Kinds whose accounts differ by login folder; every other agent has one login per machine. */
+export const MULTI_ACCOUNT: ReadonlySet<string> = new Set(["cli_claude", "cli_codex"]);
+
+export interface AgentGroup {
+  /** Stable key: the kind, or `cli_acp:<command and args>` so each custom command is its own agent. */
+  key: string;
+  kind: ProviderInfo["kind"];
+  title: string;
+  icon: string;
+  accounts: ProviderInfo[];
+}
+
+/** Coding-agent providers grouped by agent, accounts sorted by label. */
+export function agentGroups(providers: ProviderInfo[]): AgentGroup[] {
+  const groups = new Map<string, AgentGroup>();
+  for (const p of providers.filter(isCli)) {
+    const key = p.kind === "cli_acp" ? `cli_acp:${[p.command ?? p.name, ...(p.args ?? [])].join(" ")}` : p.kind;
+    let g = groups.get(key);
+    if (!g) {
+      const meta = cliMeta(p);
+      g = { key, kind: p.kind, title: p.kind === "cli_acp" ? providerLabel(p) : meta.title, icon: meta.icon, accounts: [] };
+      groups.set(key, g);
+    }
+    g.accounts.push(p);
+  }
+  for (const g of groups.values()) g.accounts.sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)));
+  return [...groups.values()];
+}
+
+export function isCli(p: ProviderInfo): p is ProviderInfo & { kind: CliKind | "cli_acp" } {
   return p.kind.startsWith("cli_");
 }
 
@@ -161,8 +189,9 @@ export function titleFor(entry: Entry): string {
   return entry.model.displayName || entry.model.id;
 }
 
-/** The built-in claude-/codex-subscription providers read as just "subscription". */
+/** What to show for a provider: its label; the built-in claude-/codex-subscription names read as just "subscription". */
 export function providerLabel(p: ProviderInfo): string {
+  if (p.label) return p.label;
   return p.name.endsWith("-subscription") ? "subscription" : p.name;
 }
 

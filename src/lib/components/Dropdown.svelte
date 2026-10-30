@@ -167,7 +167,7 @@
   :global(.dropdown-trigger:hover),
   :global(.dropdown-trigger:focus-visible),
   :global(.dropdown-trigger[data-state="open"]) {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border-color: var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     outline: none;
@@ -233,7 +233,7 @@
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-lg);
     padding: var(--space-half);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-pop);
     z-index: var(--z-dropdown);
     animation: floatIn var(--float-enter-duration) ease-out;
   }
@@ -252,7 +252,7 @@
     color: var(--sidebar-fg-dim);
   }
   :global(.dropdown-search:focus-within) {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border-color: var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
   }

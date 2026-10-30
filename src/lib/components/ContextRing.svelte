@@ -266,7 +266,7 @@
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-dialog);
     padding: 0.5rem 0.64rem 0.64rem;
     z-index: var(--z-popover);
     color: var(--text);
@@ -336,7 +336,7 @@
     height: 0.62rem;
     border-radius: var(--radius-pill);
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
     margin-bottom: 0.55rem;
     gap: 1px;
   }
@@ -348,7 +348,7 @@
     background: transparent;
   }
   .seg.buffer {
-    background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0 2px, transparent 2px 5px);
+    background: repeating-linear-gradient(135deg, var(--wash-3) 0 2px, transparent 2px 5px);
   }
   /* An apportioned figure rather than a counted one: hatched. */
   .seg.est,
@@ -413,7 +413,7 @@
     gap: 0.22rem 0.7rem;
     margin: 0;
     padding-top: 0.5rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--wash-3);
   }
   .facts dt {
     color: var(--text-dim);

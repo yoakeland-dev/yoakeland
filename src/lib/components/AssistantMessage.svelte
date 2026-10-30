@@ -3,7 +3,7 @@
   import type { AssistantStep, ChatMessage, ToolCallEntry } from "../types";
   import { app } from "../state.svelte";
   import { retryMessage, sendPrompt, summarizeMessage } from "../ipc";
-  import { vendorMetaFor, titleFor, type Entry } from "../modelVendor";
+  import { vendorMetaFor, titleFor, isCli, providerLabel, type Entry } from "../modelVendor";
   import { relTime, shortNum } from "../format";
   import { liveActivity } from "../activity.svelte";
   import { fade } from "svelte/transition";
@@ -20,6 +20,8 @@
   import CopyButton from "./CopyButton.svelte";
   import MessageThread from "./MessageThread.svelte";
   import SummaryCard from "./SummaryCard.svelte";
+  import SimpleWork from "./SimpleWork.svelte";
+  import { workView, showsAll } from "../workView.svelte";
   import { speech, toggleSpeech } from "../speech.svelte";
 
   let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
@@ -163,6 +165,18 @@
     return segs;
   });
 
+  // Simple view: whatever comes before the reply's closing text (the last text block, if nothing
+  // follows it) folds into one dropdown. A reply that ends on a tool call has no closing text.
+  const finalSeg = $derived.by(() => {
+    const last = segments.at(-1);
+    return last?.kind === "text" && last.text ? last : undefined;
+  });
+  const workSegs = $derived(finalSeg ? segments.slice(0, -1) : segments);
+  const folded = $derived(!showsAll(message.id) && workSegs.some((s) => s.kind !== "text"));
+  const narration = $derived(workSegs.flatMap((s) => (s.kind === "text" ? [s.text] : [])).join("\n"));
+  // Copy takes the answer; the dropdown's narration only comes along with "Copy full reply".
+  const answerText = $derived(folded && finalSeg ? finalSeg.text : message.text);
+
   // Resolved against the live provider/model lists (§3.2 `provider`/`model`
   // per message); null if removed since, or predates the field, so the
   // footer just omits the model chip.
@@ -179,6 +193,13 @@
   });
   const modelMeta = $derived(modelEntry ? vendorMetaFor(modelEntry) : null);
   const modelTitle = $derived(modelEntry ? titleFor(modelEntry) : "");
+  // Which login paid for the turn; only worth saying when the agent has several.
+  const accountChip = $derived(
+    modelEntry && isCli(modelEntry.provider) &&
+      (app.active?.providers.filter((p) => p.kind === modelEntry.provider.kind && p.command === modelEntry.provider.command).length ?? 0) > 1
+      ? providerLabel(modelEntry.provider)
+      : "",
+  );
 
   // `inputTokens` is the full conversation resent with this request, so it
   // doubles as cumulative tokens-in; `outputTokens` is just this reply.
@@ -199,23 +220,46 @@
   });
 </script>
 
+{#snippet block(seg: Segment, i: number, inWork: boolean)}
+  {@const live = i === segments.length - 1 && message.streaming}
+  {#if seg.kind === "toolgroup"}
+    <ToolCallGroup calls={seg.calls} />
+  {:else if seg.kind === "workgroup"}
+    <WorkGroup steps={seg.steps} {live} />
+  {:else if seg.kind === "subagent"}
+    <SubagentCard call={seg.call} {sessionId} />
+  {:else if seg.kind === "thinking"}
+    <ThinkingBlock text={seg.text} />
+  {:else if seg.text}
+    <div class="text" class:narration={inWork}>
+      <Markdown text={seg.text} {live} mentions />
+    </div>
+  {/if}
+{/snippet}
+
 <div class="assistant" class:idle={!message.streaming}>
-  {#each segments as seg, i (seg.key)}
-    {@const live = i === segments.length - 1 && message.streaming}
-    {#if seg.kind === "toolgroup"}
-      <ToolCallGroup calls={seg.calls} />
-    {:else if seg.kind === "workgroup"}
-      <WorkGroup steps={seg.steps} {live} />
-    {:else if seg.kind === "subagent"}
-      <SubagentCard call={seg.call} {sessionId} />
-    {:else if seg.kind === "thinking"}
-      <ThinkingBlock text={seg.text} />
-    {:else if seg.text}
-      <div class="text">
-        <Markdown text={seg.text} {live} mentions />
-      </div>
+  {#if folded}
+    <SimpleWork
+      id={message.id}
+      calls={message.toolCalls}
+      live={message.streaming}
+      hasFinal={!!finalSeg}
+      {narration}
+      durationMs={message.finish?.durationMs ?? message.generationMs}
+    >
+      {#each workSegs as seg, i (seg.key)}
+        {@render block(seg, i, true)}
+      {/each}
+    </SimpleWork>
+    {#if finalSeg}{@render block(finalSeg, segments.length - 1, false)}{/if}
+  {:else}
+    {#if workView.full[message.id] && !message.streaming && workSegs.some((s) => s.kind !== "text")}
+      <button class="fold" onclick={() => (workView.full[message.id] = false)}>Fold work</button>
     {/if}
-  {/each}
+    {#each segments as seg, i (seg.key)}
+      {@render block(seg, i, false)}
+    {/each}
+  {/if}
 
   {#if message.streaming || modelMeta || message.finish || usage || durationS !== null}
     <div
@@ -237,6 +281,7 @@
             {/if}
           </span>
           {#if modelMeta}<span class="model-label">{modelTitle}</span>{/if}
+          {#if accountChip}<span class="account-chip">{accountChip}</span>{/if}
         </span>
       {/if}
 
@@ -300,7 +345,10 @@
         {#if !message.streaming}
           <span class="actions">
             {#if message.text}
-              <CopyButton text={message.text} label="Copy reply" />
+              <CopyButton text={answerText} label={folded ? "Copy answer" : "Copy reply"} />
+              {#if folded && answerText !== message.text}
+                <CopyButton text={message.text} label="Copy full reply" />
+              {/if}
               <button
                 class="action"
                 class:on={speech.id === message.id}
@@ -364,6 +412,23 @@
   .text {
     margin: 0.29rem 0;
     font-size: 0.92rem;
+  }
+  /* Narration between tool calls reads as part of the log, not as the answer. */
+  .text.narration {
+    color: var(--text-dim);
+    font-size: 0.86rem;
+    margin: 0;
+  }
+  .fold {
+    background: none;
+    border: none;
+    padding: 0.2rem 0;
+    color: var(--text-dim);
+    font-size: var(--text-label-size);
+    cursor: pointer;
+  }
+  .fold:hover {
+    color: var(--text);
   }
   .text :global(.markdown) {
     line-height: 1.55;
@@ -433,6 +498,14 @@
   }
   .elapsed {
     font-variant-numeric: tabular-nums;
+  }
+  .account-chip {
+    color: var(--text-dim);
+    opacity: 0.8;
+    white-space: nowrap;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .model-label {
     overflow: hidden;

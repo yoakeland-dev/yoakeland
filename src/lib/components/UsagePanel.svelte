@@ -18,7 +18,7 @@
   import { app, type ServerState } from "../state.svelte";
   import { getUsage, openChatSession } from "../ipc";
   import { basename, sessionTitle } from "../format";
-  import { CLI_AGENTS, titleFor } from "../modelVendor";
+  import { CLI_AGENTS, MULTI_ACCOUNT, providerLabel as accountLabel, titleFor } from "../modelVendor";
   import type { CliKind } from "../types";
   import { tip } from "../tooltip.svelte";
   import { level, limitCards, resetText, resetTitle, type Card } from "../rateLimits";
@@ -166,7 +166,7 @@
     reports.reduce((a, [, f]) => ({ usd: a.usd + f.report!.deleted.costUsd, n: a.n + f.report!.deleted.sessions }), { usd: 0, n: 0 }),
   );
 
-  const provKey = (r: UsageRec) => `${r.server}\0${isSubscription(r.kind) ? r.kind : r.provider}`;
+  const provKey = (r: UsageRec) => `${r.server}\0${isSubscription(r.kind) && !MULTI_ACCOUNT.has(r.kind) ? r.kind : r.provider}`;
   const dimKey: Record<Group, (r: UsageRec) => string> = {
     provider: provKey,
     model: (r) => r.model,
@@ -188,7 +188,11 @@
     return providerBrand({ name: r.provider, kind: r.kind, httpProvider: providerInfo(r)?.httpProvider });
   }
   function providerLabel(r: UsageRec): string {
-    const base = CLI_AGENTS[r.kind as CliKind]?.title ?? r.provider;
+    let base = CLI_AGENTS[r.kind as CliKind]?.title ?? r.provider;
+    // Several accounts of one agent: say which.
+    const sibs = serverByKey(r.server)?.providers.filter((p) => p.kind === r.kind) ?? [];
+    const acct = sibs.length > 1 ? sibs.find((p) => p.name === r.provider) : undefined;
+    if (acct) base += ` · ${accountLabel(acct)}`;
     return multiServer ? `${base} · ${serverLabel(r.server)}` : base;
   }
   function providerIcon(r: UsageRec): string {
@@ -299,7 +303,7 @@
       if (serverFilter && r.server !== serverFilter) continue;
       const rs = byKey.get(k) ?? [];
       const srv = serverByKey(r.server);
-      const lim = limits.find((c) => c.srv === srv && c.id.endsWith(`:${r.kind}`));
+      const lim = limits.find((c) => c.srv === srv && c.id.endsWith(`:${r.provider}`));
       const acct = accounts.find((a) => a.server === r.server && a.provider === r.provider);
       if (!rs.length && !lim && !acct) continue;
       const bySource = groupBy(rs, (x) => x.source);

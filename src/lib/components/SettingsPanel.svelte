@@ -3,6 +3,7 @@
   // server-scoped pages (General, Providers, Projects, Access) store on whichever
   // server the page header points at.
   import { askConfirm } from "../confirm.svelte";
+  import { fmtVersion } from "../serverVersion";
   import { Dialog, Tabs } from "bits-ui";
   import { untrack, type ComponentProps } from "svelte";
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
@@ -30,10 +31,6 @@
     ensureModels,
     setRemotePassword,
     setServerIdentity,
-    registerProvider,
-    removeProvider,
-    signInOpenRouter,
-    cancelOpenRouterSignIn,
     registerToken,
     removeToken,
     removeProject,
@@ -47,6 +44,22 @@
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
   import type { CliKind, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
+  /** Each tab's page title, and whether it applies to one server (shown as [server] / page). */
+  const HEADS: Record<string, { title: string; scoped: boolean }> = {
+    profile: { title: "General", scoped: false },
+    appearance: { title: "Appearance", scoped: false },
+    text: { title: "Text & code", scoped: false },
+    keyboard: { title: "Keyboard", scoped: false },
+    integrations: { title: "Discord", scoped: false },
+    servers: { title: "Servers", scoped: false },
+    general: { title: "Server", scoped: true },
+    providers: { title: "Providers", scoped: true },
+    models: { title: "Models", scoped: true },
+    projects: { title: "Projects", scoped: true },
+    safety: { title: "Safety", scoped: true },
+    notifications: { title: "Notifications", scoped: true },
+    access: { title: "Access", scoped: true },
+  };
   import Button from "./ui/Button.svelte";
   import NumberField from "./ui/NumberField.svelte";
   import Segmented from "./ui/Segmented.svelte";
@@ -54,17 +67,19 @@
   import Switch from "./ui/Switch.svelte";
   import TextField from "./ui/TextField.svelte";
   import TextArea from "./ui/TextArea.svelte";
-  import { CLI_AGENTS } from "../modelVendor";
-  import { DEFAULT_NOTIFY_PREFS, NOTIFY_KINDS } from "../notifyKinds";
+    import { DEFAULT_NOTIFY_PREFS, NOTIFY_KINDS } from "../notifyKinds";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
+  import ProvidersPage from "./providers/ProvidersPage.svelte";
   import Dropdown from "./Dropdown.svelte";
   import AuditPanel from "./AuditPanel.svelte";
   import SearchInput from "./SearchInput.svelte";
+  import TerminalPreview from "./TerminalPreview.svelte";
   import ConnectForm from "./ConnectForm.svelte";
   import Markdown from "./Markdown.svelte";
   import PermissionRules from "./PermissionRules.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
+  import ServerIconEditor from "./ServerIconEditor.svelte";
   import Kbd from "./Kbd.svelte";
   import { tip } from "../tooltip.svelte";
   import { previewDiscordActivity, refreshDiscordRpcStatus, rpcStatus } from "../discordRpc.svelte";
@@ -97,13 +112,48 @@
   const discordSettings = $derived(app.settings.discordRpc);
   const DISCORD_ACTIVITY_LABELS = { playing: "Playing", listening: "Listening to", watching: "Watching", competing: "Competing in" } as const;
   let discordPreviewKind = $state<"chat" | "editor">("chat");
-  // Chat/editor/buttons collapse to keep the page short; switching the preview opens its card group.
-  let discordOpen = $state<Record<"chat" | "editor" | "buttons", boolean>>({ chat: true, editor: false, buttons: false });
-  $effect(() => {
-    if (discordPreviewKind === "editor") discordOpen.editor = true;
-    else discordOpen.chat = true;
+  const U = "https://… (optional)";
+  const DISCORD_FIELDS = {
+    chat: [
+      ["details", "Details", "{status} in {project}"],
+      ["detailsUrl", "Details link", U],
+      ["state", "State", "{chat}"],
+      ["stateUrl", "State link", U],
+      ["largeImage", "Image", "logo or https://…"],
+      ["largeText", "Hover text", "yoakeland"],
+      ["largeUrl", "Link", U],
+      ["smallImage", "Image", "Optional"],
+      ["smallText", "Hover text", "Optional"],
+      ["smallUrl", "Link", U],
+    ],
+    editor: [
+      ["editorDetails", "Details", "Editing {file}"],
+      ["editorDetailsUrl", "Details link", U],
+      ["editorState", "State", "{project} · {language}"],
+      ["editorStateUrl", "State link", U],
+      ["editorLargeImage", "Image", "logo, {languageKey} or https://…"],
+      ["editorLargeText", "Hover text", "{language}"],
+      ["editorLargeUrl", "Link", U],
+      ["editorSmallImage", "Image", "Optional"],
+      ["editorSmallText", "Hover text", "Optional"],
+      ["editorSmallUrl", "Link", U],
+    ],
+  } as const;
+  const DISCORD_GROUPS = [
+    ["Lines", 0, 4],
+    ["Large image", 4, 7],
+    ["Small image", 7, 10],
+  ] as const;
+  const DISCORD_ACTIVITY_TYPES = [
+    { value: "playing", label: "Playing" },
+    { value: "listening", label: "Listening to" },
+    { value: "watching", label: "Watching" },
+    { value: "competing", label: "Competing in" },
+  ];
+  const discordPreviews = $derived({
+    chat: previewDiscordActivity(app.settings.discordRpc, "chat"),
+    editor: previewDiscordActivity(app.settings.discordRpc, "editor"),
   });
-  const discordPreview = $derived(previewDiscordActivity(app.settings.discordRpc, discordPreviewKind));
   const discordHasId = $derived(!!resolveDiscordClientId(discordSettings));
   const discordAppId = $derived(resolveDiscordClientId(discordSettings));
   // The application's public profile (icon hash, uploaded art) backs the preview images;
@@ -129,15 +179,10 @@
     discordApp?.icon ? discordAppIconCdnUrl(discordAppId, discordApp.icon) : "",
   );
   const discordAppName = $derived(discordSettings.name.trim() || discordApp?.name.trim() || "yoakeland");
-  const discordLargeSrc = $derived(discordImageSrc(discordPreview?.assets?.large_image ?? ""));
-  const discordSmallSrc = $derived(discordImageSrc(discordPreview?.assets?.small_image ?? ""));
   // Ticks only while the preview is showing a timer, so the settings page stays idle otherwise.
   let discordNow = $state(Date.now());
-  let discordElapsed = $derived(
-    discordPreview?.timestamps ? formatElapsed(discordNow - discordPreview.timestamps.start) : "",
-  );
   $effect(() => {
-    if (!discordPreview?.timestamps) return;
+    if (!discordPreviews.chat?.timestamps && !discordPreviews.editor?.timestamps) return;
     discordNow = Date.now();
     const id = setInterval(() => (discordNow = Date.now()), 1000);
     return () => clearInterval(id);
@@ -174,95 +219,10 @@
     if (app.showSettings && app.settingsTab === "integrations") refreshDiscordRpcStatus();
   });
 
-  // ---- Providers tab (credentials only; model selection lives in ModelPicker.svelte) ----
-  // OpenRouter can be added two ways: pasting a key (the form below, also the only way from a browser)
-  // or signing in from the desktop app (the card with the coding agents, openrouter_oauth_*, SPEC.md §3.1).
-  let providerName = $state("");
-  let httpProvider = $state<"anthropic" | "openai" | "openrouter">("anthropic");
-  let apiKey = $state("");
-  let baseUrl = $state("");
-
-  function resetProviderForm() {
-    providerName = "";
-    apiKey = "";
-    baseUrl = "";
-  }
-
-  const OPENROUTER_ACCOUNT = "openrouter-oauth";
-  let orStatus = $state<"idle" | "waiting" | "finishing">("idle");
-  let orError = $state("");
-  const orAccount = $derived(server?.providers.find((p) => p.httpProvider === "openrouter" && p.authMethod === "oauth"));
-  // Pasted keys only: the signed-in account has its own card.
-  const manualKeys = $derived((server?.providers ?? []).filter((p) => p.kind === "api_key" && p.authMethod !== "oauth"));
-
-  async function signInOR() {
-    if (!cid) return;
-    orError = "";
-    orStatus = "waiting";
-    try {
-      await signInOpenRouter(cid, OPENROUTER_ACCOUNT);
-      orStatus = "finishing";
-      // provider_registered ends this (see the effect below); a failed exchange only shows up in the log.
-      setTimeout(() => {
-        if (orStatus !== "finishing") return;
-        orStatus = "idle";
-        orError = "Sign-in failed. The server log has the reason.";
-      }, 20_000);
-    } catch (e) {
-      // Cancel resets to idle first, so only a real failure still reads "waiting" here.
-      if (orStatus === "waiting") orError = e instanceof Error ? e.message : String(e);
-      orStatus = "idle";
-    }
-  }
-
-  function cancelOR() {
-    orStatus = "idle";
-    void cancelOpenRouterSignIn();
-  }
-
-  $effect(() => {
-    if (orAccount && orStatus !== "idle") orStatus = "idle";
-  });
-
-  function submitProvider(e: Event) {
-    e.preventDefault();
-    if (!cid || !providerName.trim()) return;
-    registerProvider(cid, {
-      name: providerName,
-      kind: "api_key",
-      httpProvider,
-      apiKey,
-      baseUrl: baseUrl || undefined,
-      authMethod: "manual",
-    });
-    resetProviderForm();
-  }
-
-  // Subscription CLIs are a one-per-machine login, not a credential you'd want two of, so
-  // they get a fixed name and an on/off switch instead of a registration form (the wire
-  // protocol still requires a `name` on register_provider).
-  const cliRows = $derived(
-    (Object.entries(CLI_AGENTS) as [CliKind, (typeof CLI_AGENTS)[CliKind]][]).map(([kind, meta]) => ({
-      kind,
-      ...meta,
-      existing: server?.providers.find((p) => p.kind === kind),
-      available: !!server?.cliAvailability[kind],
-    })),
-  );
-
   // Opening the agents tab asks again, so a CLI installed since connecting is listed.
   $effect(() => {
     if (app.settingsTab === "providers" && cid && connected) untrack(() => detectCli(cid));
   });
-
-  function toggleCli(kind: CliKind, existing: ProviderInfo | undefined, enabled: boolean) {
-    if (!cid) return;
-    if (enabled) {
-      registerProvider(cid, { name: CLI_AGENTS[kind].defaultName, kind, authMethod: "manual" });
-    } else if (existing) {
-      removeProvider(cid, existing.name);
-    }
-  }
 
   let remotePasswordInput = $state("");
   let serverIdentityInput = $state("");
@@ -271,13 +231,16 @@
   });
 
   const connected = $derived(server?.connectionStatus === "connected");
+  const serverIdentityDirty = $derived(
+    !!serverIdentityInput.trim() && serverIdentityInput.trim() !== server?.serverIdentity,
+  );
 
   // --- Model roles (SPEC.md §4f) ---
   const ROLE_ROWS = [
-    { key: "plan", label: "Planning", hint: "Every turn in Plan mode. Pick your strongest model." },
-    { key: "explore", label: "Exploring", hint: "Read-only subagents that search the code. A small, fast model is enough." },
-    { key: "utility", label: "Titles & summaries", hint: "Names chats and summarizes long ones when they outgrow the context." },
-    { key: "advisor", label: "Advisor", hint: "A stronger Anthropic model the chat's model can consult mid-task. Anthropic chats only." },
+    { key: "plan", label: "Planning", hint: "Every turn in Plan mode." },
+    { key: "explore", label: "Exploring", hint: "Read-only subagents that search the code." },
+    { key: "utility", label: "Titles & summaries", hint: "Chat names and long-chat summaries." },
+    { key: "advisor", label: "Advisor", hint: "A stronger model the chat can consult. Anthropic only." },
   ];
   const apiProviders = $derived((server?.providers ?? []).filter((p) => p.kind === "api_key"));
   // The role pickers list models the composer may not have fetched yet.
@@ -397,12 +360,6 @@
   async function onDisconnectPeer(peerId: string, name: string) {
     if (cid && (await askConfirm(`Disconnect "${name}"? Any peer can disconnect any other. There is no extra permission check.`))) {
       disconnectPeer(cid, peerId);
-    }
-  }
-
-  async function onRemoveProvider(name: string) {
-    if (cid && (await askConfirm(`Remove provider "${name}"? This can't be undone.`))) {
-      removeProvider(cid, name);
     }
   }
 
@@ -576,13 +533,34 @@
 
   const CODE_PREVIEW = [
     "```ts",
+    "import type { Peer } from \"./peers\";",
+    "",
     "// Greets everyone connected to this server",
     "export async function greet(peers: Peer[], prefix = \"hi\"): Promise<number> {",
-    "  for (const p of peers) console.log(`${prefix}, ${p.name}!`);",
-    "  return peers.length * 42;",
+    "  let greeted = 0;",
+    "  for (const p of peers) {",
+    "    if (!p.online) continue;",
+    "    console.log(`${prefix}, ${p.name}! You joined ${p.joinedAt.toLocaleDateString()} from ${p.address}.`);",
+    "    greeted++;",
+    "  }",
+    "  return greeted * 42;",
     "}",
+    "",
+    "export function summarize(peers: Peer[]): string {",
+    "  const names = peers.map((p) => p.name).sort();",
+    "  if (names.length <= 2) return names.join(\" and \");",
+    "  return `${names.slice(0, -1).join(\", \")}, and ${names[names.length - 1]}`;",
+    "}",
+    "",
+    "export const DEFAULT_PREFIX = \"hello\";",
     "```",
   ].join("\n");
+
+  // Same resolution as TerminalView.
+  const termColors = $derived(
+    (!app.settings.terminalUseAppTheme && TERMINAL_THEME_PRESETS.find((p) => p.id === app.settings.terminalColorTheme)?.colors) ||
+      app.appTerminalColors,
+  );
 
   const WALLPAPER_MAX_DIM = 1920;
 
@@ -627,23 +605,23 @@
 
   // ---- Search: dims non-matching rows rather than hiding them, so the page doesn't reflow.
   // Every tab's content stays mounted (bits-ui only toggles `hidden`), so all are indexed. ----
-  const ALL_TABS = ["profile", "appearance", "terminal", "keyboard", "integrations", "servers", "general", "providers", "projects", "safety", "notifications", "access", "audit"];
+  const ALL_TABS = ["profile", "appearance", "text", "keyboard", "integrations", "servers", "general", "providers", "models", "projects", "safety", "notifications", "access"];
   // No physical keyboard to bind on a phone.
   const TAB_ORDER = $derived(viewport.narrow ? ALL_TABS.filter((t) => t !== "keyboard") : ALL_TABS);
   const TAB_LABELS: Record<string, string> = {
-    profile: "profile you name avatar picture",
-    appearance: "appearance look theme fonts",
-    terminal: "terminal shell colors",
-    integrations: "integrations discord rich presence rpc activity status",
+    profile: "general profile you name avatar picture chats tool calls thinking feed summary archive alerts desktop notifications closing quit stop server setup",
+    appearance: "appearance look theme accent wallpaper window surfaces motion animation",
+    text: "text code fonts font scale terminal shell colors diff padding scrolling",
+    integrations: "discord integrations rich presence rpc activity status",
     keyboard: "keyboard shortcuts keybinds keybindings hotkeys keys",
     servers: "servers connections remote",
     general: "general server name titles",
-    providers: "providers models api keys subscriptions",
+    providers: "providers agents accounts api keys subscriptions acp registry",
+    models: "models roles planning exploring titles summaries advisor",
     projects: "projects folders paths",
     safety: "safety limits bash sandbox permissions browser spend rules",
     notifications: "notifications alerts needs you desktop",
-    access: "access network remote password tokens peers people",
-    audit: "audit log history approved refused",
+    access: "access network remote password tokens peers people audit log history approved refused",
   };
   // Phone: the tab list and the page are two screens. Opening to a specific tab (provider or server
   // prompts) lands straight on its page.
@@ -690,7 +668,7 @@
       // Searching a tab's own name lights up the whole tab.
       const wholeTab = !!q && TAB_LABELS[tab].includes(q);
       const rows = node.querySelectorAll<HTMLElement>(
-        ".field, .setting-row, .cli-card, .provider-form, .list > li, .servers > li",
+        ".field, .setting-row, .num-cell, .form-grid > label, .list > li, .servers > li",
       );
       let first: HTMLElement | null = null;
       rows.forEach((row) => {
@@ -707,14 +685,6 @@
             ".field:not(.search-dim), .setting-row:not(.search-dim), .cli-card:not(.search-dim), .provider-form:not(.search-dim), li:not(.search-dim)",
           );
         heading?.classList.toggle("search-dim", !lit);
-      });
-      // A hit inside a closed Discord group reveals itself by opening it.
-      node.querySelectorAll<HTMLDetailsElement>("details.discord-group").forEach((group) => {
-        const hit =
-          !!q &&
-          (wholeTab ||
-            !!group.querySelector(".field:not(.search-dim), .setting-row:not(.search-dim)"));
-        if (hit) group.open = true;
       });
       firstMatchByTab[tab] = first;
       // A per-key write, never a read-then-assign: reading tabHasMatch here would make this
@@ -779,37 +749,53 @@
 
 </script>
 
-{#snippet pageHead(title: string, scoped: boolean)}
+{#snippet settingsHead()}
+  {@const h = HEADS[app.settingsTab] ?? { title: "", scoped: false }}
   <header class="page-head">
     <button type="button" class="settings-back" aria-label="All settings" onclick={() => (detail = false)}>
       <Icon name="chevron-left" size={16} />
     </button>
-    <h2>{title}</h2>
-    {#if scoped && serverItems.length > 1}
-      <Dropdown
-        items={serverItems}
-        bind:value={() => cid ?? undefined, (v) => (selectedConnectionId = v ?? null)}
-        triggerTitle="Which server these settings apply to"
-        contentClass="above-modal"
-      />
-    {:else if scoped && server}
-      <span class="scope">
-        <ServerAvatar name={server.label} seed={server.serverId} size={16} />
-        {server.label}
-      </span>
+    {#if h.scoped && server}
+      {#if serverItems.length > 1}
+        <Dropdown
+          items={serverItems}
+          bind:value={() => cid ?? undefined, (v) => (selectedConnectionId = v ?? null)}
+          triggerTitle="Which server these settings apply to"
+          triggerClass="scope-pick"
+          contentClass="above-modal"
+        >
+          {#snippet triggerLead()}
+            <ServerAvatar name={server.label} seed={server.serverId} size={22} />
+          {/snippet}
+        </Dropdown>
+      {:else}
+        <ServerAvatar name={server.label} seed={server.serverId} size={22} />
+        <span class="scope">{server.label}</span>
+      {/if}
+      <span class="crumb-sep">/</span>
     {/if}
+    <h2>{h.title}</h2>
   </header>
+{/snippet}
+
+{#snippet pageHead(title: string, scoped: boolean)}
   {#if scoped && !connected}
-    <p class="notice">
-      <Icon name="warning" size={13} />
-      {server ? `${server.label} isn't connected. Reconnect it` : "No server connected. Connect one"} under Servers to change these.
-    </p>
+    <!-- Everything after this in the page is hidden by CSS: disabled controls with no server read as broken. -->
+    <div class="offline">
+      <Icon name="plug-connected" size={22} />
+      <span class="row-label">{server ? `${server.label} isn't connected` : "No server connected"}</span>
+      <p class="hint">These settings live on a server. Connect one to change them.</p>
+      <Button type="button" onclick={() => (app.settingsTab = "servers")}>Go to Servers</Button>
+    </div>
   {/if}
 {/snippet}
 
-{#snippet rowText(label: string, hint?: string)}
+{#snippet rowText(label: string, hint?: string, more?: string)}
   <div class="setting-text">
-    <span class="row-label">{label}</span>
+    <span class="row-label">
+      {label}
+      {#if more}<span class="more" {@attach tip(more)}><Icon name="info-circle" size={12} /></span>{/if}
+    </span>
     {#if hint}<p class="hint">{hint}</p>{/if}
   </div>
 {/snippet}
@@ -824,14 +810,40 @@
   <Segmented {options} {value} onchange={pick} />
 {/snippet}
 
+{#snippet choiceCards(kind: "area" | "surface" | "tools", options: { value: string; label: string }[], value: string, pick: (v: string) => void)}
+  <div class="mode-cards choices" role="radiogroup">
+    {#each options as o (o.value)}
+      <button type="button" role="radio" aria-checked={value === o.value} class="mode-card" class:active={value === o.value} onclick={() => pick(o.value)}>
+        <div class="choice-prev {kind} {o.value}">
+          {#if kind === "area"}
+            <span class="p-side"></span><span class="p-main"></span>
+          {:else if kind === "surface"}
+            <span class="p-line"></span><span class="p-line short"></span><span class="p-line"></span>
+            <span class="p-pop"></span>
+          {:else}
+            <span class="p-line"></span>
+            {#each o.value === "simple" ? [0] : [0, 1, 2] as i (i)}<span class="p-bar"></span>{/each}
+            <span class="p-line short"></span>
+          {/if}
+        </div>
+        <span class="mode-card-label">{o.label}</span>
+      </button>
+    {/each}
+  </div>
+{/snippet}
+
 {#snippet presetPicker(get: () => string, set: (v: string) => void)}
-  <Dropdown items={TERMINAL_THEME_PRESETS.map((p) => ({ value: p.id, label: p.name }))} bind:value={get, set} contentClass="above-modal">
+  <Dropdown
+    items={[{ value: "app", label: "Match app theme" }, ...TERMINAL_THEME_PRESETS.map((p) => ({ value: p.id, label: p.name, group: "Presets" }))]}
+    bind:value={get, set}
+    contentClass="above-modal"
+  >
     {#snippet item({ value, label, selected })}
-      {@const preset = TERMINAL_THEME_PRESETS.find((p) => p.id === value)}
-      <span class="term-theme-swatch" style="background: {preset?.colors.background}">
-        <span style="background: {preset?.colors.red}"></span>
-        <span style="background: {preset?.colors.green}"></span>
-        <span style="background: {preset?.colors.blue}"></span>
+      {@const colors = value === "app" ? app.appTerminalColors : TERMINAL_THEME_PRESETS.find((p) => p.id === value)?.colors}
+      <span class="term-theme-swatch" style="background: {colors?.background}">
+        <span style="background: {colors?.red}"></span>
+        <span style="background: {colors?.green}"></span>
+        <span style="background: {colors?.blue}"></span>
       </span>
       <span class="dropdown-item-label">{label}</span>
       {#if selected}<Icon name="check" size={11} />{/if}
@@ -842,7 +854,7 @@
 {#snippet slotPicker(mode: "dark" | "light", label: string)}
   {@const all = [...APP_THEME_PRESETS, ...app.customThemes].filter((t) => t[mode])}
   <div class="setting-row">
-    {@render rowText(label, app.themeFor(mode) ? undefined : "Default follows the accent below.")}
+    {@render rowText(label, app.themeFor(mode) ? undefined : "Default follows the accent.")}
     <Dropdown
       items={[
         { value: "default", label: "Default" },
@@ -884,6 +896,58 @@
 
 <svelte:window onkeydowncapture={onRecordKey} />
 
+{#snippet discordCard(kind: "chat" | "editor", title: string)}
+  {@const p = discordPreviews[kind]}
+  {@const large = discordImageSrc(p?.assets?.large_image ?? "")}
+  {@const small = discordImageSrc(p?.assets?.small_image ?? "")}
+  <div class="discord-pick">
+    <span class="discord-pick-title">{title}</span>
+    <span class="discord-card">
+      <span class="discord-card-head">
+        {DISCORD_ACTIVITY_LABELS[discordSettings.activityType]}
+        <Icon name="dots" size={16} />
+      </span>
+      <span class="discord-activity">
+        <span class="discord-art">
+          {#if large}
+            <img src={large} alt="" />
+          {:else}
+            <span class="discord-art-fallback"><Icon name="brand-discord" size={22} /></span>
+          {/if}
+          {#if p?.assets?.small_image}
+            <span class="discord-badge">
+              {#if small}
+                <img src={small} alt="" />
+              {:else}
+                <Icon name="brand-discord" size={10} />
+              {/if}
+            </span>
+          {/if}
+        </span>
+        <span class="discord-body">
+          <strong class="discord-name">{discordAppName}</strong>
+          {#if p}
+            {#if p.details}<span class="discord-details">{p.details}</span>{/if}
+            {#if p.state}<span class="discord-state">{p.state}</span>{/if}
+            {#if p.timestamps}
+              <span class="discord-time"><Icon name="device-gamepad" size={14} />{formatElapsed(discordNow - p.timestamps.start)}</span>
+            {/if}
+          {:else}
+            <span class="discord-state">Nothing would show right now.</span>
+          {/if}
+        </span>
+      </span>
+      {#if p?.buttons?.length}
+        <span class="discord-buttons">
+          {#each p.buttons as b (b.label)}
+            <span class="discord-button">{b.label}</span>
+          {/each}
+        </span>
+      {/if}
+    </span>
+  </div>
+{/snippet}
+
 {#snippet bindSlot(a: KeyAction, slot: number, combo: string | undefined)}
   {@const recording = rec?.id === a.id && rec.slot === slot}
   <span class="bind" class:recording class:empty={!combo}>
@@ -916,7 +980,7 @@
   <Dialog.Portal>
     <Dialog.Overlay class="settings-overlay" />
     <Dialog.Content class="settings-content">
-      <Dialog.Close class="settings-close" aria-label="Close settings"><Icon name="xmark" size={14} /></Dialog.Close>
+      <Dialog.Close class="settings-close" aria-label="Close settings"><Icon name="xmark" size={18} /></Dialog.Close>
 
       <div class="settings-swipe" {@attach swipe(() => goBack)}>
       <Tabs.Root bind:value={app.settingsTab} orientation="vertical" class="settings-tabs {detail ? 'detail' : ''}">
@@ -925,33 +989,37 @@
             <Dialog.Close class="settings-exit" aria-label="Close settings"><Icon name="chevron-left" size={16} /></Dialog.Close>
             <Dialog.Title class="settings-title">Settings</Dialog.Title>
           </div>
-          <div class="settings-search"><SearchInput boxed bind:value={settingsSearch} placeholder="Search settings…" /></div>
+          <div class="settings-search"><SearchInput bind:value={settingsSearch} placeholder="Search settings…" /></div>
           {#if noMatches}<div class="no-matches">No settings match “{settingsSearch.trim()}”</div>{/if}
 
           <div class="tabs-group-label">App</div>
-          {@render tab("profile", "Profile", "user")}
+          {@render tab("profile", "General", "user")}
           {@render tab("appearance", "Appearance", "palette")}
-          {@render tab("terminal", "Terminal", "terminal-2")}
+          {@render tab("text", "Text & code", "terminal-2")}
           {#if !viewport.narrow}{@render tab("keyboard", "Keyboard", "keyboard")}{/if}
-          {@render tab("integrations", "Integrations", "brand-discord")}
+          {@render tab("integrations", "Discord", "brand-discord")}
           {@render tab("servers", "Servers", "server")}
 
           <div class="tabs-group-label" {@attach tip("These apply to one server. Pick which at the top of each page.")}>
             {server ? server.label : "Server"}
           </div>
-          {@render tab("general", "General", "settings")}
+          {@render tab("general", "Server", "settings")}
           {@render tab("providers", "Providers", "brain")}
+          {@render tab("models", "Models", "sparkles")}
           {@render tab("projects", "Projects", "code")}
           {@render tab("safety", "Safety", "shield-check")}
           {@render tab("notifications", "Notifications", "bell")}
           {@render tab("access", "Access", "network")}
-          {@render tab("audit", "Audit log", "clipboard-list")}
         </Tabs.List>
 
+        <div class="settings-main">
+          {@render settingsHead()}
         <Tabs.Content value="profile" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "profile", query: settingsSearch }}>
-            {@render pageHead("Profile", false)}
+            {@render pageHead("General", false)}
             <section class="settings-section">
+              <h3 class="section-heading">Profile</h3>
+              <div class="card">
               <div class="field profile-card">
                 <button
                   type="button"
@@ -985,9 +1053,6 @@
                 </div>
               </div>
               <input bind:this={avatarInput} type="file" accept="image/*" hidden onchange={onAvatarFile} />
-            </section>
-            <section class="settings-section">
-              <h3 class="section-heading">Or use an emoji</h3>
               <div class="quick-avatars">
                 {#each QUICK_AVATARS as emoji (emoji)}
                   <button
@@ -1002,11 +1067,86 @@
                 {/each}
               </div>
               <p class="hint">Pictures are cropped square and scaled to 96×96 before they leave this device.</p>
+              </div>
             </section>
             <section class="settings-section">
+              <h3 class="section-heading">Chats</h3>
+              <div class="card">
+              <div class="setting-row">
+                {@render rowText("Tool calls and thinking", "Simple folds them into one dropdown above the answer.")}
+                {@render choiceCards(
+                  "tools",
+                  [
+                    { value: "simple", label: "Simple" },
+                    { value: "verbose", label: "Verbose" },
+                  ],
+                  app.settings.toolView,
+                  (v) => ((app.settings.toolView = v as "simple" | "verbose"), apply()),
+                )}
+              </div>
+              <div class="setting-row">
+                {@render rowText("New chat feed", "Recent chats and starter prompts in an empty chat.")}
+                {@render toggle(app.settings.emptyFeed, (v) => ((app.settings.emptyFeed = v), apply()))}
+              </div>
+              <div class="setting-row">
+                {@render rowText(
+                  "Summarize long replies",
+                  "A short summary card under each long reply.",
+                  "Written by the Titles & summaries model. Any reply can also be summarized from its actions.",
+                )}
+                {@render toggle(app.settings.autoSummary, (v) => ((app.settings.autoSummary = v), apply()))}
+              </div>
+              <div class="setting-row">
+                {@render rowText("Auto-archive threads", "Idle threads move to the archive after this long.")}
+                <div class="with-unit">
+                  <NumberField class="ctrl-num" min={1} max={365} bind:value={app.settings.autoArchiveDays} onchange={apply} />
+                  <span>days</span>
+                </div>
+              </div>
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Alerts</h3>
+              <div class="card">
+              <div class="setting-row">
+                {@render rowText(
+                  "Desktop alerts on this device",
+                  "Only while the window is in the background.",
+                  "Never for the chat you're reading, or while another of your devices is in use.",
+                )}
+                <Dropdown
+                  items={[
+                    { value: "off", label: "Off" },
+                    { value: "urgent", label: "When it needs you" },
+                    { value: "all", label: "Also when it finishes" },
+                  ]}
+                  bind:value={() => app.settings.osNotifications, (v) => ((app.settings.osNotifications = v as typeof app.settings.osNotifications), apply())}
+                  contentClass="above-modal"
+                />
+              </div>
+              </div>
+            </section>
+            {#if localServerSupported}
+              <section class="settings-section">
+                <h3 class="section-heading">Closing</h3>
+                <div class="card">
+                <div class="setting-row">
+                  {@render rowText(
+                    "Stop the server when closing",
+                    "Quitting the app also stops the local server.",
+                    "You'll be asked first if chats or terminals are still running.",
+                  )}
+                  {@render toggle(app.settings.stopServerOnClose, (v) => ((app.settings.stopServerOnClose = v), apply()))}
+                </div>
+                </div>
+              </section>
+            {/if}
+            <section class="settings-section">
+              <div class="card">
               <div class="setting-row">
                 {@render rowText("Setup", "Walk through connecting a server, a provider and a project again.")}
                 <Button type="button" onclick={() => ((app.settings.onboarded = false), apply(), (app.showSettings = false))}>Run setup again</Button>
+              </div>
               </div>
             </section>
           </div>
@@ -1017,6 +1157,7 @@
             {@render pageHead("Appearance", false)}
             <section class="settings-section">
               <h3 class="section-heading">Theme</h3>
+              <div class="card">
               <div class="field">
                 <span class="row-label">Mode</span>
                 <div class="mode-cards">
@@ -1046,12 +1187,6 @@
                   {/each}
                 </div>
               </div>
-              {#if app.settings.theme !== "light"}
-                {@render slotPicker("dark", "Dark theme")}
-              {/if}
-              {#if app.settings.theme !== "dark"}
-                {@render slotPicker("light", "Light theme")}
-              {/if}
               {#if accentUsed}
               <div class="field">
                 <span class="row-label">Accent</span>
@@ -1084,32 +1219,26 @@
                 {#if extracting}<p class="hint">Reading colors from the wallpaper…</p>{/if}
               </div>
               {/if}
+              {#if app.settings.theme !== "light"}
+                {@render slotPicker("dark", "Dark theme")}
+              {/if}
+              {#if app.settings.theme !== "dark"}
+                {@render slotPicker("light", "Light theme")}
+              {/if}
               {#if isDesktop}
                 <div class="setting-row">
-                  {@render rowText("Custom themes", themeNote ?? "One .json file per theme, with a dark and a light side. Changes apply as you save.")}
+                  {@render rowText("Custom themes", themeNote ?? "One .json file per theme. Changes apply as you save.")}
                   <div class="btn-row">
                     <Button type="button" onclick={revealThemesFile}>Open folder</Button>
                     <Button type="button" onclick={reloadThemes}>Reload</Button>
                   </div>
                 </div>
               {/if}
-              <div class="setting-row">
-                {@render rowText("Diff colors", "How added and removed lines are drawn.")}
-                <div class="btn-row">
-                  <span class="diff-preview" aria-hidden="true"><span class="add">+</span><span class="del">−</span></span>
-                  {@render segmented(
-                    [
-                      { value: "default", label: "Green / red" },
-                      { value: "colorblind", label: "Blue / orange" },
-                    ],
-                    app.settings.diffColors,
-                    (v) => ((app.settings.diffColors = v as "default" | "colorblind"), apply()),
-                  )}
-                </div>
               </div>
             </section>
             <section class="settings-section">
               <h3 class="section-heading">Wallpaper</h3>
+              <div class="card">
               <div class="setting-row">
                 {@render rowText("New-chat wallpaper", "Shown behind an empty thread's composer.")}
                 <div class="btn-row">
@@ -1154,13 +1283,17 @@
                   />
                 </div>
               {/if}
+              </div>
             </section>
             <section class="settings-section">
               <h3 class="section-heading">Window</h3>
+              <div class="card">
+              <div class="pair">
               {#if !viewport.narrow}
-                <div class="setting-row">
-                  {@render rowText("Main area", "Floating: the chat area is a rounded card. Flat: fills the window edge to edge.")}
-                  {@render segmented(
+                <div class="field">
+                  {@render rowText("Main area")}
+                  {@render choiceCards(
+                    "area",
                     [
                       { value: "floating", label: "Floating" },
                       { value: "flat", label: "Flat" },
@@ -1171,9 +1304,10 @@
                 </div>
               {/if}
 
-              <div class="setting-row">
-                {@render rowText("Surfaces", "Frosted blurs whatever floats over the UI: composer, popups and dialogs.")}
-                {@render segmented(
+              <div class="field">
+                {@render rowText("Surfaces")}
+                {@render choiceCards(
+                  "surface",
                   [
                     { value: "opaque", label: "Opaque" },
                     { value: "frosted", label: "Frosted" },
@@ -1183,39 +1317,59 @@
                 )}
               </div>
 
-              <div class="setting-row">
-                {@render rowText("New chat feed", "Recent chats, your working tree and starter prompts below the composer in an empty chat.")}
-                {@render toggle(app.settings.emptyFeed, (v) => ((app.settings.emptyFeed = v), apply()))}
               </div>
-
               {#if windowChromeKind}
                 <div class="setting-row">
                   {@render rowText(
                     "Window controls",
-                    "Minimize, maximize and close buttons, and dragging the window by its top edge. Turn off if your window manager does this." +
-                      (windowChromeKind === "overlay" ? " Applies after a restart." : ""),
+                    "Minimize, maximize, close, and dragging by the top edge." + (windowChromeKind === "overlay" ? " Needs a restart." : ""),
                   )}
                   {@render toggle(app.settings.windowChrome, (v) => ((app.settings.windowChrome = v), apply()))}
                 </div>
               {/if}
+              </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Typography</h3>
+              <h3 class="section-heading">Motion</h3>
+              <div class="card">
               <div class="setting-row">
-                {@render rowText("Interface font")}
+                {@render rowText("Animation speed", "0 turns them off.")}
+                <div class="slider">
+                  <Slider label="Animation speed" min={0} max={2} step={0.1} bind:value={app.settings.animationSpeed} oninput={apply} format={(v) => `${v.toFixed(1)}×`} />
+                  <span class="slider-value">{app.settings.animationSpeed.toFixed(1)}×</span>
+                </div>
+              </div>
+              </div>
+            </section>
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content value="text" class="tab-panel">
+          <div class="tab-body" use:searchable={{ tab: "text", query: settingsSearch }}>
+            {@render pageHead("Text & code", false)}
+            <section class="settings-section">
+              <h3 class="section-heading">Interface</h3>
+              <div class="card">
+              <div class="type-preview" style:font-family={app.settings.uiFontFamily} style:font-size="{scalePct}%">
+                <strong>The quick brown fox</strong>
+                <span>jumps over the lazy dog, 0123456789.</span>
+              </div>
+              <div class="setting-row">
+                {@render rowText("Font")}
                 <TextField type="text" class="ctrl-wide" bind:value={app.settings.uiFontFamily} onchange={apply} />
               </div>
               <div class="setting-row">
-                {@render rowText("Interface scale", "Scales text and spacing across the whole app.")}
+                {@render rowText("Scale")}
                 <div class="slider">
                   <Slider label="Interface scale" min={80} max={140} step={5} bind:value={scalePct} onchange={applyScale} format={(v) => `${v}%`} />
                   <span class="slider-value">{scalePct}%</span>
                 </div>
               </div>
+              </div>
             </section>
-
             <section class="settings-section">
               <h3 class="section-heading">Code blocks</h3>
+              <div class="card">
               <div class="code-preview"><Markdown text={CODE_PREVIEW} /></div>
               <div class="setting-row">
                 {@render rowText("Font")}
@@ -1229,75 +1383,63 @@
                 </div>
               </div>
               <div class="setting-row">
-                {@render rowText("Wrap long lines", "Off scrolls them sideways instead.")}
+                {@render rowText("Wrap long lines")}
                 {@render toggle(app.settings.codeWrapLines, (v) => ((app.settings.codeWrapLines = v), apply()))}
               </div>
               <div class="setting-row">
-                {@render rowText("Use app theme colors", "Colors syntax from your accent and mode instead of a preset.")}
-                {@render toggle(app.settings.codeUseAppTheme, (v) => ((app.settings.codeUseAppTheme = v), apply()))}
-              </div>
-              <div class="setting-row" class:disabled-row={app.settings.codeUseAppTheme}>
-                {@render rowText("Preset", "Same palettes as the terminal.")}
-                {@render presetPicker(() => app.settings.codeColorTheme, (v) => ((app.settings.codeColorTheme = v), apply()))}
-              </div>
-            </section>
-            <section class="settings-section">
-              <h3 class="section-heading">Behavior</h3>
-              <div class="setting-row">
-                {@render rowText("Animation speed", "0 turns animations off.")}
-                <div class="slider">
-                  <Slider label="Animation speed" min={0} max={2} step={0.1} bind:value={app.settings.animationSpeed} oninput={apply} format={(v) => `${v.toFixed(1)}×`} />
-                  <span class="slider-value">{app.settings.animationSpeed.toFixed(1)}×</span>
-                </div>
-              </div>
-              {#if localServerSupported}
-                <div class="setting-row">
-                  {@render rowText("Stop the server when closing", "Closing the app also stops the local server. You'll be asked first if chats or terminals are still running.")}
-                  {@render toggle(app.settings.stopServerOnClose, (v) => ((app.settings.stopServerOnClose = v), apply()))}
-                </div>
-              {/if}
-              <div class="setting-row">
-                {@render rowText("Auto-archive threads", "Idle threads move to the archive after this many days.")}
-                <div class="with-unit">
-                  <NumberField class="ctrl-num" min={1} max={365} bind:value={app.settings.autoArchiveDays} onchange={apply} />
-                  <span>days</span>
-                </div>
+                {@render rowText("Line numbers", "A numbered gutter beside each code block.")}
+                {@render toggle(app.settings.codeLineNumbers, (v) => ((app.settings.codeLineNumbers = v), apply()))}
               </div>
               <div class="setting-row">
-                {@render rowText("Desktop alerts on this device", "Only while the window is in the background. Never for the chat you're reading, or while another of your devices is in use.")}
-                {@render segmented(
-                  [
-                    { value: "off", label: "Off" },
-                    { value: "urgent", label: "Needs you" },
-                    { value: "all", label: "Also finished" },
-                  ],
-                  app.settings.osNotifications,
+                {@render rowText("Colors")}
+                {@render presetPicker(
+                  () => (app.settings.codeUseAppTheme ? "app" : app.settings.codeColorTheme),
                   (v) => {
-                    app.settings.osNotifications = v as typeof app.settings.osNotifications;
+                    app.settings.codeUseAppTheme = v === "app";
+                    if (v !== "app") app.settings.codeColorTheme = v;
                     apply();
                   },
                 )}
               </div>
+              </div>
             </section>
-          </div>
-        </Tabs.Content>
-
-        <Tabs.Content value="terminal" class="tab-panel">
-          <div class="tab-body" use:searchable={{ tab: "terminal", query: settingsSearch }}>
-            {@render pageHead("Terminal", false)}
             <section class="settings-section">
-              <h3 class="section-heading">Colors</h3>
+              <h3 class="section-heading">Diffs</h3>
+              <div class="card">
+              <div class="diff-sample" aria-hidden="true">
+                <div><i>1</i><span><b class="k">export function</b> <b class="f">formatUser</b>(user: <b class="t">User</b>) {"{"}</span></div>
+                <div class="del"><i>2</i><span>{"  "}<b class="k">return</b> user.name.<mark>toUpperCase()</mark>;</span></div>
+                <div class="add"><i>2</i><span>{"  "}<b class="k">return</b> <mark><b class="s">`{"${"}</b>user.name<b class="s">{"}"} &lt;{"${"}</b>user.email<b class="s">{"}"}&gt;`</b></mark>;</span></div>
+                <div><i>3</i><span>{"}"}</span></div>
+              </div>
               <div class="setting-row">
-                {@render rowText("Use app theme colors", "Colors the terminal from your accent and mode instead of a preset.")}
-                {@render toggle(app.settings.terminalUseAppTheme, (v) => ((app.settings.terminalUseAppTheme = v), apply()))}
+                {@render rowText("Colors")}
+                {@render segmented(
+                  [
+                    { value: "default", label: "Green / red" },
+                    { value: "colorblind", label: "Blue / orange" },
+                  ],
+                  app.settings.diffColors,
+                  (v) => ((app.settings.diffColors = v as "default" | "colorblind"), apply()),
+                )}
               </div>
-              <div class="setting-row" class:disabled-row={app.settings.terminalUseAppTheme}>
-                {@render rowText("Preset", "Used when app theme colors are off.")}
-                {@render presetPicker(() => app.settings.terminalColorTheme, (v) => ((app.settings.terminalColorTheme = v), apply()))}
               </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Layout</h3>
+              <h3 class="section-heading">Terminal</h3>
+              <div class="card">
+              <TerminalPreview colors={termColors} />
+              <div class="setting-row">
+                {@render rowText("Colors")}
+                {@render presetPicker(
+                  () => (app.settings.terminalUseAppTheme ? "app" : app.settings.terminalColorTheme),
+                  (v) => {
+                    app.settings.terminalUseAppTheme = v === "app";
+                    if (v !== "app") app.settings.terminalColorTheme = v;
+                    apply();
+                  },
+                )}
+              </div>
               <div class="setting-row">
                 {@render rowText("Horizontal padding")}
                 <div class="slider">
@@ -1313,352 +1455,184 @@
                 </div>
               </div>
               <div class="setting-row">
-                {@render rowText("Smooth scrolling", "Eases scroll-wheel movement instead of jumping a line at a time.")}
+                {@render rowText("Smooth scrolling", "Eases wheel movement.")}
                 {@render toggle(app.settings.terminalSmoothScroll, (v) => ((app.settings.terminalSmoothScroll = v), apply()))}
+              </div>
               </div>
             </section>
           </div>
         </Tabs.Content>
 
+
+        
+
         <Tabs.Content value="integrations" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "integrations", query: settingsSearch }}>
-            {@render pageHead("Integrations", false)}
-            <section class="settings-section">
-              <h3 class="section-heading">Discord Rich Presence</h3>
-              {#if !isDesktop}
-                <p class="hint">Discord Rich Presence is only available in the desktop app.</p>
-              {:else}
+            {@render pageHead("Discord", false)}
+            {#if !isDesktop}
+              <p class="hint">Discord Rich Presence is only available in the desktop app.</p>
+            {:else}
+              <section class="settings-section">
+                <div class="card">
                 <div class="setting-row">
-                  {@render rowText("Show what I'm working on", "Shares your current project and chat on your Discord profile. Off by default, and only the fields below are sent.")}
+                  <div class="setting-text">
+                    <span class="row-label">Show what I'm working on</span>
+                    <span class="discord-status" class:on={rpcStatus.connected} class:error={discordSettings.enabled && !rpcStatus.connected && !!rpcStatus.error}>
+                      <span class="dot"></span>{discordStatusText}
+                    </span>
+                  </div>
                   {@render toggle(app.settings.discordRpc.enabled, (v) => ((app.settings.discordRpc.enabled = v), apply()))}
                 </div>
-                <div class="setting-row">
-                  {@render rowText("Presence", "Auto shows the editor card while the editor is focused and the chat card when you return to the composer.")}
-                  {@render segmented(
-                    DISCORD_PRESENCE_MODES,
-                    app.settings.discordRpc.mode,
-                    (v) => {
-                      app.settings.discordRpc.mode = v as typeof app.settings.discordRpc.mode;
-                      apply();
-                    },
-                  )}
+                <div class="discord-stage" class:off={!discordSettings.enabled}>
+                  <span class="hint">What your profile shows.</span>
+                  <div class="discord-cards">
+                    {@render discordCard("chat", "In a chat")}
+                    {@render discordCard("editor", "In the editor")}
+                  </div>
                 </div>
-                <div class="setting-row">
-                  {@render rowText("Hide on plain chats", "Never shows a card while a chat with no repository is open — only project work appears.")}
-                  {@render toggle(app.settings.discordRpc.hideOnChats, (v) => ((app.settings.discordRpc.hideOnChats = v), apply()))}
                 </div>
+              </section>
+
+              <section class="settings-section">
+                <h3 class="section-heading">Both cards</h3>
+                <div class="card">
                 <div class="setting-row">
-                  {@render rowText("Connection", "Discord must be running on this computer. It is found again automatically if it starts later.")}
-                  <span class="discord-status" class:on={rpcStatus.connected} class:error={discordSettings.enabled && !rpcStatus.connected && !!rpcStatus.error}>
-                    <span class="dot"></span>{discordStatusText}
-                  </span>
-                </div>
-                <div class="field">
-                  <span class="row-label">Application ID</span>
-                  <TextField
-                    bind:value={app.settings.discordRpc.clientId}
-                    onchange={apply}
-                    placeholder={DEFAULT_DISCORD_CLIENT_ID || "Discord application id"}
+                  {@render rowText("Show", "Auto switches between the chat and editor card.")}
+                  <Dropdown
+                    items={DISCORD_PRESENCE_MODES}
+                    bind:value={() => app.settings.discordRpc.mode, (v) => (app.settings.discordRpc.mode = v as typeof app.settings.discordRpc.mode, apply())}
+                    contentClass="above-modal"
                   />
-                  <p class="hint">
-                    {#if DEFAULT_DISCORD_CLIENT_ID}
-                      Leave blank to use yoakeland's built-in application. Use your own application id from the Discord Developer Portal to customize the name and art.
-                    {:else}
-                      No built-in application id is configured yet. Paste an application id from the Discord Developer Portal to turn this on.
-                    {/if}
-                    {#if discordSettings.enabled && !discordHasId}
-                      <strong>Rich Presence can't connect until an id is set.</strong>
-                    {/if}
-                  </p>
-                </div>
-              {/if}
-            </section>
-
-            {#if isDesktop}
-              <section class="settings-section">
-                <h3 class="section-heading">Preview</h3>
-                <div class="discord-preview-switch">
-                  {@render segmented(
-                    [
-                      { value: "chat", label: "Chat" },
-                      { value: "editor", label: "Editor" },
-                    ],
-                    discordPreviewKind,
-                    (v) => (discordPreviewKind = v as "chat" | "editor"),
-                  )}
-                </div>
-                <div class="discord-card">
-                  <div class="discord-activity">
-                    <div class="discord-art">
-                      {#if discordLargeSrc}
-                        <img src={discordLargeSrc} alt="" />
-                      {:else}
-                        <div class="discord-art-fallback"><Icon name="brand-discord" size={22} /></div>
-                      {/if}
-                      {#if discordPreview?.assets?.small_image}
-                        <div class="discord-badge">
-                          {#if discordSmallSrc}
-                            <img src={discordSmallSrc} alt="" />
-                          {:else}
-                            <Icon name="brand-discord" size={10} />
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
-                    <div class="discord-body">
-                      <div class="discord-card-head">
-                        {DISCORD_ACTIVITY_LABELS[discordSettings.activityType]} <strong>{discordAppName}</strong>
-                      </div>
-                      {#if discordPreview}
-                        {#if discordPreview.details}
-                          {#if discordPreview.details_url}
-                            <a class="discord-details" href={discordPreview.details_url} target="_blank" rel="noreferrer">
-                              {discordPreview.details}
-                            </a>
-                          {:else}
-                            <div class="discord-details">{discordPreview.details}</div>
-                          {/if}
-                        {/if}
-                        {#if discordPreview.state}
-                          {#if discordPreview.state_url}
-                            <a class="discord-state" href={discordPreview.state_url} target="_blank" rel="noreferrer">
-                              {discordPreview.state}
-                            </a>
-                          {:else}
-                            <div class="discord-state">{discordPreview.state}</div>
-                          {/if}
-                        {/if}
-                        {#if discordElapsed}
-                          <div class="discord-time">{discordElapsed} elapsed</div>
-                        {/if}
-                      {:else}
-                        <p class="hint">Nothing would show right now.</p>
-                      {/if}
-                    </div>
-                  </div>
-                  {#if discordPreview?.buttons?.length}
-                    <div class="discord-buttons">
-                      {#each discordPreview.buttons as b (b.label)}
-                        <span class="discord-button">{b.label}</span>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              </section>
-
-              <section class="settings-section">
-                <h3 class="section-heading">Card</h3>
-                <div class="field">
-                  <span class="row-label">Application name</span>
-                  <TextField bind:value={app.settings.discordRpc.name} onchange={apply} placeholder={discordAppName} />
-                  <p class="hint">Overrides the name Discord takes from the application. Leave blank to use it as-is.</p>
                 </div>
                 <div class="setting-row">
-                  {@render rowText("Activity type", "How Discord labels the card beside your name.")}
-                  {@render segmented(
-                    [
-                      { value: "playing", label: "Playing" },
-                      { value: "listening", label: "Listening" },
-                      { value: "watching", label: "Watching" },
-                      { value: "competing", label: "Competing" },
-                    ],
-                    app.settings.discordRpc.activityType,
-                    (v) => {
-                      app.settings.discordRpc.activityType = v as typeof app.settings.discordRpc.activityType;
-                      apply();
-                    },
-                  )}
+                  {@render rowText("Activity word", "Discord shows this before the app name, e.g. Playing.")}
+                  <Dropdown
+                    items={DISCORD_ACTIVITY_TYPES}
+                    bind:value={() => app.settings.discordRpc.activityType, (v) => (app.settings.discordRpc.activityType = v as typeof app.settings.discordRpc.activityType, apply())}
+                    contentClass="above-modal"
+                  />
                 </div>
                 <div class="setting-row">
-                  {@render rowText("Status text", "Which line appears next to your name in the member list.")}
-                  {@render segmented(
-                    DISCORD_STATUS_DISPLAY_TYPES,
-                    app.settings.discordRpc.statusDisplayType,
-                    (v) => {
-                      app.settings.discordRpc.statusDisplayType = v as typeof app.settings.discordRpc.statusDisplayType;
-                      apply();
-                    },
-                  )}
+                  {@render rowText("Member list text", "Which line shows beside your name in member lists.")}
+                  <Dropdown
+                    items={DISCORD_STATUS_DISPLAY_TYPES}
+                    bind:value={() => app.settings.discordRpc.statusDisplayType, (v) => (app.settings.discordRpc.statusDisplayType = v as typeof app.settings.discordRpc.statusDisplayType, apply())}
+                    contentClass="above-modal"
+                  />
                 </div>
-              </section>
-
-              <section class="settings-section">
-                <details class="discord-group" bind:open={discordOpen.chat}>
-                  <summary class="discord-group-head">
-                    <span class="section-heading">Chat card</span>
-                    <span class="hint">Lines, idle text and artwork shown while chatting</span>
-                    <span class="discord-chevron"><Icon name="chevron-down" size={14} /></span>
+                <details class="disclosure" open={!!settingsSearch.trim()}>
+                  <summary>
+                    {@render rowText("Buttons", app.settings.discordRpc.showButtons ? "Two links under the card. Discord hides your own buttons from you." : "Off")}
+                    <span class="disclosure-chevron"><Icon name="chevron-down" size={14} /></span>
                   </summary>
-                  <div class="discord-group-body">
-                    <div class="field">
-                      <span class="row-label">Details</span>
-                      <TextField bind:value={app.settings.discordRpc.details} onchange={apply} placeholder={"{status} in {project}"} />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Details link</span>
-                      <TextField bind:value={app.settings.discordRpc.detailsUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">State</span>
-                      <TextField bind:value={app.settings.discordRpc.state} onchange={apply} placeholder={"{chat}"} />
-                      <p class="hint">
-                        Variables: {DISCORD_TEMPLATE_VARS.map((v) => `{${v}}`).join(" ")}. Leave a line empty to hide it.
-                      </p>
-                    </div>
-                    <div class="field">
-                      <span class="row-label">State link</span>
-                      <TextField bind:value={app.settings.discordRpc.stateUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
+                  <div class="disclosure-body">
                     <div class="setting-row">
-                      {@render rowText("Show when idle", "Keep a card visible while no chat is open.")}
-                      {@render toggle(app.settings.discordRpc.showWhenIdle, (v) => ((app.settings.discordRpc.showWhenIdle = v), apply()))}
-                    </div>
-                    {#if app.settings.discordRpc.showWhenIdle}
-                      <div class="field">
-                        <span class="row-label">Idle details</span>
-                        <TextField bind:value={app.settings.discordRpc.idleDetails} onchange={apply} placeholder="Taking a break" />
-                      </div>
-                      <div class="field">
-                        <span class="row-label">Idle state</span>
-                        <TextField bind:value={app.settings.discordRpc.idleState} onchange={apply} placeholder="yoakeland" />
-                      </div>
-                    {/if}
-                    <div class="field">
-                      <span class="row-label">Large image</span>
-                      <TextField bind:value={app.settings.discordRpc.largeImage} onchange={apply} placeholder="logo or https://…" />
-                      <p class="hint">An asset key from your Discord application (previewed below when it resolves), or a public image URL (GIF and AVIF are allowed for URLs).</p>
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Large image text</span>
-                      <TextField bind:value={app.settings.discordRpc.largeText} onchange={apply} placeholder="yoakeland" />
-                      <p class="hint">Shown when hovering the image.</p>
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Large image link</span>
-                      <TextField bind:value={app.settings.discordRpc.largeUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Small image</span>
-                      <TextField bind:value={app.settings.discordRpc.smallImage} onchange={apply} placeholder="Optional" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Small image text</span>
-                      <TextField bind:value={app.settings.discordRpc.smallText} onchange={apply} placeholder="Optional" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Small image link</span>
-                      <TextField bind:value={app.settings.discordRpc.smallUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
-                  </div>
-                </details>
-              </section>
-
-              <section class="settings-section">
-                <details class="discord-group" bind:open={discordOpen.editor}>
-                  <summary class="discord-group-head">
-                    <span class="section-heading">Editor card</span>
-                    <span class="hint">Lines and artwork shown while a file is open</span>
-                    <span class="discord-chevron"><Icon name="chevron-down" size={14} /></span>
-                  </summary>
-                  <div class="discord-group-body">
-                    <p class="hint">
-                      When the editor has no file open, the chat card is used instead. Variables:
-                      {DISCORD_EDITOR_TEMPLATE_VARS.map((v) => `{${v}}`).join(" ")}.
-                    </p>
-                    <div class="field">
-                      <span class="row-label">Details</span>
-                      <TextField bind:value={app.settings.discordRpc.editorDetails} onchange={apply} placeholder={"Editing {file}"} />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Details link</span>
-                      <TextField bind:value={app.settings.discordRpc.editorDetailsUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">State</span>
-                      <TextField bind:value={app.settings.discordRpc.editorState} onchange={apply} placeholder={"{project} · {language}"} />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">State link</span>
-                      <TextField bind:value={app.settings.discordRpc.editorStateUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
-                    <div class="setting-row">
-                      {@render rowText("Timer restarts", "Per file resets on every tab switch; per workspace keeps counting across files.")}
-                      {@render segmented(
-                        DISCORD_EDITOR_TIMER_SCOPES,
-                        app.settings.discordRpc.editorTimerScope,
-                        (v) => {
-                          app.settings.discordRpc.editorTimerScope = v as typeof app.settings.discordRpc.editorTimerScope;
-                          apply();
-                        },
-                      )}
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Large image</span>
-                      <TextField bind:value={app.settings.discordRpc.editorLargeImage} onchange={apply} placeholder={"logo, {languageKey} or https://…"} />
-                      <p class="hint">Use {"{languageKey}"} if your application has uploaded per-language art (for example "typescript").</p>
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Large image text</span>
-                      <TextField bind:value={app.settings.discordRpc.editorLargeText} onchange={apply} placeholder={"{language}"} />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Large image link</span>
-                      <TextField bind:value={app.settings.discordRpc.editorLargeUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Small image</span>
-                      <TextField bind:value={app.settings.discordRpc.editorSmallImage} onchange={apply} placeholder="Optional" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Small image text</span>
-                      <TextField bind:value={app.settings.discordRpc.editorSmallText} onchange={apply} placeholder="Optional" />
-                    </div>
-                    <div class="field">
-                      <span class="row-label">Small image link</span>
-                      <TextField bind:value={app.settings.discordRpc.editorSmallUrl} onchange={apply} placeholder="https://… (optional)" />
-                    </div>
-                  </div>
-                </details>
-              </section>
-
-              <section class="settings-section">
-                <details class="discord-group" bind:open={discordOpen.buttons}>
-                  <summary class="discord-group-head">
-                    <span class="section-heading">Buttons</span>
-                    <span class="hint">Up to two links under the activity</span>
-                    <span class="discord-chevron"><Icon name="chevron-down" size={14} /></span>
-                  </summary>
-                  <div class="discord-group-body">
-                    <div class="setting-row">
-                      {@render rowText("Show buttons", "Up to two links under the activity.")}
+                      {@render rowText("Show buttons", "Each needs a label and an http(s) link.")}
                       {@render toggle(app.settings.discordRpc.showButtons, (v) => ((app.settings.discordRpc.showButtons = v), apply()))}
                     </div>
                     {#if app.settings.discordRpc.showButtons}
-                      <div class="field">
-                        <span class="row-label">Button 1 label</span>
-                        <TextField bind:value={app.settings.discordRpc.button1Label} onchange={apply} placeholder="Website" />
+                      <div class="form-grid">
+                        <label>First label <TextField bind:value={app.settings.discordRpc.button1Label} onchange={apply} placeholder="Website" /></label>
+                        <label>First link <TextField bind:value={app.settings.discordRpc.button1Url} onchange={apply} placeholder="https://…" /></label>
+                        <label>Second label <TextField bind:value={app.settings.discordRpc.button2Label} onchange={apply} placeholder="Optional" /></label>
+                        <label>Second link <TextField bind:value={app.settings.discordRpc.button2Url} onchange={apply} placeholder="https://…" /></label>
                       </div>
-                      <div class="field">
-                        <span class="row-label">Button 1 URL</span>
-                        <TextField bind:value={app.settings.discordRpc.button1Url} onchange={apply} placeholder="https://…" />
-                      </div>
-                      <div class="field">
-                        <span class="row-label">Button 2 label</span>
-                        <TextField bind:value={app.settings.discordRpc.button2Label} onchange={apply} placeholder="Optional" />
-                      </div>
-                      <div class="field">
-                        <span class="row-label">Button 2 URL</span>
-                        <TextField bind:value={app.settings.discordRpc.button2Url} onchange={apply} placeholder="https://…" />
-                      </div>
-                      <p class="hint">Only http(s) links are accepted by Discord; a button needs both a label and a URL.</p>
                     {/if}
-                    <div class="btn-row">
-                      <Button type="button" variant="ghost" onclick={() => ((app.settings.discordRpc = { ...DEFAULT_DISCORD_RPC }), apply())}>
-                        Reset to defaults
-                      </Button>
-                    </div>
                   </div>
                 </details>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h3 class="section-heading">Editing: {discordPreviewKind === "chat" ? "In a chat" : "In the editor"}</h3>
+                <p class="hint">Text and images differ per card. Only this card changes.</p>
+                <div class="card">
+                  <div class="setting-row">
+                    {@render rowText("Card", "Which card to edit.")}
+                    {@render segmented(
+                      [
+                        { value: "chat", label: "In a chat" },
+                        { value: "editor", label: "In the editor" },
+                      ],
+                      discordPreviewKind,
+                      (v) => (discordPreviewKind = v as "chat" | "editor"),
+                    )}
+                  </div>
+                  {#if discordPreviewKind === "chat"}
+                    <div class="setting-row">
+                      {@render rowText("Hide on plain chats", "Only show chats that belong to a project.")}
+                      {@render toggle(app.settings.discordRpc.hideOnChats, (v) => ((app.settings.discordRpc.hideOnChats = v), apply()))}
+                    </div>
+                    <div class="setting-row">
+                      {@render rowText("Show when idle", "Keep a card while no chat is open.")}
+                      {@render toggle(app.settings.discordRpc.showWhenIdle, (v) => ((app.settings.discordRpc.showWhenIdle = v), apply()))}
+                    </div>
+                  {:else}
+                    <div class="setting-row">
+                      {@render rowText("Editor timer", "When the elapsed time restarts.")}
+                      <Dropdown
+                        items={DISCORD_EDITOR_TIMER_SCOPES}
+                        bind:value={() => app.settings.discordRpc.editorTimerScope, (v) => (app.settings.discordRpc.editorTimerScope = v as typeof app.settings.discordRpc.editorTimerScope, apply())}
+                        contentClass="above-modal"
+                      />
+                    </div>
+                  {/if}
+                  <div class="card-pad edit-body">
+                    {#each DISCORD_GROUPS as [title, from, to] (title)}
+                      <div class="field-group">
+                        <span class="field-group-title">{title}</span>
+                        <div class="form-grid" class:three={to - from === 3}>
+                          {#each DISCORD_FIELDS[discordPreviewKind].slice(from, to) as [key, label, ph] (key)}
+                            <label>
+                              {label}
+                              <TextField bind:value={app.settings.discordRpc[key]} onchange={apply} placeholder={ph} />
+                            </label>
+                          {/each}
+                        </div>
+                      </div>
+                    {/each}
+                    {#if discordPreviewKind === "chat" && app.settings.discordRpc.showWhenIdle}
+                      <div class="field-group">
+                        <span class="field-group-title">While idle</span>
+                        <div class="form-grid">
+                          <label>Details <TextField bind:value={app.settings.discordRpc.idleDetails} onchange={apply} placeholder="Taking a break" /></label>
+                          <label>State <TextField bind:value={app.settings.discordRpc.idleState} onchange={apply} placeholder="yoakeland" /></label>
+                        </div>
+                      </div>
+                    {/if}
+                    <p class="hint">
+                      Use {(discordPreviewKind === "chat" ? DISCORD_TEMPLATE_VARS : DISCORD_EDITOR_TEMPLATE_VARS).map((v) => `{${v}}`).join(" ")} in any line. An empty line is hidden.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-section">
+                <h3 class="section-heading">Advanced</h3>
+                <div class="card">
+                <details class="disclosure" open={!!settingsSearch.trim()}>
+                  <summary>
+                    {@render rowText("Advanced", "Your own Discord application.")}
+                    <span class="disclosure-chevron"><Icon name="chevron-down" size={14} /></span>
+                  </summary>
+                  <div class="disclosure-body">
+                    <div class="form-grid">
+                      <label>
+                        Application ID
+                        <TextField bind:value={app.settings.discordRpc.clientId} onchange={apply} placeholder={DEFAULT_DISCORD_CLIENT_ID || "From the Discord Developer Portal"} />
+                      </label>
+                      <label>
+                        Application name
+                        <TextField bind:value={app.settings.discordRpc.name} onchange={apply} placeholder={discordAppName} />
+                      </label>
+                    </div>
+                    <p class="hint">Blank uses yoakeland's own. Your own lets you change the name and art.</p>
+                    <Button type="button" variant="ghost" class="align-start" onclick={async () => { if (!(await askConfirm("Reset all Discord settings, including both cards?"))) return; app.settings.discordRpc = { ...DEFAULT_DISCORD_RPC }; apply(); }}>
+                      Reset everything to defaults
+                    </Button>
+                  </div>
+                </details>
+                </div>
               </section>
             {/if}
           </div>
@@ -1667,17 +1641,17 @@
         <Tabs.Content value="keyboard" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "keyboard", query: settingsSearch }}>
             {@render pageHead("Keyboard", false)}
-            <div class="keys-intro">
-              <p class="hint">Click a shortcut to change it, then press the new keys (Esc cancels). Each action takes up to two.</p>
-              {#if anyCustomized}
+            {#if anyCustomized}
+              <div class="keys-intro">
                 <Button type="button" size="sm" variant="ghost" onclick={() => (stopRecording(), resetBinds())}>
                   <Icon name="restore" size={12} /> Reset all
                 </Button>
-              {/if}
-            </div>
+              </div>
+            {/if}
             {#each actionGroups as [group, actions] (group)}
               <section class="settings-section">
                 <h3 class="section-heading">{group}</h3>
+                <div class="card">
                 {#each actions as a (a.id)}
                   {@const binds = bindsFor(a.id)}
                   <div class="setting-row keybind-row">
@@ -1705,6 +1679,7 @@
                     </div>
                   {/if}
                 {/each}
+                </div>
               </section>
             {/each}
           </div>
@@ -1715,6 +1690,7 @@
             {@render pageHead("Servers", false)}
             <section class="settings-section">
               <p class="hint">Every server this app has connected to. Each settings page applies to one at a time.</p>
+              <div class="card">
               <ul class="list">
                 {#each serverList as r (r.key)}
                   <li>
@@ -1741,6 +1717,7 @@
                   <li class="empty">No servers yet.</li>
                 {/each}
               </ul>
+              <div class="card-pad">
               {#if addPrefill}
                 {#key addPrefill}
                   <div class="inset-card">
@@ -1758,47 +1735,59 @@
                   <Icon name="plus" size={13} /> Add server
                 </Button>
               {/if}
+              </div>
+              </div>
             </section>
           </div>
         </Tabs.Content>
 
         <Tabs.Content value="general" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "general", query: settingsSearch }}>
-            {@render pageHead("General", true)}
+            {@render pageHead("Server", true)}
             <section class="settings-section">
-              <form class="setting-row" onsubmit={submitServerIdentity}>
-                {@render rowText("Server name", "Shown to everyone connected to this server.")}
-                <div class="btn-row">
-                  <TextField type="text" class="ctrl-wide" placeholder="this server's name" bind:value={serverIdentityInput} disabled={!connected} />
-                  <Button type="submit" disabled={!connected || !serverIdentityInput.trim() || serverIdentityInput.trim() === server?.serverIdentity}>
-                    Save
-                  </Button>
+              <h3 class="section-heading">Server</h3>
+              <div class="card">
+              <form class="identity-row" onsubmit={submitServerIdentity}>
+                {#if server && connected}<ServerIconEditor connectionId={server.connectionId} size={44} />{/if}
+                <div class="identity-fields">
+                  <TextField type="text" class="identity-name" placeholder="Server name" aria-label="Server name" bind:value={serverIdentityInput} disabled={!connected} />
+                  <p class="hint">Name and icon are shown to everyone connected, on every device.</p>
                 </div>
+                {#if serverIdentityDirty}
+                  <Button type="submit" variant="primary" disabled={!connected}>Save</Button>
+                {/if}
               </form>
               {#if server?.outdated}
                 <div class="setting-row">
-                  {@render rowText("Server is out of date", `Running ${server.version ? "v" + server.version : "a version that doesn't report itself"}, the latest is v${app.latestServerVersion}.`)}
+                  {@render rowText("Out of date", `Running ${server.version ? fmtVersion(server.version) : "an unknown version"}, latest is v${app.latestServerVersion}.`)}
                 </div>
               {/if}
               {#if server?.connectionMode === "local"}
                 <div class="setting-row">
-                  {@render rowText("Restart server", "Stops and starts the server on the newest installed version. Running chats stop; you'll be asked first.")}
+                  {@render rowText("Restart", "Runs the newest installed version. Running chats stop.")}
                   <Button type="button" onclick={() => restartServer(server.connectionId)} disabled={!connected}>Restart</Button>
                 </div>
               {/if}
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="section-heading">Chats</h3>
+              <div class="card">
               <div class="setting-row">
-                {@render rowText("Auto-generate chat titles", "Names new threads from their first message.")}
+                {@render rowText("Auto-generate titles", "Names new threads from their first message.")}
                 {@render toggle(server?.autoGenerateTitleEnabled ?? true, onAutoGenerateTitleToggle, !connected)}
               </div>
-              <div class="setting-row">
-                {@render rowText("Summarize long replies", "Adds a short summary card under each long reply, written by the Titles & summaries model. Any reply can also be summarized from its actions.")}
-                {@render toggle(app.settings.autoSummary, (v) => ((app.settings.autoSummary = v), apply()))}
               </div>
             </section>
             <section class="settings-section">
               <h3 class="section-heading">Context</h3>
+              <div class="card">
               <div class="setting-row">
-                {@render rowText("Compact chats at", "Chats are summarized to make room once their context passes this. 0 means the built-in 64,000. Never above 90% of the model's window. Claude Code is told this as its context window and compacts about 33,000 tokens below that; other agents compact on their own. Change one chat with /autocompact. /compact summarizes now.")}
+                {@render rowText(
+                  "Compact chats at",
+                  "Summarized once context passes this. 0 uses 64,000.",
+                  "Never above 90% of the model's window. Claude Code is told this as its context window and compacts about 33,000 tokens below that; other agents compact on their own. Change one chat with /autocompact. /compact summarizes now.",
+                )}
                 <span class="num-unit">
                   <NumberField
                     class="ctrl-num"
@@ -1812,36 +1801,44 @@
                 </span>
               </div>
               <div class="setting-row stacked">
-                {@render rowText("Summary instructions", "Added to every summary a chat on an API provider makes, automatic or from /compact. It narrows the focus and never replaces the base prompt, which always keeps requests, decisions, changed files and remaining work. A summary these make implausibly short is redone without them. Claude Code doesn't take it; give its /compact instructions after the command.")}
+                {@render rowText(
+                  "Summary instructions",
+                  "Steers every summary on an API provider.",
+                  "Automatic or from /compact. It narrows the focus and never replaces the base prompt. A summary these make implausibly short is redone without them. Claude Code doesn't take it; give its /compact instructions after the command.",
+                )}
                 <TextArea
                   bind:value={compactInstructionsInput}
-                  rows={3}
+                  rows={2}
                   maxlength={4000}
                   disabled={!connected || !runtime}
                   placeholder="e.g. Keep the exact error messages and test commands."
                   onchange={() => patchRuntime({ compactInstructions: compactInstructionsInput })}
                 />
               </div>
+              </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Resources</h3>
-              {#each RESOURCE_SETTINGS as r (r.key)}
-                <div class="setting-row">
-                  {@render rowText(r.label, r.hint)}
-                  <span class="num-unit">
-                    <NumberField
-
-                      class="ctrl-num"
-                      min={r.min}
-                      step={1}
-                      disabled={!connected || !runtime}
-                      value={runtime?.[r.key] ?? 0}
-                      onchange={(v) => patchRuntime({ [r.key]: Math.max(r.min, Math.round(v || r.min)) })}
-                    />
-                    <span class="hint">{r.unit}</span>
-                  </span>
-                </div>
-              {/each}
+              <h3 class="section-heading">Limits</h3>
+              <div class="card">
+              <div class="num-grid">
+                {#each RESOURCE_SETTINGS.filter((r) => !r.key.startsWith("pool")) as r (r.key)}
+                  <label class="num-cell">
+                    <span class="row-label">{r.label}<span class="more" {@attach tip(r.hint)}><Icon name="info-circle" size={12} /></span></span>
+                    <span class="num-unit">
+                      <NumberField
+                        class="ctrl-num"
+                        min={r.min}
+                        step={1}
+                        disabled={!connected || !runtime}
+                        value={runtime?.[r.key] ?? 0}
+                        onchange={(v) => patchRuntime({ [r.key]: Math.max(r.min, Math.round(v || r.min)) })}
+                      />
+                      <span class="hint">{r.unit}</span>
+                    </span>
+                  </label>
+                {/each}
+              </div>
+              </div>
             </section>
           </div>
         </Tabs.Content>
@@ -1851,8 +1848,13 @@
             {@render pageHead("Safety", true)}
             <section class="settings-section">
               <h3 class="section-heading">Limits</h3>
+              <div class="card">
               <div class="setting-row">
-                {@render rowText("Model calls per turn", "The turn pauses and asks to continue after this many. 0 means no limit. Coding agents like Claude Code run their own loop and aren't limited.")}
+                {@render rowText(
+                  "Model calls per turn",
+                  "A turn pauses and asks to continue after this many. 0 is no limit.",
+                  "Coding agents like Claude Code run their own loop and aren't limited.",
+                )}
                 <NumberField
 
                   class="ctrl-num"
@@ -1864,7 +1866,11 @@
                 />
               </div>
               <div class="setting-row">
-                {@render rowText("Spend per chat (USD)", "A chat pauses and asks to continue once it has spent this much, mid-turn too. 0 means no limit. Only priced usage counts.")}
+                {@render rowText(
+                  "Spend per chat (USD)",
+                  "A chat pauses and asks to continue once it has spent this much. 0 is no limit.",
+                  "Applies mid-turn too. Only priced usage counts.",
+                )}
                 <NumberField
 
                   class="ctrl-num"
@@ -1875,30 +1881,36 @@
                   onchange={(v) => patchRuntime({ maxSessionCostUsd: Math.max(0, v || 0) })}
                 />
               </div>
-              <div class="warning-card" class:danger-card={unsandboxedOpen.length > 0 && !runtime?.disableBashWhenUnsandboxed}>
-                <div class="setting-row">
-                  {@render rowText(
-                    "Turn bash off when a project has no sandbox",
-                    "Without bubblewrap or namespaces, bash and terminals run directly on the machine and can touch anything the server's user can. This hides them from the model in those projects. Off by default.",
-                  )}
-                  {@render toggle(runtime?.disableBashWhenUnsandboxed ?? false, (v) => patchRuntime({ disableBashWhenUnsandboxed: v }), !connected || !runtime)}
-                </div>
-                {#if unsandboxedOpen.length > 0}
-                  <p class="hint danger-text">
-                    <Icon name="warning" size={13} />
-                    {unsandboxedOpen.length === 1 ? "1 open project has" : `${unsandboxedOpen.length} open projects have`} no sandbox:
-                    {runtime?.disableBashWhenUnsandboxed ? "bash is off there." : "bash there is unprotected."}
-                  </p>
-                {/if}
+              <div class="setting-row" class:danger-row={unsandboxedOpen.length > 0 && !runtime?.disableBashWhenUnsandboxed}>
+                {@render rowText(
+                  "Turn bash off without a sandbox",
+                  "Hides bash and terminals from the model in projects that have none. Off by default.",
+                  "Without bubblewrap or namespaces, bash and terminals run directly on the machine and can touch anything the server's user can.",
+                )}
+                {@render toggle(runtime?.disableBashWhenUnsandboxed ?? false, (v) => patchRuntime({ disableBashWhenUnsandboxed: v }), !connected || !runtime)}
               </div>
+              {#if unsandboxedOpen.length > 0}
+                <p class="hint danger-text">
+                  <Icon name="warning" size={13} />
+                  {unsandboxedOpen.length === 1 ? "1 open project has" : `${unsandboxedOpen.length} open projects have`} no sandbox:
+                  {runtime?.disableBashWhenUnsandboxed ? "bash is off there." : "bash there is unprotected."}
+                </p>
+              {/if}
               <div class="setting-row">
-                {@render rowText("Keep the browser on approved sites", "While the agent drives the browser, links and redirects to sites it isn't cleared for are stopped, and it has to ask. Your own navigation is never blocked.")}
+                {@render rowText(
+                  "Keep the browser on approved sites",
+                  "Stops the agent following links to sites it isn't cleared for.",
+                  "While the agent drives the browser, links and redirects to other sites are stopped and it has to ask. Your own navigation is never blocked.",
+                )}
                 {@render toggle(runtime?.browserBlockCrossOrigin ?? true, (v) => patchRuntime({ browserBlockCrossOrigin: v }), !connected || !runtime)}
+              </div>
               </div>
             </section>
             <section class="settings-section">
               <h3 class="section-heading">Permissions</h3>
-              <PermissionRules {cid} projectPath={server?.currentProjectPath ?? undefined} />
+              <div class="card">
+              <div class="card-pad"><PermissionRules {cid} projectPath={server?.currentProjectPath ?? undefined} /></div>
+              </div>
             </section>
           </div>
         </Tabs.Content>
@@ -1907,7 +1919,8 @@
           <div class="tab-body" use:searchable={{ tab: "notifications", query: settingsSearch }}>
             {@render pageHead("Notifications", true)}
             <section class="settings-section">
-              <p class="hint">Only the first two are on by default. Nothing alerts for a chat you're viewing on any device. Read state is kept on the server, so reading on one device counts on all of them.</p>
+              <p class="hint">Only the first two are on by default. Nothing alerts for a chat you're viewing on any device.</p>
+              <div class="card">
               <div class="setting-row">
                 {@render rowText("Needs you", "Permission requests, questions from the agent, failed turns, the spend cap.")}
                 {@render toggle(notifyPrefs.urgent, (v) => patchNotify({ urgent: v }), !connected)}
@@ -1933,15 +1946,18 @@
                   onchange={(v) => patchNotify({ minTurnSec: Math.max(0, Math.round(v || 0)) })}
                 />
               </div>
+              </div>
             </section>
             <section class="settings-section">
               <h3 class="section-heading">Kinds</h3>
+              <div class="card">
               {#each NOTIFY_KINDS as k (k.kind)}
                 <div class="setting-row">
                   {@render rowText(k.label)}
                   {@render toggle(!notifyPrefs.muted.includes(k.kind), (v) => setKindOn(k.kind, v), !connected)}
                 </div>
               {/each}
+              </div>
             </section>
           </div>
         </Tabs.Content>
@@ -1949,112 +1965,39 @@
         <Tabs.Content value="providers" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "providers", query: settingsSearch }}>
             {@render pageHead("Providers", true)}
+            <ProvidersPage {cid} {server} {connected} />
             <section class="settings-section">
-              <h3 class="section-heading">Accounts</h3>
-              <p class="hint">Coding agents run a CLI that's already signed in on the server, with its own tools. yoakeland never sees the credential. Sign in once in a terminal on the server first.</p>
-              <div class="cli-cards">
-                {#each cliRows as c (c.kind)}
-                  <div class="cli-card">
-                    <div class="cli-card-top">
-                      <LobeIcon name={c.icon} size={22} />
-                      {@render toggle(!!c.existing, (v) => toggleCli(c.kind, c.existing, v), !c.existing && !c.available)}
-                    </div>
-                    <div class="list-text">
-                      <span class="list-title">{c.title}</span>
-                      {#if connected && !c.available}
-                        <span class="list-meta warn" {@attach tip(`${c.cli} isn't on the server's PATH`)}><Icon name="warning" size={11} /> Not installed</span>
-                      {:else}
-                        <span class="list-meta" {@attach tip(`Runs the server's own ${c.cli} CLI`)}>{c.cli}</span>
-                      {/if}
-                    </div>
-                  </div>
+              <h3 class="section-heading">Coding agent processes</h3>
+              <div class="card">
+              <div class="num-grid">
+                {#each RESOURCE_SETTINGS.filter((r) => r.key.startsWith("pool")) as r (r.key)}
+                  <label class="num-cell">
+                    <span class="row-label">{r.label}<span class="more" {@attach tip(r.hint)}><Icon name="info-circle" size={12} /></span></span>
+                    <span class="num-unit">
+                      <NumberField
+                        class="ctrl-num"
+                        min={r.min}
+                        step={1}
+                        disabled={!connected || !runtime}
+                        value={runtime?.[r.key] ?? 0}
+                        onchange={(v) => patchRuntime({ [r.key]: Math.max(r.min, Math.round(v || r.min)) })}
+                      />
+                      <span class="hint">{r.unit}</span>
+                    </span>
+                  </label>
                 {/each}
-                {#if isDesktop || orAccount}
-                  <div class="cli-card">
-                    <div class="cli-card-top">
-                      <LobeIcon name="openrouter" size={22} />
-                      {#if orAccount}
-                        <Button type="button" onclick={() => onRemoveProvider(orAccount.name)}>Sign out</Button>
-                      {:else if orStatus === "idle"}
-                        <Button type="button" disabled={!connected} onclick={signInOR}>Sign in</Button>
-                      {:else}
-                        <Button type="button" variant="ghost" onclick={cancelOR}>Cancel</Button>
-                      {/if}
-                    </div>
-                    <div class="list-text">
-                      <span class="list-title">OpenRouter</span>
-                      {#if orError}
-                        <span class="list-meta warn"><Icon name="warning" size={11} /> {orError}</span>
-                      {:else if orAccount}
-                        <span class="list-meta">Signed in</span>
-                      {:else if orStatus === "waiting"}
-                        <span class="list-meta">Finish in your browser…</span>
-                      {:else if orStatus === "finishing"}
-                        <span class="list-meta">Finishing…</span>
-                      {:else}
-                        <span class="list-meta" {@attach tip("Opens openrouter.ai in your browser. The server stores the key it returns.")}>Sign in with your account</span>
-                      {/if}
-                    </div>
-                  </div>
-                {/if}
+              </div>
               </div>
             </section>
+          </div>
+        </Tabs.Content>
 
-            <section class="settings-section">
-              <h3 class="section-heading">API keys</h3>
-              {#if manualKeys.length}
-                <ul class="list">
-                  {#each manualKeys as p (p.name)}
-                    <li>
-                      <Icon name="brain" size={14} />
-                      <div class="list-text">
-                        <span class="list-title">{p.name}</span>
-                        <span class="list-meta">{p.httpProvider}</span>
-                      </div>
-                      <Button type="button" icon variant="ghost" destructive onclick={() => onRemoveProvider(p.name)} {@attach tip("Remove")}>
-                        <Icon name="trash" size={13} />
-                      </Button>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-              <form class="inset-card provider-form" onsubmit={submitProvider}>
-                <span class="row-label">Add an API key</span>
-                <div class="form-grid">
-                  <label>
-                    Name
-                    <TextField type="text" bind:value={providerName} placeholder="my-anthropic" />
-                  </label>
-                  <label>
-                    Provider
-                    <Dropdown
-                      items={[
-                        { value: "anthropic", label: "Anthropic" },
-                        { value: "openai", label: "OpenAI-compatible" },
-                        { value: "openrouter", label: "OpenRouter" },
-                      ]}
-                      bind:value={() => httpProvider, (v) => (httpProvider = v as typeof httpProvider)}
-                      contentClass="above-modal"
-                    />
-                  </label>
-                  <label>
-                    API key
-                    <TextField bind:value={apiKey} type="password" placeholder="sk-…" />
-                  </label>
-                  <label>
-                    <span>Base URL <span class="optional">(optional)</span></span>
-                    <TextField type="text" bind:value={baseUrl} placeholder="http://localhost:11434/v1" />
-                  </label>
-                </div>
-                <Button variant="primary" class="align-end" type="submit" disabled={!connected || !providerName.trim() || !apiKey.trim()}>
-                  Add key
-                </Button>
-              </form>
-            </section>
-
+        <Tabs.Content value="models" class="tab-panel">
+          <div class="tab-body" use:searchable={{ tab: "models", query: settingsSearch }}>
+            {@render pageHead("Models", true)}
             <section class="settings-section">
               <h3 class="section-heading">Model roles</h3>
-              <p class="hint">Send parts of chat work to other models: strong where it pays, cheap where it doesn't. Unset roles use the chat's model. Coding agents pick their own models and skip these.</p>
+              <p class="hint">Send parts of the work to other models. Unset roles use the chat's model; coding agents skip these.</p>
               {#each ROLE_ROWS as r (r.key)}
                 {@const efforts = roleEfforts(r.key)}
                 <div class="setting-row">
@@ -2081,11 +2024,12 @@
           </div>
         </Tabs.Content>
 
+
         <Tabs.Content value="projects" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "projects", query: settingsSearch }}>
             {@render pageHead("Projects", true)}
             <section class="settings-section">
-              <p class="hint">Folders on this server offered in the sidebar's project picker.</p>
+              <div class="card">
               <ul class="list">
                 {#each (server?.recentProjects ?? []) as path (path)}
                   <li>
@@ -2109,9 +2053,12 @@
                   <li class="empty">No projects yet.</li>
                 {/each}
               </ul>
-              <Button type="button" class="align-start" disabled={!connected} onclick={() => cid && browseAndAddProject(cid)}>
-                <Icon name="folder-plus" size={13} /> Add project…
-              </Button>
+              <div class="card-pad">
+                <Button type="button" disabled={!connected} onclick={() => cid && browseAndAddProject(cid)}>
+                  <Icon name="folder-plus" size={13} /> Add project…
+                </Button>
+              </div>
+              </div>
             </section>
           </div>
         </Tabs.Content>
@@ -2134,6 +2081,7 @@
 
             <section class="settings-section">
               <h3 class="section-heading">Remote access</h3>
+              <div class="card">
               <div class="setting-row">
                 {@render rowText("Allow remote (TCP) connections", "Exposes this server to the network. Anyone with a token or the password can connect.")}
                 {@render toggle(server?.remoteAccessEnabled ?? false, onRemoteAccessToggle, !isLocalConnection)}
@@ -2154,6 +2102,7 @@
                   </div>
                 </form>
               </div>
+              </div>
             </section>
 
             <section class="settings-section">
@@ -2166,6 +2115,7 @@
                 {/if}
               </div>
               <p class="hint">Each person gets their own token. Their chats and git commits carry its name. Names can't change once registered; revoke and re-register to rename.</p>
+              <div class="card">
 
               {#if server?.justRegisteredToken}
                 <div class="warning-card">
@@ -2236,10 +2186,12 @@
                   <li class="empty">No one yet.</li>
                 {/each}
               </ul>
+              </div>
             </section>
             {#if server?.connectionStatus === "connected"}
               <section class="settings-section">
                 <h3 class="section-heading">Connected now</h3>
+                <div class="card">
                 <ul class="list">
                   {#each (server?.peers ?? []).filter((p) => p.peerId !== server?.selfPeerId) as peer (peer.peerId)}
                     <li>
@@ -2267,20 +2219,19 @@
                     <li class="empty">No one else is connected.</li>
                   {/each}
                 </ul>
+                </div>
               </section>
             {/if}
-          </div>
-        </Tabs.Content>
-
-        <Tabs.Content value="audit" class="tab-panel">
-          <div class="tab-body" use:searchable={{ tab: "audit", query: settingsSearch }}>
-            {@render pageHead("Audit log", true)}
             <section class="settings-section">
-              <p class="hint">Approvals, refusals, runs, and changes to settings, credentials and devices on this server. Kept on the server (newest 15 MB). Never holds a password, token or key.</p>
+              <h3 class="section-heading">Audit log</h3>
+              <p class="hint">Kept on the server (newest 15 MB). Never holds a password, token or key.</p>
+              <div class="card">
               <AuditPanel cid={cid ?? null} connected={!!connected} />
+              </div>
             </section>
           </div>
         </Tabs.Content>
+        </div>
       </Tabs.Root>
       </div>
     </Dialog.Content>
@@ -2310,7 +2261,7 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: min(72rem, 94vw);
+    width: min(62rem, 94vw);
     height: min(50rem, 90vh);
     display: flex;
     /* A dialog card is a floating surface like any other, see the --float-*
@@ -2320,7 +2271,7 @@
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-dialog);
     z-index: var(--z-overlay-content);
     overflow: hidden;
     animation: dialogIn var(--dialog-enter-duration) ease-out;
@@ -2330,7 +2281,7 @@
   }
   :global(.settings-close) {
     position: absolute;
-    top: 0.86rem;
+    top: 0.67rem;
     right: 0.86rem;
     z-index: 1;
     display: flex;
@@ -2363,19 +2314,22 @@
     display: flex;
     flex-direction: column;
     gap: 0.07rem;
-    padding: 1.14rem 0.71rem;
+    padding: 0.57rem 0.71rem 1.14rem;
     overflow-y: auto;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--wash-1);
     border-right: 1px solid var(--panel-border);
   }
+  /* Kept for screen readers; the sidebar has no visible title. */
   :global(.settings-title) {
-    margin: 0 0 0.86rem 0.57rem;
-    font-size: var(--text-title-size);
-    font-weight: var(--text-title-weight);
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .settings-search {
     display: flex;
-    margin-bottom: 0.57rem;
   }
   .no-matches {
     margin: 0 0 0.57rem 0.57rem;
@@ -2396,10 +2350,11 @@
     white-space: nowrap;
   }
   :global(.settings-tab-trigger) {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 0.64rem;
-    padding: 0.46rem 0.57rem;
+    padding: 0.5rem 0.64rem;
     border: none;
     background: transparent;
     color: var(--text-dim);
@@ -2407,18 +2362,39 @@
     cursor: pointer;
     font-size: var(--text-body-size);
     text-align: left;
-    transition: background calc(0.1s * var(--anim-speed, 1)) ease, opacity calc(0.15s * var(--anim-speed, 1)) ease;
+    transition: background calc(0.1s * var(--anim-speed, 1)) ease, color calc(0.1s * var(--anim-speed, 1)) ease,
+      opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  :global(.settings-tab-trigger .icon) {
+    flex-shrink: 0;
+    opacity: 0.7;
+    transition: color calc(0.1s * var(--anim-speed, 1)) ease, opacity calc(0.1s * var(--anim-speed, 1)) ease;
   }
   :global(.settings-tab-trigger:hover) {
     background: var(--sidebar-hover);
     color: var(--text);
   }
+  :global(.settings-tab-trigger:hover .icon) {
+    opacity: 1;
+  }
   :global(.settings-tab-trigger[data-state="active"]) {
-    background: var(--sidebar-active);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--text);
+    font-weight: 500;
+  }
+  :global(.settings-tab-trigger[data-state="active"]::before) {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 22%;
+    bottom: 22%;
+    width: 2px;
+    border-radius: var(--radius-pill, 999px);
+    background: var(--accent);
   }
   :global(.settings-tab-trigger[data-state="active"] .icon) {
     color: var(--accent);
+    opacity: 1;
   }
   :global(.settings-tab-trigger.tab-dim) {
     opacity: 0.35;
@@ -2426,6 +2402,7 @@
   :global(.tab-panel) {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     overflow-y: auto;
     scrollbar-gutter: stable;
     padding: 1.14rem 1.71rem 1.71rem;
@@ -2434,31 +2411,69 @@
     display: none;
   }
   .tab-body {
-    --ctrl-h: 2rem;
+    --ctrl-h: 2.14rem;
+    /* Settings reads at 13px / 12px; the app-wide scale is a notch smaller. */
+    --text-body-size: 0.93rem;
+    --text-label-size: 0.86rem;
     display: flex;
     flex-direction: column;
-    gap: 1.43rem;
-    max-width: 44rem;
+    gap: 2.14rem;
+    max-width: 46rem;
     margin-inline: auto;
   }
+  .settings-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  /* The same on every page: it stays put while the page below scrolls. */
   .page-head {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: var(--space-1);
-    min-height: 1.86rem;
-    padding-right: 2.29rem; /* clear of the close button */
+    gap: 0.5rem;
+    height: 3.2rem;
+    padding: 0 2.9rem 0 1.71rem; /* right: clear of the close button */
+    border-bottom: 1px solid var(--panel-border);
   }
   .page-head h2 {
-    flex: 1;
     margin: 0;
-    font-size: var(--text-title-size);
+    font-size: 1.07rem;
     font-weight: var(--text-title-weight);
+  }
+  .crumb-sep {
+    color: var(--text-dim);
+    font-size: 1.07rem;
+  }
+  /* Same size and weight as the page title it leads into, dimmed so the title stays the focus. */
+  .page-head :global(.dropdown-trigger.scope-pick) {
+    font-size: 1.07rem;
+    font-weight: var(--text-title-weight);
+    color: var(--text-dim);
+    /* Equal inset on every side of the avatar (the hover pill hugs it), and the pill
+       hangs left by that inset so the avatar itself lines up with the single-server one. */
+    height: auto;
+    padding: 4px 8px 4px 4px;
+    margin-left: -5px; /* 4px padding + 1px border */
+    gap: 0.75rem;
+  }
+  /* The dropdown's icon slot is 0.86rem; the avatar is bigger, so grow the slot to fit it. */
+  .page-head :global(.dropdown-trigger.scope-pick .dropdown-trigger-icon) {
+    width: 22px;
+    height: 22px;
+  }
+  .page-head :global(.dropdown-trigger.scope-pick:hover),
+  .page-head :global(.dropdown-trigger.scope-pick[data-state="open"]) {
+    color: var(--text);
   }
   .scope {
     display: inline-flex;
     align-items: center;
     gap: 0.36rem;
-    font-size: var(--text-label-size);
+    font-size: 1.07rem;
+    font-weight: var(--text-title-weight);
     color: var(--text-dim);
   }
   .notice {
@@ -2468,7 +2483,7 @@
     margin: 0;
     padding: 0.57rem 0.71rem;
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border: 1px solid var(--panel-border);
     font-size: var(--text-label-size);
     color: var(--text-dim);
@@ -2484,21 +2499,172 @@
 
   /* ---- Sections and rows ---- */
   .settings-section {
+    --card-pad-x: 1.14rem;
     display: flex;
     flex-direction: column;
-    gap: 0.86rem;
-    padding-top: 1.43rem;
+    gap: 0.71rem;
+  }
+  .settings-section > .hint {
+    margin-inline: var(--card-pad-x);
+  }
+  /* One bordered card per section; rows inside are told apart by a hairline. */
+  .card {
+    display: flex;
+    flex-direction: column;
+    background: var(--wash-1);
+    border: 1px solid var(--panel-border);
+    border-block-color: var(--panel-border-top) var(--panel-border-bottom);
+    border-radius: var(--radius-lg);
+    overflow: clip;
+  }
+  .card:not(:has(> *)) {
+    display: none;
+  }
+  .card > * + *,
+  .card :is(.setting-row, .field) + :is(.setting-row, .field) {
     border-top: 1px solid var(--panel-border);
   }
-  .page-head + .settings-section,
-  .notice + .settings-section {
-    padding-top: 0;
-    border-top: none;
+  .card .setting-row,
+  .card > .field,
+  .card > .pair,
+  .card > .num-grid,
+  .card > .hint,
+  .card > .type-preview,
+  .card > .disclosure > summary,
+  .card > .disclosure > .disclosure-body {
+    padding: 0.86rem var(--card-pad-x);
+  }
+  .card-pad {
+    padding: 0.86rem var(--card-pad-x);
+  }
+  .card .list li {
+    padding-inline: var(--card-pad-x);
+  }
+  .card .disclosure-body .setting-row {
+    padding: 0;
+  }
+  .card .inset-card {
+    padding: 0;
+    border-left: none;
+  }
+  .add-row {
+    min-height: 2.9rem;
+    padding: 0 var(--card-pad-x);
+    background: none;
+    border: 0;
+    color: var(--text-dim);
+    font-size: var(--text-body-size);
+    text-align: left;
+  }
+  .add-row:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--wash-1);
+  }
+  .card .setting-row.danger-row {
+    background: var(--danger-dim);
   }
   .section-heading {
-    margin: 0;
-    font-size: var(--text-body-size);
+    margin: 0 0 0 var(--card-pad-x);
+    font-size: 1.07rem;
     font-weight: 600;
+    color: var(--text);
+  }
+  .settings-section[hidden] {
+    display: none;
+  }
+  .subnav {
+    width: min(100%, 28rem);
+    margin-top: -1.14rem;
+  }
+  .offline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.43rem;
+    padding: 3.43rem 1rem;
+    text-align: center;
+    color: var(--text-dim);
+  }
+  .offline .hint {
+    margin-bottom: 0.57rem;
+  }
+  .offline ~ * {
+    display: none !important;
+  }
+  /* Two pickers side by side, each with its own label. */
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.71rem;
+    padding-bottom: 0.29rem;
+  }
+  /* Side by side, not stacked: the card's row hairline would draw above the second one. */
+  .card .pair > .field + .field {
+    border-top: 0;
+  }
+  .pair > .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.57rem;
+  }
+  /* A row that opens in place, for settings most people never touch. */
+  .disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 1.14rem;
+    padding: 0.79rem 0;
+    list-style: none;
+    cursor: pointer;
+  }
+  .disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+  .disclosure-chevron {
+    display: flex;
+    color: var(--text-dim);
+  }
+  .disclosure[open] .disclosure-chevron {
+    scale: 1 -1;
+  }
+  .disclosure-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1.14rem;
+    padding: 0.29rem 0 1.14rem;
+  }
+  .edit-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1.14rem;
+  }
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.57rem;
+  }
+  .field-group-title {
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .discord-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.71rem;
+    padding: 0.86rem var(--card-pad-x);
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .discord-stage.off {
+    opacity: 0.5;
+  }
+  .more {
+    display: inline-flex;
+    vertical-align: -0.14rem;
+    margin-left: 0.29rem;
+    color: var(--text-dim);
+    cursor: help;
+  }
+  .more:hover {
     color: var(--text);
   }
   .field {
@@ -2511,8 +2677,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1.14rem;
-    min-height: 2rem;
+    gap: 1.71rem;
+    min-height: 2.4rem;
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
   /* A row whose control is a wide field: the text above it, the field full width below. */
@@ -2534,10 +2700,12 @@
   }
   .row-label {
     font-size: var(--text-body-size);
+    font-weight: 500;
     color: var(--text);
   }
   .hint {
     margin: 0;
+    max-width: 34rem;
     font-size: var(--text-label-size);
     line-height: 1.45;
     color: var(--text-dim);
@@ -2553,6 +2721,18 @@
     width: 15rem;
   }
   /* Unit in a fixed column so the fields line up down the page whatever their unit is. */
+  .num-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    gap: 1.14rem 1.71rem;
+    padding-top: 0.43rem;
+  }
+  .num-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.43rem;
+    min-width: 0;
+  }
   .num-unit {
     display: inline-grid;
     grid-template-columns: auto 2.8rem;
@@ -2582,8 +2762,8 @@
   /* Dropdown triggers are ghost-styled in toolbars; in a form they get the
      same box as the inputs around them. */
   .tab-body :global(.dropdown-trigger) {
-    min-width: 9rem;
-    background: rgba(255, 255, 255, 0.05);
+    min-width: 12rem;
+    background: var(--wash-2);
     border-color: var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
   }
@@ -2613,7 +2793,7 @@
     height: 1.57rem;
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--wash-1);
   }
   .bind:hover {
     border-color: color-mix(in srgb, var(--text) 25%, transparent);
@@ -2677,6 +2857,22 @@
     gap: 0.36rem;
     flex-wrap: wrap;
   }
+  .identity-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.86rem var(--card-pad-x);
+  }
+  .identity-fields {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  :global(.ui-field.identity-name) {
+    max-width: 22rem;
+  }
   .btn-row {
     display: flex;
     align-items: center;
@@ -2696,24 +2892,18 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
   }
   .list li {
     display: flex;
     align-items: center;
     gap: 0.71rem;
-    min-height: 2.29rem;
-    padding: 0.43rem 0.5rem 0.43rem 0.71rem;
+    min-height: 2.86rem;
+    padding: 0.43rem 0;
     color: var(--text-dim);
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
   .list li + li {
-    border-top: 1px solid var(--panel-border);
-  }
-  .list li:hover {
-    background: rgba(255, 255, 255, 0.025);
+    border-top: 1px solid color-mix(in srgb, var(--panel-border) 60%, transparent);
   }
   .list li.empty {
     padding: 0.86rem;
@@ -2759,16 +2949,15 @@
     justify-content: center;
     border-radius: 50%;
     object-fit: cover;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wash-3);
   }
+  /* A form that opens in place: indented under a hairline, no fill. */
   .inset-card {
     display: flex;
     flex-direction: column;
     gap: 0.86rem;
-    padding: 0.86rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-lg);
+    padding: 0.29rem 0 0.29rem 0.86rem;
+    border-left: 2px solid var(--panel-border);
   }
   .inset-head {
     display: flex;
@@ -2776,12 +2965,16 @@
     justify-content: space-between;
     margin: -0.29rem -0.29rem 0 0;
   }
+  .form-grid.three {
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  }
   .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.71rem;
   }
   .form-grid label {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 0.36rem;
@@ -2804,7 +2997,7 @@
     flex-direction: column;
     gap: 0.57rem;
     padding: 0.71rem 0.86rem;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--wash-1);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-lg);
@@ -2843,8 +3036,86 @@
   .code-preview {
     font-size: var(--text-body-size);
   }
+  /* Only the code scrolls (both axes), so the header stays put and the horizontal bar is always in view. */
+  .code-preview :global(.code-block pre) {
+    max-height: 15rem;
+    overflow: auto;
+    scrollbar-width: thin;
+  }
+  .type-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.14rem;
+    padding: 0.14rem 0;
+    color: var(--text);
+  }
+  .type-preview span {
+    color: var(--text-dim);
+  }
+  /* Same shape as the diff view: number gutter, a bar down the edge of each changed line, the
+     changed words picked out inside it. */
+  .diff-sample {
+    display: flex;
+    flex-direction: column;
+    background: var(--code-bg, var(--wash-1));
+    font-family: var(--code-font-family, ui-monospace, monospace);
+    font-size: var(--text-label-size);
+    white-space: pre;
+    overflow: hidden;
+  }
+  .diff-sample div {
+    display: flex;
+    gap: 1.1rem;
+    padding: 0 0.86rem 0 0.57rem;
+    line-height: 1.75;
+    box-sizing: border-box;
+  }
+  .diff-sample i {
+    width: 1.4rem;
+    font-style: normal;
+    text-align: right;
+    color: color-mix(in srgb, var(--text) 40%, transparent);
+  }
+  .diff-sample b {
+    font-weight: inherit;
+  }
+  .diff-sample .k {
+    color: var(--syn-keyword);
+  }
+  .diff-sample .f {
+    color: var(--syn-function);
+  }
+  .diff-sample .t {
+    color: var(--syn-type);
+  }
+  .diff-sample .s {
+    color: var(--syn-string);
+  }
+  .diff-sample mark {
+    color: inherit;
+    border-radius: 3px;
+  }
+  .diff-sample .add {
+    border-left: 3px solid var(--diff-add);
+    padding-left: calc(0.57rem - 3px);
+    background: color-mix(in srgb, var(--diff-add) 14%, transparent);
+  }
+  .diff-sample .add mark {
+    background: color-mix(in srgb, var(--diff-add) 35%, transparent);
+  }
+  .diff-sample .del {
+    border-left: 3px dashed var(--diff-del);
+    padding-left: calc(0.57rem - 3px);
+    background: color-mix(in srgb, var(--diff-del) 14%, transparent);
+  }
+  .diff-sample .del mark {
+    background: color-mix(in srgb, var(--diff-del) 35%, transparent);
+  }
+  /* The card already rounds and borders it. */
   .code-preview :global(.code-block) {
     margin: 0;
+    border: 0;
+    border-radius: 0;
   }
   .mode-cards {
     display: flex;
@@ -2866,6 +3137,72 @@
   .mode-card.active {
     border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border));
     background: var(--accent-dim);
+  }
+  /* Layout previews for a choice: a few neutral blocks, no text, so they read at a glance. */
+  .choice-prev {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.29rem;
+    height: 4.3rem;
+    padding: 0.43rem;
+    overflow: hidden;
+    border-radius: var(--radius-xs);
+    background: var(--wash-3);
+  }
+  .mode-cards.choices {
+    max-width: 22rem;
+  }
+  /* Beside its label, like the other rows, instead of leaving a gap on the right. */
+  .setting-row > .mode-cards.choices {
+    width: 17rem;
+    flex-shrink: 0;
+  }
+  .choice-prev .p-line,
+  .choice-prev .p-bar {
+    display: block;
+    height: 0.21rem;
+    border-radius: 999px;
+    background: var(--wash-4);
+  }
+  .choice-prev .p-line.short {
+    width: 55%;
+  }
+  .choice-prev .p-bar {
+    height: 0.64rem;
+    border-radius: 3px;
+    background: var(--wash-3);
+  }
+  .choice-prev.area {
+    flex-direction: row;
+    gap: 0.21rem;
+    padding: 0;
+  }
+  .choice-prev.area .p-side {
+    width: 22%;
+    background: var(--wash-2);
+  }
+  .choice-prev.area .p-main {
+    flex: 1;
+    background: var(--panel-bg);
+  }
+  .choice-prev.area.floating {
+    padding: 0.36rem 0.36rem 0.36rem 0;
+  }
+  .choice-prev.area.floating .p-main {
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
+  }
+  .choice-prev.surface .p-pop {
+    position: absolute;
+    inset: 0.86rem 0.86rem 0.5rem;
+    border-radius: 5px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+  }
+  .choice-prev.surface.frosted .p-pop {
+    background: color-mix(in srgb, var(--panel-bg) 45%, transparent);
+    backdrop-filter: blur(5px);
   }
   .mode-card-label {
     display: inline-flex;
@@ -2940,7 +3277,7 @@
     justify-content: center;
     overflow: hidden;
     color: var(--text-dim);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
   }
   .wallpaper-swatch img {
     width: 100%;
@@ -3013,30 +3350,10 @@
     width: 1.57rem;
     height: 1.14rem;
     border-radius: var(--radius-xs);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--wash-4);
   }
   /* The check lives in the left margin a grouped item is already indented by; Default (no group)
      gets the same x and its content is pushed over to line up with the rest. */
-  .diff-preview {
-    display: inline-flex;
-    gap: 0.14rem;
-    font-family: ui-monospace, monospace;
-    font-size: 0.72rem;
-    font-weight: 600;
-  }
-  .diff-preview span {
-    width: 1.14rem;
-    text-align: center;
-    border-radius: var(--radius-xs);
-  }
-  .diff-preview .add {
-    color: var(--diff-add);
-    background: color-mix(in srgb, var(--diff-add) 14%, transparent);
-  }
-  .diff-preview .del {
-    color: var(--diff-del);
-    background: color-mix(in srgb, var(--diff-del) 14%, transparent);
-  }
   .item-lead {
     display: flex;
     align-items: center;
@@ -3065,7 +3382,7 @@
     border-radius: var(--radius-sm);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
     color: var(--text-dim);
     overflow: hidden;
   }
@@ -3119,10 +3436,6 @@
     flex-direction: row;
     align-items: center;
     gap: 1.43rem;
-    padding: 1.14rem;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-lg);
   }
   .profile-fields {
     flex: 1;
@@ -3149,7 +3462,7 @@
     height: 6.43rem;
     border-radius: 50%;
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     cursor: pointer;
@@ -3188,6 +3501,9 @@
     opacity: 0.6;
     cursor: default;
   }
+  .card > .quick-avatars {
+    padding: 0.86rem var(--card-pad-x);
+  }
   .quick-avatars {
     display: flex;
     flex-wrap: wrap;
@@ -3199,7 +3515,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: 50%;
@@ -3258,6 +3574,10 @@
     :global(.settings-tabs .settings-tab-trigger[data-state="active"]) {
       background: none;
       color: inherit;
+      font-weight: inherit;
+    }
+    :global(.settings-tabs .settings-tab-trigger[data-state="active"]::before) {
+      display: none;
     }
     :global(.settings-tabs .settings-tab-trigger::after) {
       content: "›";
@@ -3266,7 +3586,7 @@
       opacity: 0.45;
     }
     :global(.settings-tabs.detail .tabs-list),
-    :global(.settings-tabs:not(.detail) .tab-panel) {
+    :global(.settings-tabs:not(.detail) .settings-main) {
       display: none;
     }
     :global(.tab-panel) {
@@ -3302,6 +3622,11 @@
     :global(.ui-field.ctrl-wide) {
       width: min(15rem, 100%);
     }
+    .pair,
+    .form-grid,
+    .form-grid.three {
+      grid-template-columns: 1fr;
+    }
   }
   .discord-status {
     display: inline-flex;
@@ -3330,68 +3655,35 @@
     background: var(--danger);
     opacity: 1;
   }
-  .discord-preview-switch {
-    max-width: 24rem;
-    margin-bottom: 0.57rem;
+  .discord-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    gap: 0.86rem;
   }
-  /* Second-level collapsibles so the Discord page is three short cards, not one long list. */
-  .discord-group {
-    border: 1px solid var(--panel-border);
-    border-radius: 0.57rem;
-    background: transparent;
-  }
-  .discord-group-head {
-    display: flex;
-    align-items: center;
-    gap: 0.71rem;
-    list-style: none;
-    padding: 0.57rem 0.71rem;
-    cursor: pointer;
-    user-select: none;
-  }
-  .discord-group-head::-webkit-details-marker {
-    display: none;
-  }
-  .discord-group-head .hint {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .discord-chevron {
-    display: flex;
-    flex-shrink: 0;
-    color: var(--text-dim);
-    transition: rotate calc(0.15s * var(--anim-speed, 1)) ease;
-  }
-  .discord-group[open] .discord-chevron {
-    rotate: 180deg;
-  }
-  .discord-group-body {
+  .discord-pick {
     display: flex;
     flex-direction: column;
-    gap: 0.86rem;
-    padding: 0.29rem 0.71rem 0.71rem;
-    border-top: 1px solid var(--panel-border);
+    gap: 0.43rem;
+    min-width: 0;
+    padding: 0.43rem;
   }
-  .discord-group[open] .discord-group-head .section-heading {
-    color: var(--text);
+  .discord-pick-title {
+    padding-inline: 0.29rem;
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
   }
   .discord-card {
     display: flex;
     flex-direction: column;
     gap: 0.57rem;
-    max-width: 24rem;
-    padding: 0.86rem 1rem;
+    padding: 0.86rem;
     border-radius: 0.57rem;
-    border: 1px solid var(--panel-border);
     background: color-mix(in srgb, var(--panel-bg) 84%, black);
   }
   .discord-activity {
     display: flex;
-    align-items: flex-start;
-    gap: 0.71rem;
+    align-items: center;
+    gap: 0.86rem;
   }
   .discord-art {
     position: relative;
@@ -3443,38 +3735,40 @@
   }
   .discord-card-head {
     display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 0.29rem;
-    margin-bottom: 0.14rem;
+    align-items: center;
+    justify-content: space-between;
     font-size: var(--text-label-size);
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .discord-card-head :global(svg) {
     color: var(--text-dim);
   }
-  .discord-card-head strong {
+  .discord-name {
+    font-size: var(--text-body-size);
+    font-weight: 700;
     color: var(--text);
-    font-weight: 600;
-    text-transform: none;
-    letter-spacing: normal;
   }
   .discord-details {
-    font-size: var(--text-body-size);
-    font-weight: 600;
-    color: var(--text);
-    overflow-wrap: anywhere;
-    text-decoration: none;
-  }
-  .discord-state,
-  .discord-time {
     font-size: var(--text-label-size);
+    font-weight: 400;
     color: var(--text-dim);
     overflow-wrap: anywhere;
     text-decoration: none;
   }
-  a.discord-details:hover,
-  a.discord-state:hover {
-    text-decoration: underline;
+  .discord-time {
+    display: flex;
+    align-items: center;
+    gap: 0.29rem;
+    color: var(--success);
+    font-size: var(--text-label-size);
+    font-variant-numeric: tabular-nums;
+  }
+  .discord-state {
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+    overflow-wrap: anywhere;
+    text-decoration: none;
   }
   .discord-buttons {
     display: flex;

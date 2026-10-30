@@ -3,6 +3,7 @@
 const FADE = 24;
 
 export function scrollFade(el: HTMLElement) {
+  let last = "";
   const update = () => {
     const top = el.scrollTop > 0 ? FADE : 0;
     const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 1 ? FADE : 0;
@@ -10,10 +11,13 @@ export function scrollFade(el: HTMLElement) {
       top || bottom
         ? `linear-gradient(to bottom, transparent 0, #000 ${top}px, #000 calc(100% - ${bottom}px), transparent 100%)`
         : "";
+    if (mask === last) return;
+    last = mask;
     el.style.maskImage = mask;
     el.style.webkitMaskImage = mask;
   };
-  update();
+  // No initial call: reading layout here, once per mounted card, forced a reflow each (hundreds of
+  // ms on a chat switch). The ResizeObserver below reports once after the first layout instead.
   el.addEventListener("scroll", update);
   // Size changes (resize, the accordion opening) and content changes (streaming text)
   // both move scrollHeight; a capped box's own size doesn't change for the latter.

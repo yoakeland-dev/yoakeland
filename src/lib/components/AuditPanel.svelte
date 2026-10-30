@@ -216,15 +216,16 @@
 </div>
 
 <style>
+  /* Sits inside the section's card, which already draws the border and corners. */
   .audit {
     display: flex;
     flex-direction: column;
-    gap: 0.86rem;
   }
   .filters {
     display: flex;
     flex-direction: column;
     gap: 0.57rem;
+    padding: 0.86rem var(--card-pad-x);
   }
   .chips,
   .row {
@@ -237,8 +238,7 @@
     margin-left: auto;
   }
   .table-wrap {
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-lg);
+    border-top: 1px solid var(--panel-border);
     overflow: hidden;
   }
   table {
@@ -272,7 +272,7 @@
     border-bottom: 1px solid var(--panel-border);
   }
   tr.day th {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--wash-1);
     border-block: 1px solid var(--panel-border);
     color: var(--text);
   }
@@ -291,7 +291,7 @@
   }
   tr.ev:hover,
   tr.open {
-    background: rgba(255, 255, 255, 0.025);
+    background: var(--wash-1);
   }
   tr.expandable {
     cursor: pointer;
@@ -368,6 +368,7 @@
   }
   .pager {
     align-self: center;
+    padding: 0.57rem 0;
     display: flex;
     align-items: center;
     gap: 0.57rem;
@@ -381,11 +382,11 @@
     text-align: center;
     font-size: var(--text-label-size);
     color: var(--text-dim);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-lg);
+    border-top: 1px solid var(--panel-border);
   }
   .error {
     margin: 0;
+    padding: 0 var(--card-pad-x) 0.86rem;
     font-size: var(--text-label-size);
     color: var(--danger);
   }

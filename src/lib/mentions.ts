@@ -13,6 +13,26 @@ export function mentionText(path: string, from?: number, to?: number): string {
   return `@${path}#L${from}` + (to && to !== from ? `-${to}` : "");
 }
 
+/** `#[title](chat:ID)`: names another chat of the project; the agent reads it with `read_chat`.
+ * The composer shows `#[title]` and the ID is added on send (chatMentionsToIds). */
+export const CHAT_MENTION_RE = /#\[([^\]\n]{1,120})\]\(chat:([\w-]+)\)/g;
+
+export function chatMentionText(title: string, id: string): string {
+  return `#[${title}](chat:${id})`;
+}
+
+/** Titles can't hold `]`, which would end the mention early. */
+export const chatLabel = (title: string) => title.replace(/[\[\]\s]+/g, " ").trim() || "Untitled chat";
+
+/** Gives each `#[title]` in a draft the ID of the chat it names (`chats`: title to ID, the picked
+ * ones first); a title nothing matches stays as typed. */
+export function chatMentionsToIds(text: string, chats: Map<string, string>): string {
+  return text.replace(/#\[([^\]\n]{1,120})\](?!\()/g, (m, title) => {
+    const id = chats.get(title);
+    return id ? chatMentionText(title, id) : m;
+  });
+}
+
 // A sentence-ending period isn't part of the file name.
 const trimPath = (p: string) => p.replace(/\.+$/, "");
 
@@ -37,6 +57,8 @@ export function mentionLabelsFor(paths: string[]): Map<string, string> {
 
 // Set by Markdown.svelte just before it parses; read by the renderer below.
 export const mentionLabels: { current: Map<string, string> } = { current: new Map() };
+/** The skills this chat's agent can load, so a `$name` is only drawn as one when it is. */
+export const knownSkills: { current: Set<string> } = { current: new Set() };
 
 const escape = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -73,6 +95,30 @@ export function withMentions(md: Marked, iconUrl?: (name: string) => string): Ma
           const icon = iconUrl ? ` style="--icon: url(&quot;${escape(iconUrl(name))}&quot;)"` : "";
           return `<span class="mention" role="link" tabindex="0" ${data}${icon} title="${escape(path + lines)}">${iconUrl ? "" : "@"}${escape(label)}</span>`;
         },
+      },
+      {
+        name: "skillMention",
+        level: "inline",
+        start(src: string) {
+          const m = src.match(/(?:^|\s)\$[A-Za-z]/);
+          return m ? m.index! + (m[0].length - 2) : undefined;
+        },
+        tokenizer(src: string) {
+          const m = /^\$([A-Za-z][A-Za-z0-9._:-]{0,63})(?=$|[\s.,;:!?)])/.exec(src);
+          return m && knownSkills.current.has(m[1]) ? { type: "skillMention", raw: m[0], name: m[1] } : undefined;
+        },
+        renderer: (token) => `<span class="mention skill-ref">$${escape(token.name as string)}</span>`,
+      },
+      {
+        name: "chatMention",
+        level: "inline",
+        start: (src: string) => src.indexOf("#["),
+        tokenizer(src: string) {
+          const m = new RegExp("^" + CHAT_MENTION_RE.source).exec(src);
+          return m ? { type: "chatMention", raw: m[0], title: m[1], id: m[2] } : undefined;
+        },
+        renderer: (token) =>
+          `<span class="mention chat-ref" role="link" tabindex="0" data-chat="${escape(token.id as string)}" title="${escape(token.title as string)}">${escape(token.title as string)}</span>`,
       },
     ],
   });

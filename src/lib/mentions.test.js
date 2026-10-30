@@ -2,7 +2,8 @@
 // Run with: node --test src/lib/
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MENTION_RE, mentionText, resolveFileRef } from "./mentions.ts";
+import { Marked } from "marked";
+import { MENTION_RE, mentionText, resolveFileRef, chatMentionsToIds, chatLabel, withMentions, knownSkills } from "./mentions.ts";
 
 test("mentions with and without line ranges", () => {
   const all = (s) => [...s.matchAll(new RegExp(MENTION_RE.source, "g"))].map((m) => [m[1], m[2], m[3]]);
@@ -26,4 +27,21 @@ test("inline code naming a project file", () => {
   assert.equal(resolveFileRef("index.ts", files), null); // two of them
   assert.equal(resolveFileRef("const x = 1", files), null);
   assert.equal(resolveFileRef("npm", files), null);
+});
+
+test("chat mentions get their ID on send and render as a chip", () => {
+  const ids = new Map([["Fix login", "s1"]]);
+  assert.equal(chatMentionsToIds("see #[Fix login] and #[Other] and #L10", ids), "see #[Fix login](chat:s1) and #[Other] and #L10");
+  assert.equal(chatMentionsToIds("#[Fix login](chat:s1)", ids), "#[Fix login](chat:s1)");
+  assert.equal(chatLabel("a [b]\nc"), "a b c");
+  const html = withMentions(new Marked()).parseInline("use #[Fix <login>](chat:s-1) please @src/a.ts");
+  assert.match(html, /data-chat="s-1"[^>]*>Fix &lt;login&gt;<\/span>/);
+  assert.match(html, /data-path="src\/a.ts"/);
+});
+
+test("$skill chips only for known skills", () => {
+  knownSkills.current = new Set(["review"]);
+  const md = withMentions(new Marked());
+  assert.match(md.parseInline("run $review now"), /skill-ref">\$review</);
+  assert.doesNotMatch(md.parseInline("costs $5 or $HOME"), /skill-ref/);
 });

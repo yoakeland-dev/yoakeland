@@ -22,6 +22,7 @@
     carryBlankChat,
   } from "../ipc";
   import { relTime, sessionTitle } from "../format";
+  import AddProviderPage from "./AddProviderPage.svelte";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import Kbd from "./Kbd.svelte";
@@ -32,7 +33,8 @@
     | { kind: "projects" }
     | { kind: "browse"; path?: string }
     | { kind: "servers" }
-    | { kind: "server"; key: string };
+    | { kind: "server"; key: string }
+    | { kind: "add-provider"; form: "key" | "custom" | null };
 
   let stack = $state<Page[]>([{ kind: "root" }]);
   let search = $state("");
@@ -47,7 +49,7 @@
 
   // Reopening while already open (e.g. "Add project" starting a folder pick)
   // pushes onto the stack instead of resetting it.
-  const pageFor = (k: "root" | "projects" | "browse" | "servers"): Page => ({ kind: k });
+  const pageFor = (k: PaletteRequest["page"]): Page => (k === "add-provider" ? { kind: "add-provider", form: null } : { kind: k });
   let wasOpen = false;
   let handledRequest = 0;
   // Set while the projects page is answering pickProject() rather than "New session in…".
@@ -78,6 +80,12 @@
   }
 
   function back() {
+    if (page.kind === "add-provider" && page.form) {
+      stack = [...stack.slice(0, -1), { kind: "add-provider", form: null }];
+      search = "";
+      focusForPage();
+      return;
+    }
     if (stack.length <= 1) {
       close();
       return;
@@ -207,18 +215,19 @@
   }
 
   const SETTINGS_TABS: [string, string, Action["icon"]][] = [
-    ["profile", "Profile", "user"],
+    ["profile", "General", "user"],
     ["appearance", "Appearance", "palette"],
-    ["terminal", "Terminal", "terminal-2"],
+    ["text", "Text & code", "terminal-2"],
     ["keyboard", "Keyboard shortcuts", "keyboard"],
+    ["integrations", "Discord", "brand-discord"],
     ["servers", "Servers", "server"],
-    ["general", "General", "settings"],
+    ["general", "Server", "settings"],
     ["providers", "Providers", "brain"],
+    ["models", "Models", "sparkles"],
     ["projects", "Projects", "code"],
     ["safety", "Safety", "shield-check"],
     ["notifications", "Notifications", "bell"],
     ["access", "Access", "network"],
-    ["audit", "Audit log", "clipboard-list"],
   ];
 
   const chatActions = $derived.by((): Action[] => {
@@ -419,6 +428,8 @@
           ? "Search servers…"
           : page.kind === "server"
             ? "Search actions…"
+            : page.kind === "add-provider"
+              ? "Search providers and the ACP registry…"
             : "Search actions, chats and projects…",
   );
 </script>
@@ -494,10 +505,12 @@
             <span class="crumb-label"><bdi>Servers</bdi></span>
           {:else if page.kind === "server"}
             <span class="crumb-label"><bdi>{openRow?.label ?? "Server"}</bdi></span>
+          {:else if page.kind === "add-provider"}
+            <span class="crumb-label"><bdi>{page.form === "key" ? "API key" : page.form === "custom" ? "Custom command" : "Add provider"}</bdi></span>
           {:else}
             <Icon name="search" size={14} />
           {/if}
-          <Command.Input bind:ref={inputEl} bind:value={search} onkeydown={onKeydown} {placeholder} />
+          <Command.Input bind:ref={inputEl} bind:value={search} onkeydown={onKeydown} {placeholder} class={page.kind === "add-provider" && page.form ? "palette-input-hidden" : ""} />
           {#if page.kind === "browse"}
             <button
               type="button"
@@ -600,6 +613,17 @@
                   <span class="chevron"><Icon name="chevron-right" size={13} /></span>
                 </Command.Item>
               {/if}
+            {:else if page.kind === "add-provider"}
+              <AddProviderPage
+                {cid}
+                {server}
+                form={page.form}
+                onForm={(f) => {
+                  stack = [...stack.slice(0, -1), { kind: "add-provider", form: f }];
+                  search = "";
+                }}
+                {close}
+              />
             {:else if page.kind === "servers"}
               <Command.Item value="add-server" keywords={["Add server", "connect", "pair"]} onSelect={() => run(() => app.openAddServer())} class="palette-item">
                 <Icon name="plus" size={14} />
@@ -674,6 +698,12 @@
 </Dialog.Root>
 
 <style>
+  :global(.palette-input-hidden) {
+    position: absolute;
+    width: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
   :global(.palette-overlay) {
     position: fixed;
     inset: 0;
@@ -693,7 +723,7 @@
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-dialog);
     z-index: var(--z-overlay-content);
     overflow: hidden;
   }
@@ -734,7 +764,7 @@
     height: 1.57rem;
     flex-shrink: 0;
     margin-left: -0.29rem;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
     color: var(--text-dim);

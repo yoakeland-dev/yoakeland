@@ -40,12 +40,12 @@
     height: var(--ctrl-h, 2rem);
   }
   .search.boxed {
-    background: var(--field-bg, rgba(255, 255, 255, 0.04));
+    background: var(--field-bg, var(--wash-1));
     border-color: var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
   }
   .search:focus-within {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border-color: var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
   }

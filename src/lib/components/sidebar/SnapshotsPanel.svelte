@@ -128,7 +128,7 @@
     padding-bottom: var(--space-2);
   }
   .snap.open {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--wash-1);
   }
   .snap-row {
     display: flex;
@@ -176,7 +176,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.29rem;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     color: var(--text);

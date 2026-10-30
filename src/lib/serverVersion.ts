@@ -12,3 +12,6 @@ export function isOlder(have: string | null | undefined, latest: string): boolea
   }
   return false;
 }
+
+/** "0.1.6" -> "v0.1.6"; a dev build's "dev" stays as is. */
+export const fmtVersion = (v: string) => (/^\d/.test(v) ? `v${v}` : v);

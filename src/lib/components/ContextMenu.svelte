@@ -66,7 +66,7 @@
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
     padding: var(--space-half);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-pop);
     animation: floatIn var(--float-enter-duration) ease-out;
   }
   :global(.context-menu[data-state="closed"]) {

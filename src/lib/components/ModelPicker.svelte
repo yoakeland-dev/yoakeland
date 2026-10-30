@@ -14,10 +14,13 @@
     isOpenRouter,
     isCli,
     cliMeta,
+    agentGroups,
+    type AgentGroup,
     titleFor,
     providerLabel,
     vendorMetaFor,
   } from "../modelVendor";
+  import type { ProviderInfo } from "../types";
   import SlideText from "./SlideText.svelte";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
@@ -56,7 +59,10 @@
   const allEntries = $derived.by(() => {
     const entries: Entry[] = [];
     for (const provider of server?.providers ?? []) {
+      const hidden = app.settings.hiddenModels?.[provider.name] ?? [];
       for (const model of server?.modelsByProvider[provider.name] ?? []) {
+        // A hidden model stays listed while it is the chat's own, so the picker never shows a blank.
+        if (hidden.includes(model.id) && !(provider.name === currentProvider?.name && model.id === currentModel)) continue;
         entries.push({ provider, model });
       }
     }
@@ -86,7 +92,33 @@
 
   // A CLI agent gets a tab even before its models arrive: an ACP agent's
   // list_models opens a throwaway session and takes seconds.
-  const cliProvidersPresent = $derived((server?.providers ?? []).filter(isCli));
+  const groups = $derived(agentGroups(server?.providers ?? []));
+  const groupOf = (name: string) => groups.find((g) => g.accounts.some((a) => a.name === name));
+
+  // Chosen account per multi-account agent (group key -> provider name); falls back to the
+  // chat's own account, then the last one used, then the first.
+  let acctPick = $state<Record<string, string>>({});
+  function selAcct(g: AgentGroup) {
+    const has = (n?: string | null) => g.accounts.find((a) => a.name === n);
+    return has(acctPick[g.key]) ?? has(currentProvider?.name) ?? has(server?.lastUsedProvider) ?? g.accounts[0];
+  }
+  const pctOf = (name: string) => {
+    const w = server?.serverStatus?.rateLimits?.[name]?.fiveHour;
+    return w ? Math.round(w.usedPct) : null;
+  };
+  const chipText = (a: ProviderInfo) => {
+    const pct = pctOf(a.name);
+    return pct === null ? providerLabel(a) : `${providerLabel(a)} · ${pct}%`;
+  };
+  const diffDirs = (g: AgentGroup) => new Set(g.accounts.map((a) => a.configDir ?? "")).size > 1;
+  let acctOpen = $state(false);
+  function pickAccount(g: AgentGroup, name: string) {
+    acctPick[g.key] = name;
+    acctOpen = false;
+  }
+  const activeGroup = $derived(
+    activeTab.startsWith("cli:") ? groups.find((g) => g.key === activeTab.slice(4)) : undefined,
+  );
   const vendorsPresent = $derived(
     VENDOR_ORDER.filter((v) =>
       allEntries.some(
@@ -102,8 +134,9 @@
   );
 
   function firstAvailableTab(): TabKey {
-    if (currentProvider && isCli(currentProvider)) return `cli:${currentProvider.name}`;
-    if (cliProvidersPresent.length) return `cli:${cliProvidersPresent[0].name}`;
+    const cg = currentProvider && groupOf(currentProvider.name);
+    if (cg) return `cli:${cg.key}`;
+    if (groups.length) return `cli:${groups[0].key}`;
     if (vendorsPresent.length) return `vendor:${vendorsPresent[0]}`;
     if (openrouterPresent) return "openrouter";
     return "favorites";
@@ -124,7 +157,7 @@
     } else if (activeTab === "openrouter") {
       list = allEntries.filter((e) => isOpenRouter(e.provider));
     } else if (activeTab.startsWith("cli:")) {
-      const name = activeTab.slice(4);
+      const name = activeGroup ? selAcct(activeGroup).name : "";
       list = allEntries.filter((e) => e.provider.name === name);
     } else {
       const vendor = activeTab.slice(7) as Vendor;
@@ -175,11 +208,14 @@
   // Opening the picker retries a CLI agent whose list was missing or the fallback (it was signed out).
   $effect(() => {
     if (!open || !cid || !server) return;
-    for (const p of server.providers) if (isCli(p)) refreshModels(cid, p.name);
+    // Only the account on screen: each ACP refresh spawns a process.
+    const name = activeGroup ? selAcct(activeGroup).name : currentProvider && isCli(currentProvider) ? currentProvider.name : "";
+    if (name) refreshModels(cid, name);
   });
 
   function tabForEntry(entry: Entry): TabKey {
-    if (isCli(entry.provider)) return `cli:${entry.provider.name}`;
+    const g = groupOf(entry.provider.name);
+    if (g) return `cli:${g.key}`;
     if (isOpenRouter(entry.provider)) return "openrouter";
     return `vendor:${directVendorOf(entry.provider, entry.model.id)}`;
   }
@@ -197,6 +233,8 @@
         ? tabForEntry(currentEntry)
         : firstAvailableTab();
       search = "";
+      acctOpen = false;
+      if (currentProvider && groupOf(currentProvider.name)) acctPick[groupOf(currentProvider.name)!.key] = currentProvider.name;
       requestAnimationFrame(() => {
         // On a phone focusing opens the keyboard over the list you came to look at.
         if (!viewport.narrow) searchInput?.focus();
@@ -215,7 +253,7 @@
     open = false;
   }
 
-  const activeCliName = $derived(activeTab.startsWith("cli:") && !search.trim() ? activeTab.slice(4) : null);
+  const activeCliName = $derived(activeGroup && !search.trim() ? selAcct(activeGroup).name : null);
 
   /** Arrow-key roving focus across `.entry` rows, matching the keyboard
    * support PromptInput's own @mention listbox already has. */
@@ -308,7 +346,7 @@
             <Icon name="plus" size={13} /> Add a provider
           </button>
         </div>
-      {:else if allEntries.length === 0 && cliProvidersPresent.length === 0}
+      {:else if allEntries.length === 0 && groups.length === 0}
         <div class="empty">
           <p>Loading models…</p>
         </div>
@@ -327,17 +365,16 @@
               <Icon name="star" size={15} />
             </button>
 
-            {#if cliProvidersPresent.length > 0}
-              {#each cliProvidersPresent as p (p.name)}
-                {@const meta = cliMeta(p)}
+            {#if groups.length > 0}
+              {#each groups as g (g.key)}
                 <button
                   type="button"
                   class="tab"
-                  class:active={activeTab === `cli:${p.name}`}
-                  {@attach tip(`${meta.title} (${p.name})`, { side: "left" })}
-                  onclick={() => (activeTab = `cli:${p.name}`)}
+                  class:active={activeTab === `cli:${g.key}`}
+                  {@attach tip(g.title, { side: "left" })}
+                  onclick={() => ((activeTab = `cli:${g.key}`), (acctOpen = false))}
                 >
-                  <LobeIcon name={meta.icon} fallback="openrouter" size={16} />
+                  <LobeIcon name={g.icon} fallback="openrouter" size={16} />
                 </button>
               {/each}
               <div class="tab-divider"></div>
@@ -404,6 +441,42 @@
                 </button>
               {/if}
             </div>
+
+            {#if activeGroup && activeGroup.accounts.length > 1 && !search.trim()}
+              {@const g = activeGroup}
+              {@const cur = selAcct(g)}
+              {#if viewport.narrow}
+                <div class="acct-strip" role="tablist" aria-label="{g.title} accounts">
+                  {#each g.accounts as a (a.name)}
+                    <button type="button" role="tab" class="acct-chip" class:active={a.name === cur.name} aria-selected={a.name === cur.name} onclick={() => pickAccount(g, a.name)}>
+                      {chipText(a)}
+                    </button>
+                  {/each}
+                </div>
+                {#if diffDirs(g)}<p class="acct-note">Switching starts a fresh agent session from the transcript</p>{/if}
+              {:else}
+                <div class="agent-head">
+                  <span class="agent-title"><LobeIcon name={g.icon} fallback="openrouter" size={13} /> {g.title}</span>
+                  <button type="button" class="acct-chip" class:open={acctOpen} aria-haspopup="listbox" aria-expanded={acctOpen} onclick={() => (acctOpen = !acctOpen)}>
+                    {chipText(cur)}
+                    <Icon name="chevron-down" size={11} />
+                  </button>
+                  {#if acctOpen}
+                    <div class="acct-pop" role="listbox" aria-label="{g.title} accounts">
+                      {#each g.accounts as a (a.name)}
+                        {@const pct = pctOf(a.name)}
+                        <button type="button" role="option" class="acct-row" aria-selected={a.name === cur.name} onclick={() => pickAccount(g, a.name)}>
+                          <span class="acct-check">{#if a.name === cur.name}<Icon name="check" size={12} />{/if}</span>
+                          <span class="acct-name">{providerLabel(a)}</span>
+                          {#if pct !== null}<span class="acct-pct">{pct}%</span>{/if}
+                        </button>
+                      {/each}
+                      {#if diffDirs(g)}<p class="acct-note">Switching starts a fresh agent session from the transcript</p>{/if}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
 
             <div
               class="model-list"
@@ -496,7 +569,7 @@
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     /* Outer = inner control radius + padding (0.57rem) + border. */
     border-radius: calc(var(--radius-sm) + 0.57rem + 1px);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-dialog);
     padding: 0.57rem;
     z-index: var(--z-popover);
     animation: floatIn var(--float-enter-duration) ease-out;
@@ -538,7 +611,7 @@
       color calc(0.12s * var(--anim-speed, 1)) ease;
   }
   .tab:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     color: var(--text);
   }
   .tab.active {
@@ -563,6 +636,104 @@
     flex-direction: column;
     gap: 0.43rem;
   }
+  .agent-head {
+    position: relative;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.43rem;
+    padding: 0 var(--space-1);
+  }
+  .agent-title {
+    display: flex;
+    align-items: center;
+    gap: 0.36rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .acct-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.29rem;
+    flex-shrink: 0;
+    max-width: 11rem;
+    padding: 0.2rem 0.5rem;
+    background: var(--wash-2);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .acct-chip:hover,
+  .acct-chip.open {
+    color: var(--text);
+  }
+  .acct-chip.active {
+    background: var(--accent-dim);
+    border-color: transparent;
+    color: var(--accent);
+  }
+  .acct-pop {
+    position: absolute;
+    top: calc(100% + 0.29rem);
+    right: 0;
+    z-index: 2;
+    min-width: 11rem;
+    padding: 0.29rem;
+    background: var(--float-bg);
+    border: 1px solid var(--float-border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  }
+  .acct-row {
+    display: flex;
+    align-items: center;
+    gap: 0.43rem;
+    width: 100%;
+    min-height: 2.14rem;
+    padding: 0 0.43rem;
+    background: none;
+    border: none;
+    border-radius: var(--radius-xs);
+    color: var(--text);
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+  .acct-row:hover {
+    background: var(--wash-2);
+  }
+  .acct-check {
+    width: 0.86rem;
+    flex-shrink: 0;
+    color: var(--accent);
+  }
+  .acct-name {
+    flex: 1;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .acct-pct {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-note {
+    margin: 0.29rem 0.43rem 0.14rem;
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+  .acct-strip {
+    flex-shrink: 0;
+    display: flex;
+    gap: 0.43rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
   .search {
     flex-shrink: 0;
     display: flex;
@@ -576,7 +747,7 @@
     color: var(--sidebar-fg-dim);
   }
   .search:focus-within {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border-color: var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
   }
@@ -643,7 +814,7 @@
     transition: background calc(0.12s * var(--anim-speed, 1)) ease;
   }
   .entry:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
   }
   .entry.selected {
     background: var(--sidebar-active);
@@ -701,7 +872,7 @@
     gap: 0.36rem;
     width: 100%;
     padding: 0.5rem;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-sm);
@@ -723,6 +894,14 @@
     .tab {
       width: 2.6rem;
       height: 2.6rem;
+    }
+    .acct-strip .acct-chip {
+      min-height: 2.6rem;
+      padding: 0 0.86rem;
+      font-size: 0.8rem;
+    }
+    .acct-note {
+      margin: 0 0.14rem;
     }
   }
 </style>

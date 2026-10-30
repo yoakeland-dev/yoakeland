@@ -14,6 +14,8 @@
   import ServerAvatar from "./ServerAvatar.svelte";
   import Dropdown from "./Dropdown.svelte";
   import AboutDialog from "./AboutDialog.svelte";
+  import WhatsNewDialog from "./WhatsNewDialog.svelte";
+  import { pendingWhatsNew } from "../whatsnew";
   import { isDesktop } from "../platform";
   import PairPhoneDialog from "./PairPhoneDialog.svelte";
   import SearchInput from "./SearchInput.svelte";
@@ -114,6 +116,7 @@ import { haptic } from "../haptics";
 
   let userMenuOpen = $state(false);
   let showAbout = $state(false);
+  let showNew = $state(!!pendingWhatsNew(__APP_VERSION__));
   let showPair = $state(false);
   // Pairing a phone needs the daemon on this machine: it makes the token and serves the page.
   const localCid = $derived(connectedServers.find(([, srv]) => srv.connectionMode === "local")?.[0]);
@@ -404,6 +407,10 @@ import { haptic } from "../haptics";
   const running = $derived<Row[]>(
     allRows.filter((r) => r.srv.activeTurnBySession[r.s.sessionId] && !needsYouKeys.has(key(r))).sort((a, b) => byRecent(a.s, b.s)),
   );
+  // A finished turn nobody has looked at yet (a stopped one included), until the chat is opened.
+  const ready = $derived<Row[]>(
+    allRows.filter((r) => r.srv.sessionStatus(r.s.sessionId) === "finished" && !isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)),
+  );
   // In pinned order; Ctrl+1-9 jumps to them.
   const pinned = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
@@ -415,12 +422,27 @@ import { haptic } from "../haptics";
   );
   const pinnedKeys = $derived(new Set(pinned.map(key)));
 
+  // Projects tab: what wants you, runs, or just finished lifts above the project groups so it's
+  // one place to look. A pinned chat keeps its slot and takes its tier's row shape instead.
+  const unpinned = (rows: Row[]) => rows.filter((r) => !pinnedKeys.has(key(r)));
+  const tiers = $derived(
+    tab === "chats" ? null : { needs: unpinned(needsYou), running: unpinned(running), ready: unpinned(ready) },
+  );
+  const liftedKeys = $derived(new Set(tiers ? [...tiers.needs, ...tiers.running, ...tiers.ready].map(key) : []));
+  const READY_CAP = 3;
+  let showAllReady = $state(false);
+  function tierVariant(r: Row): "default" | "running" | "attention" | "ready" {
+    const st = r.srv.sessionStatus(r.s.sessionId);
+    return st === "action" ? "attention" : st === "working" ? "running" : st === "finished" ? "ready" : "default";
+  }
+
   function activeSessions(gcid: ConnectionId, srv: ServerState, project: string): SessionSummary[] {
     return (srv.sessionsByProject[project] ?? [])
       .filter((s) => {
         const k = `${gcid}:${s.sessionId}`;
         return (
           !pinnedKeys.has(k) &&
+          !liftedKeys.has(k) &&
           !isArchived(s) &&
           !srv.hiddenSplitSessionIds.has(s.sessionId) &&
           hasMessages(s, srv)
@@ -565,7 +587,7 @@ import { haptic } from "../haptics";
   {#if srv}<ServerAvatar name={srv.label} seed={srv.serverId} size={12} /> {srv.label}{/if}
 {/snippet}
 
-{#snippet rowFor(r: Row, variant: "default" | "running" | "attention", showServer = multiServer)}
+{#snippet rowFor(r: Row, variant: "default" | "running" | "attention" | "ready", showServer = multiServer)}
   {@const paired = r.srv.splitPartnerFor(r.s.sessionId) ?? null}
   {#if paired}
     <SplitEntry primary={r.s} secondary={paired} connectionId={r.cid} {variant} />
@@ -756,9 +778,28 @@ import { haptic } from "../haptics";
           </p>
         {/each}
       {:else}
+        {#if tiers?.needs.length}
+          <div class="section-label">Needs you <span class="count">{tiers.needs.length}</span></div>
+          {#each tiers.needs as r (key(r))}{@render rowFor(r, "attention")}{/each}
+        {/if}
+        {#if tiers?.running.length}
+          <div class="section-label">Working</div>
+          {#each tiers.running as r (key(r))}{@render rowFor(r, "running")}{/each}
+        {/if}
+        {#if tiers?.ready.length}
+          <div class="section-label">Ready</div>
+          {#each showAllReady ? tiers.ready : tiers.ready.slice(0, READY_CAP) as r (key(r))}{@render rowFor(r, "ready")}{/each}
+          {#if tiers.ready.length > READY_CAP}
+            <button class="more" onclick={() => (showAllReady = !showAllReady)}>
+              <Icon name={showAllReady ? "chevron-up" : "chevron-down"} size={13} />
+              <span>{showAllReady ? "Show less" : `Show ${tiers.ready.length - READY_CAP} more`}</span>
+            </button>
+          {/if}
+        {/if}
+
         {#if pinned.length}
           <div class="section-label">Pinned</div>
-          {#each pinned as r (key(r))}{@render rowFor(r, "default")}{/each}
+          {#each pinned as r (key(r))}{@render rowFor(r, tierVariant(r))}{/each}
         {/if}
 
         {#if tab === "chats"}
@@ -965,7 +1006,8 @@ import { haptic } from "../haptics";
         </span>
       </button>
     </div>
-    <AboutDialog bind:open={showAbout} />
+    <AboutDialog bind:open={showAbout} onWhatsNew={() => (showNew = true)} />
+    <WhatsNewDialog bind:open={showNew} />
     {#if localCid}<PairPhoneDialog bind:open={showPair} cid={localCid} />{/if}
 
     {#if !app.sidebarCollapsed || resizing}
@@ -1053,7 +1095,7 @@ import { haptic } from "../haptics";
     border: 1px solid var(--panel-border);
     border-left: 0;
     border-radius: 0 var(--radius-lg, 12px) var(--radius-lg, 12px) 0;
-    box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-drawer);
   }
   .sidebar-slot.snap,
   .sidebar-slot.snap .sidebar {
@@ -1120,7 +1162,7 @@ import { haptic } from "../haptics";
     justify-content: center;
     width: var(--ctrl-h);
     height: var(--ctrl-h);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     color: var(--text);
@@ -1224,6 +1266,14 @@ import { haptic } from "../haptics";
     color: var(--sidebar-fg-dim);
     opacity: 0.75;
   }
+  .section-label .count {
+    margin-left: 0.3rem;
+    padding: 0 0.35rem;
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    color: var(--warning);
+    letter-spacing: 0;
+  }
   .search-head {
     display: flex;
     align-items: center;
@@ -1240,6 +1290,9 @@ import { haptic } from "../haptics";
     font-variant-numeric: tabular-nums;
   }
   .more {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
     margin: 0.14rem 0 0;
     padding: 0.3rem var(--space-1);
     background: none;
@@ -1547,7 +1600,7 @@ import { haptic } from "../haptics";
     justify-content: center;
     border-radius: var(--radius-sm);
     overflow: hidden;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     font-size: 1.15rem;
     line-height: 1;
   }
@@ -1687,7 +1740,7 @@ import { haptic } from "../haptics";
       padding-bottom: max(var(--safe-bottom), 0.6rem);
       background: var(--bg);
       border-right: 1px solid var(--panel-border);
-      box-shadow: 12px 0 40px rgba(0, 0, 0, 0.35);
+      box-shadow: var(--shadow-drawer);
       touch-action: pan-y;
       overscroll-behavior: contain;
     }

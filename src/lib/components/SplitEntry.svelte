@@ -17,7 +17,7 @@
     primary: SessionSummary;
     secondary: SessionSummary;
     connectionId: ConnectionId;
-    variant?: "default" | "running" | "attention";
+    variant?: "default" | "running" | "attention" | "ready";
   } = $props();
 
   let server = $derived(app.servers[connectionId]);

@@ -1,5 +1,5 @@
 import { applyQuietTokens } from "./quietRoom";
-import { isOlder } from "./serverVersion";
+import { fmtVersion, isOlder } from "./serverVersion";
 import type {
   AskUserQuestionData,
   ChatMessage,
@@ -9,6 +9,7 @@ import type {
   ProjectOpenedData,
   PendingAsksData,
   PeerListData,
+  ServerIcon,
   ServerIdentityData,
   SessionHistoryData,
   TerminalSnapshotData,
@@ -218,6 +219,12 @@ const CHAT_CACHE_MAX_SESSIONS = 30;
 // Per chat, the newest messages only: a long chat's older turns are not worth its share of the total.
 const CHAT_CACHE_MAX_MESSAGES = 100;
 
+// Saves still waiting on their timer; the page flushes them as it goes away.
+const pendingChatSaves = new Set<() => void>();
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => [...pendingChatSaves].forEach((flush) => flush()));
+}
+
 function saveServerChatHistory(serverId: string, history: ChatHistory) {
   const lastAt = (id: string) => history.messagesBySession[id]?.at(-1)?.createdAt ?? 0;
   let keep = Object.keys(history.messagesBySession)
@@ -360,7 +367,7 @@ export const CHAT_PROJECT = "@chat";
 export const SIDEBAR_TAB_KEY = "yoake.sidebarTab";
 
 export interface PaletteRequest {
-  page: "root" | "projects" | "browse" | "servers";
+  page: "root" | "projects" | "browse" | "servers" | "add-provider";
   at: number;
   /** The projects page picks for a caller instead of opening a chat. */
   pick?: { title: string; connectionId: ConnectionId; run: (projectPath: string) => void };
@@ -410,6 +417,8 @@ const SETTINGS_KEY = "yoake.settings";
 // Appearance/profile preferences: entirely per-device, client-only. A mode with no theme
 // chosen derives its colors from `accent`; derived colors use CSS color-mix() (app.css).
 export interface AppSettings {
+  /** Models kept out of the model picker, by provider name. Local to this device: servers have no such list. */
+  hiddenModels: Record<string, string[]>;
   /** "system" follows the OS's prefers-color-scheme, re-applied live. */
   theme: "dark" | "light" | "system";
   accent: string;
@@ -423,6 +432,7 @@ export interface AppSettings {
   uiFontFamily: string;
   codeFontFamily: string;
   codeWrapLines: boolean;
+  codeLineNumbers: boolean;
   /** Summarize each long reply in a card under it (the utility model's job; see summarizeMessage). */
   autoSummary: boolean;
   /** Code block syntax colors: same choice as the terminal's. See highlight.ts. */
@@ -442,6 +452,8 @@ export interface AppSettings {
   surface: "opaque" | "frosted";
   /** The new chat's feed under the composer (EmptyFeed.svelte): recent chats, the working tree, starter prompts. */
   emptyFeed: boolean;
+  /** How a reply's tool calls and thinking show: "simple" folds everything before the final text into one dropdown, "verbose" shows every block inline. */
+  toolView: "simple" | "verbose";
   /** What added and removed lines are drawn in: "colorblind" is blue/orange instead of green/red. */
   diffColors: "default" | "colorblind";
   /** Window controls and the drag strip. */
@@ -480,6 +492,7 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
+  hiddenModels: {},
   theme: "dark",
   accent: "#7c9bff",
   darkTheme: "",
@@ -489,6 +502,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   uiFontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   codeFontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
   codeWrapLines: true,
+  codeLineNumbers: false,
   autoSummary: true,
   codeUseAppTheme: true,
   codeColorTheme: "dracula",
@@ -500,6 +514,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   wallpaperStyle: "dither",
   surface: "opaque",
   emptyFeed: true,
+  toolView: "simple",
   diffColors: "default",
   windowChrome: true,
   stopServerOnClose: false,
@@ -533,6 +548,7 @@ function loadSettings(): AppSettings {
     if (!loaded.trustedCaByHostPort) loaded.trustedCaByHostPort = {};
     if (!loaded.trustedCaByServer) loaded.trustedCaByServer = {};
     if (!loaded.keybinds) loaded.keybinds = {};
+    if (!loaded.hiddenModels) loaded.hiddenModels = {};
     loaded.discordRpc = loadDiscordRpc(loaded.discordRpc);
     return loaded;
   } catch {
@@ -562,7 +578,7 @@ export class ServerState {
   announceOutdated() {
     if (!this.outdated || this.outdatedToasted) return;
     this.outdatedToasted = true;
-    const have = this.version ? `v${this.version}` : "an old version";
+    const have = this.version ? fmtVersion(this.version) : "an old version";
     const title = `Server is out of date (${have}, latest v${this.app.latestServerVersion})`;
     this.app.toastAction(this.connectionId, title, this.connectionMode === "local" && this.app.updateServer ? { label: "Update", run: () => this.app.updateServer?.(this.connectionId) } : undefined);
   }
@@ -639,6 +655,8 @@ export class ServerState {
     return me ? !!me.restricted : this.tierRestricted;
   }
   serverIdentity = $state<string | null>(null);
+  /** Chosen by an operator and shared by every client; null until one is picked. */
+  serverIcon = $state<ServerIcon | null>(null);
   /** What the UI calls this server everywhere (lists, badges, avatars). */
   get label(): string {
     return this.serverIdentity ?? (this.connectionMode === "local" ? "Local" : "Remote");
@@ -758,6 +776,31 @@ export class ServerState {
   // The server's word on how full each chat's context is and what it has cost: from turn_completed,
   // and from session_history so a reload or another device has them without a turn (§3.2).
   contextBySession = $state<Record<string, ContextData>>({});
+  // Last window the server reported per model, kept across restarts: older chats come back
+  // without one, and the ring would then show the compaction budget as if it were the window.
+  private modelWindows: Record<string, number> = {};
+
+  // The ring's limit is the selected model's window (what the next send must fit), not the model that
+  // answered last, so a remembered window wins over the reported one. Only a live turn records one:
+  // history is from whichever model answered, which may not be the selected one.
+  private setContext(sessionId: string, ctx: ContextData, record = false) {
+    const key = this.modelBySession[sessionId] ?? this.providerBySession[sessionId];
+    if (key && this.serverId) {
+      if (!Object.keys(this.modelWindows).length) {
+        try {
+          this.modelWindows = JSON.parse(loadServerString(this.serverId, "modelWindows") ?? "{}");
+        } catch {
+          // best-effort only
+        }
+      }
+      if (record && ctx.windowTokens && this.modelWindows[key] !== ctx.windowTokens) {
+        this.modelWindows[key] = ctx.windowTokens;
+        saveServerString(this.serverId, "modelWindows", JSON.stringify(this.modelWindows));
+      }
+      if (this.modelWindows[key]) ctx = { ...ctx, windowTokens: this.modelWindows[key] };
+    }
+    this.contextBySession[sessionId] = ctx;
+  }
   spendBySession = $state<Record<string, SpendData>>({});
 
   providers = $state<ProviderInfo[]>([]);
@@ -1038,12 +1081,23 @@ export class ServerState {
    * session survives; mirrors them to localStorage. No-ops until serverId is known. */
   private saveChatHistory() {
     if (!this.serverId) return;
+    // Serializing up to 1.5 MB is a main-thread stall, and events call this in bursts.
+    clearTimeout(this.chatSaveTimer);
+    pendingChatSaves.add(this.flushChatHistory);
+    this.chatSaveTimer = setTimeout(this.flushChatHistory, 1500);
+  }
+
+  private chatSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  private flushChatHistory = () => {
+    clearTimeout(this.chatSaveTimer);
+    pendingChatSaves.delete(this.flushChatHistory);
+    if (!this.serverId) return;
     saveServerChatHistory(this.serverId, {
       messagesBySession: this.messagesBySession,
       projectBySession: this.projectBySession,
       sessionsByProject: this.sessionsByProject,
     });
-  }
+  };
 
   /** Records "we're leaving `sessionId`" just before a switch. Any forward
    * history is dropped, since the branch it led to is no longer reachable. */
@@ -2219,7 +2273,7 @@ export class ServerState {
           break;
         }
         if (data.finishReason !== "no_provider") this.app.recordSpend(data.usage?.costUsd ?? 0);
-        if (data.context) this.contextBySession[sessionId] = data.context;
+        if (data.context) this.setContext(sessionId, data.context, true);
         if (data.spend) this.spendBySession[sessionId] = data.spend;
         if (data.finishReason === "no_provider") {
           // Reachable if the provider became unavailable between being picked and the turn
@@ -2579,7 +2633,11 @@ export class ServerState {
       }
       case "server_identity": {
         const data = env.data as unknown as ServerIdentityData;
+        if (this.serverIdentity != null && this.serverIdentity !== data.identity) {
+          this.app.toastAction(this.connectionId, `Server renamed to ${data.identity}`);
+        }
         this.serverIdentity = data.identity;
+        this.serverIcon = data.icon ?? null;
         this.tierRestricted = !!data.restricted;
         this.awaitingApproval = false;
         this.version = data.version ?? null;
@@ -2620,7 +2678,7 @@ export class ServerState {
       case "session_history": {
         const data = env.data as unknown as SessionHistoryData;
         this.applySessionHistory(data.sessionId, data.messages ?? []);
-        if (data.context) this.contextBySession[data.sessionId] = data.context;
+        if (data.context) this.setContext(data.sessionId, data.context);
         if (data.spend) this.spendBySession[data.sessionId] = data.spend;
         // Server is the source of truth for mode (§4c): adopt it, don't replay a cached value.
         if (isChatMode(data.mode)) this.modeBySession[data.sessionId] = data.mode;
@@ -3005,7 +3063,7 @@ class AppState {
   // Each openPalette() is a fresh request: opens on that page, or pushes it if already open.
   paletteOpen = $state(false);
   paletteRequest = $state<PaletteRequest>({ page: "root", at: 0 });
-  openPalette(page: "root" | "projects" | "browse" | "servers" = "root", pick?: PaletteRequest["pick"]) {
+  openPalette(page: "root" | "projects" | "browse" | "servers" | "add-provider" = "root", pick?: PaletteRequest["pick"]) {
     this.paletteRequest = { page, at: performance.now(), pick };
     this.paletteOpen = true;
   }
@@ -3262,6 +3320,7 @@ class AppState {
     root.style.setProperty("--anim-speed", String(this.settings.animationSpeed));
     root.style.setProperty("--code-wrap", this.settings.codeWrapLines ? "pre-wrap" : "pre");
     root.dataset.codeWrap = this.settings.codeWrapLines ? "on" : "off";
+    root.dataset.codeLines = this.settings.codeLineNumbers ? "on" : "off";
     // Code blocks borrow the terminal palette's ANSI slots for token colors.
     const code =
       (!this.settings.codeUseAppTheme && TERMINAL_THEME_PRESETS.find((p) => p.id === this.settings.codeColorTheme)?.colors) ||

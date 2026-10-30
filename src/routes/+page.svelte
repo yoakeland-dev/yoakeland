@@ -9,10 +9,7 @@
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import RightSidebar from "$lib/components/RightSidebar.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
-  import SettingsPanel from "$lib/components/SettingsPanel.svelte";
-  import UsagePanel from "$lib/components/UsagePanel.svelte";
-  import ExtensionsPanel from "$lib/components/ExtensionsPanel.svelte";
-  import CommandPalette from "$lib/components/CommandPalette.svelte";
+  import Lazy from "$lib/components/Lazy.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import FirstServerPanel from "$lib/components/FirstServerPanel.svelte";
   import Icon from "$lib/components/Icon.svelte";
@@ -353,9 +350,9 @@ import { haptic } from "$lib/haptics";
     <Sidebar />
     <div class="content-row" bind:this={contentRowEl}>
       {#if app.showExtensions}
-        <ExtensionsPanel />
+        <Lazy load={() => import("$lib/components/ExtensionsPanel.svelte")} />
       {:else if app.showUsage}
-        <UsagePanel />
+        <Lazy load={() => import("$lib/components/UsagePanel.svelte")} />
       {:else if app.active?.currentSessionId}
         <ChatPanel
           sessionId={app.active.currentSessionId}
@@ -383,8 +380,8 @@ import { haptic } from "$lib/haptics";
   </div>
   {#if !app.onboarding && !viewport.narrow}<StatusBar />{/if}
 </div>
-<SettingsPanel />
-<CommandPalette />
+<Lazy load={() => import("$lib/components/SettingsPanel.svelte")} when={app.showSettings} />
+<Lazy load={() => import("$lib/components/CommandPalette.svelte")} when={app.paletteOpen} />
 <Toasts />
 <TooltipHost />
 <QuietRoom />

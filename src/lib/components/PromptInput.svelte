@@ -25,7 +25,7 @@
   import { basename, shortNum } from "../format";
   import { fuzzyFilter, fuzzyIndices } from "../fuzzy";
   import { fileIconUrl } from "../fileIcons";
-  import { mentionText, MENTION_RE } from "../mentions";
+  import { mentionText, MENTION_RE, chatLabel, chatMentionsToIds } from "../mentions";
   import { pickableSkills, skillKindOf, slashToSkill } from "../extensions";
   import { parseSlashCommand, SLASH_COMMANDS } from "../slashCommands";
   import { askBtw } from "../sideChat";
@@ -42,6 +42,7 @@
   import ContextRing from "./ContextRing.svelte";
   import ChatNotices from "./ChatNotices.svelte";
   import Dropdown from "./Dropdown.svelte";
+  import ServerAvatar from "./ServerAvatar.svelte";
 
   // `scrolledUp`: the transcript is well above its tail (MessageList), so the composer goes
   // compact and the status chip offers `onJump` back down.
@@ -69,6 +70,7 @@
   let mentionIndex = $state(0);
   let mentionDismissed = $state(false);
   let skillIndex = $state(0);
+  let skillList = $state<HTMLElement>();
 
   // Height only animates during the floating/docked layout morph; a content-driven resize
   // (typing) must snap instantly. `morphing` goes true when `floating` changes and back off
@@ -405,6 +407,50 @@
     return fuzzyFilter(server?.filesByProject[filesRoot] ?? [], mentionQuery.query, 8);
   });
 
+  // The "#query" token before the cursor, once the # starts a word: another chat of this project to
+  // hand the agent (`#[title]`, which gets the chat's ID on send). Its title is matched like a file path.
+  const chatQuery = $derived.by(() => {
+    if (mentionDismissed) return null;
+    const m = /(?:^|\s)#([^\s#[\]]{0,40})$/.exec(text.slice(0, cursorPos));
+    return m ? { start: cursorPos - m[1].length - 1, query: m[1] } : null;
+  });
+  const otherChats = $derived.by(() => {
+    if (!projectPath) return [];
+    return (server?.sessionsByProject[projectPath] ?? [])
+      .filter((s) => s.sessionId !== sessionId && !s.archived && s.messageCount > 0)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((s) => ({ id: s.sessionId, title: chatLabel(s.title ?? "") }));
+  });
+  const chatMatches = $derived.by(() => {
+    if (!chatQuery) return [];
+    const byTitle = new Map(otherChats.map((c) => [c.title, c]));
+    return fuzzyFilter([...byTitle.keys()], chatQuery.query, 8).map((t) => byTitle.get(t)!);
+  });
+  let chatIndex = $state(0);
+  $effect(() => {
+    chatMatches;
+    chatIndex = 0;
+  });
+  // Titles picked in this draft, so two chats with one title keep the one that was chosen.
+  const pickedChats = new Map<string, string>();
+  function pickChat(c: { id: string; title: string }) {
+    if (!chatQuery) return;
+    const before = text.slice(0, chatQuery.start);
+    const after = text.slice(chatQuery.start + 1 + chatQuery.query.length);
+    pickedChats.set(c.title, c.id);
+    const mention = `#[${c.title}]`;
+    text = `${before}${mention} ${after.replace(/^ /, "")}`;
+    const pos = before.length + mention.length + 1;
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(pos, pos);
+      cursorPos = pos;
+    });
+  }
+  /** Draft text with each `#[title]` carrying its chat's ID. */
+  const withChatIds = (t: string) =>
+    t.includes("#[") ? chatMentionsToIds(t, new Map([...otherChats.map((c): [string, string] => [c.title, c.id]).reverse(), ...pickedChats])) : t;
+
   // The "$name" token before the cursor, or "/name" as the message's first word: a skill to name in this
   // message (SPEC.md §3.1 "Skills"). Offered only the skills this chat's agent can load, and only once the
   // sign starts a word, so "$5" stays a price and a path in the middle of a sentence isn't a command.
@@ -415,15 +461,14 @@
     const m = /(?:^|\s)\$([A-Za-z][A-Za-z0-9._:-]{0,63}|)$/.exec(text.slice(0, cursorPos)) ?? /^\/([A-Za-z][A-Za-z0-9._:-]{0,63}|)$/.exec(text.slice(0, cursorPos));
     return m ? { start: cursorPos - m[1].length - 1, query: m[1], sign: text[cursorPos - m[1].length - 1] } : null;
   });
-  const skillMatches = $derived(skillQuery ? pickableSkills(allSkills, skillQuery.query, agentKind).slice(0, 8) : []);
+  const skillMatches = $derived(skillQuery ? pickableSkills(allSkills, skillQuery.query, agentKind) : []);
   const isCli = $derived(!!sessionModes(server, sessionId).cli);
   // The composer's own commands (/compact, /autocompact) share the "/" picker. Claude Code and the
   // API providers have them; any other coding agent compacts on its own terms and gets neither.
   const hasCompactCommands = $derived(!isCli || agentKind === "claude");
   // /btw works on any agent that has a plain model to ask (the server says if not).
-  const commandMatches = $derived(
-    skillQuery?.sign === "/" ? SLASH_COMMANDS.filter((c) => (hasCompactCommands || c.name === "btw") && c.name.startsWith(skillQuery.query.toLowerCase())) : [],
-  );
+  const availableCommands = $derived(SLASH_COMMANDS.filter((c) => hasCompactCommands || c.name === "btw"));
+  const commandMatches = $derived(skillQuery?.sign === "/" ? availableCommands.filter((c) => c.name.startsWith(skillQuery.query.toLowerCase())) : []);
   const slashMatches = $derived([
     ...commandMatches.map((c) => ({ key: `/${c.name}`, name: c.name, hint: c.argumentHint, description: c.description, command: true, scope: "" })),
     ...skillMatches.map((sk) => ({ key: sk.dir, name: sk.name, hint: sk.argumentHint ?? "", description: sk.description, command: false, scope: sk.scope })),
@@ -432,6 +477,9 @@
   $effect(() => {
     slashMatches;
     skillIndex = 0;
+  });
+  $effect(() => {
+    skillList?.children[skillIndex]?.scrollIntoView({ block: "nearest" });
   });
   // Opening the picker rescans, so a SKILL.md added since the project was first listed is offered.
   const skillPickerOpen = $derived(!!skillQuery);
@@ -455,9 +503,14 @@
   // textarea, whose own text goes transparent while there are any. The chip can't pad or change
   // weight, or the backdrop's text would stop lining up with the caret.
   const knownFiles = $derived(new Set(filesRoot ? (server?.filesByProject[filesRoot] ?? []) : []));
+  type Run = { text: string; path?: string; skill?: boolean; chat?: boolean; cmd?: boolean; opt?: boolean; hint?: string };
   const composerRuns = $derived.by(() => {
-    const runs: { text: string; path?: string; skill?: boolean }[] = [];
-    const chips: { index: number; text: string; path?: string; skill?: boolean }[] = [];
+    const runs: Run[] = [];
+    const chips: (Run & { index: number })[] = [];
+    if (otherChats.length && text.includes("#[")) {
+      const titles = new Set(otherChats.map((c) => c.title));
+      for (const m of text.matchAll(/(?<=^|\s)#\[([^\]\n]{1,120})\]/g)) if (titles.has(m[1])) chips.push({ index: m.index, text: m[0], chat: true });
+    }
     if (knownFiles.size) {
       for (const m of text.matchAll(new RegExp(MENTION_RE.source, "g"))) {
         // A trailing sentence period isn't part of the name, unless a line suffix follows it.
@@ -466,21 +519,35 @@
         chips.push({ index: m.index, text: m[2] ? m[0] : "@" + path, path });
       }
     }
-    if (knownSkills.size && (text.includes("$") || text.startsWith("/"))) {
+    if (text.includes("$") || text.startsWith("/")) {
       for (const m of text.matchAll(/(?<=^|\s)\$([A-Za-z][A-Za-z0-9._:-]{0,63})(?=$|[\s.,;:!?)])|^\/([A-Za-z][A-Za-z0-9._:-]{0,63})(?=$|[\s.,;:!?)])/g)) {
-        if (knownSkills.has(m[1] ?? m[2])) chips.push({ index: m.index, text: m[0], skill: true });
+        const cmd = m[2] && availableCommands.find((c) => c.name === m[2]);
+        const sk = allSkills?.find((s) => s.name === (m[1] ?? m[2]));
+        if (cmd) chips.push({ index: m.index, text: m[0], cmd: true, hint: cmd.argumentHint });
+        else if (knownSkills.has(m[1] ?? m[2])) chips.push({ index: m.index, text: m[0], skill: true, hint: sk?.argumentHint });
       }
     }
+    // /autocompact's value (on, off, 400k, …) is an option of the command, not free text.
+    const opt = /^\/autocompact\s+(\S+)/.exec(text);
+    if (opt && availableCommands.some((c) => c.name === "autocompact") && parseSlashCommand(opt[0])?.kind === "autocompact")
+      chips.push({ index: opt[0].length - opt[1].length, text: opt[1], opt: true });
     if (!chips.length) return runs;
     let last = 0;
     for (const c of chips.sort((a, b) => a.index - b.index)) {
       if (c.index < last) continue;
       if (c.index > last) runs.push({ text: text.slice(last, c.index) });
-      runs.push({ text: c.text, path: c.path, skill: c.skill });
-      last = c.index + c.text.length;
+      const { index, ...run } = c;
+      runs.push(run);
+      last = index + c.text.length;
     }
     runs.push({ text: text.slice(last) });
     return runs;
+  });
+  // A command or skill with nothing typed after it shows what it takes, as a ghost at the end of the text.
+  const ghost = $derived.by(() => {
+    const tail = composerRuns.at(-1);
+    const hint = composerRuns.at(-2)?.hint;
+    return hint && tail && tail.text.length < 2 && !tail.text.trim() ? (tail.text ? "" : " ") + hint : "";
   });
   let mirror = $state<HTMLDivElement>();
   $effect(() => {
@@ -683,7 +750,7 @@
 
   function submit(e?: Event, steer = true) {
     e?.preventDefault();
-    const value = slashToSkill(text.trim(), knownSkills);
+    const value = withChatIds(slashToSkill(text.trim(), knownSkills));
     if (!cid || !canSubmit) return;
     if (!planAsk && !asks.length && !editingId && runCommand(text.trim())) {
       text = "";
@@ -732,6 +799,23 @@
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         pickSkill(slashMatches[skillIndex].name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        mentionDismissed = true;
+        return;
+      }
+    }
+    if (chatMatches.length > 0) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        chatIndex = (chatIndex + (e.key === "ArrowDown" ? 1 : chatMatches.length - 1)) % chatMatches.length;
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        pickChat(chatMatches[chatIndex]);
         return;
       }
       if (e.key === "Escape") {
@@ -802,9 +886,6 @@
       {/key}
     </h2>
 
-    {#if asks.length}
-      <AskCard bind:this={askCard} {sessionId} {asks} />
-    {/if}
     <BtwCard {sessionId} />
 
     <div class="dock">
@@ -829,9 +910,13 @@
         </button>
       </div>
 
+      {#if asks.length}
+        <AskCard bind:this={askCard} {sessionId} {asks} />
+      {/if}
       <form
         class="box"
         class:editing={!!editingId && !asks.length}
+        class:asking={asks.length > 0}
         class:drag-over={dragOver}
         bind:this={boxEl}
         onsubmit={submit}
@@ -885,11 +970,12 @@
 
         <div class="input-area">
           {#if composerRuns.length}
-            <div class="mirror" aria-hidden="true" bind:this={mirror}>{#each composerRuns as r}{#if r.skill}<span class="m-chip m-skill">{r.text}</span>{:else if r.path}<span class="m-chip"><span class="m-at" style:background-image={`url("${fileIconUrl(r.path.split("/").pop() ?? r.path)}")`}>@</span>{r.text.slice(1)}</span>{:else}{r.text}{/if}{/each}&#8203;</div>
+            <div class="mirror" aria-hidden="true" bind:this={mirror}>{#each composerRuns as r}{#if r.chat}<span class="m-chip"><span class="m-hash">#[</span>{r.text.slice(2, -1)}<span class="m-end">]</span></span>{:else if r.cmd}<span class="m-chip m-cmd">{r.text}</span>{:else if r.skill}<span class="m-chip m-skill">{r.text}</span>{:else if r.opt}<span class="m-chip m-opt">{r.text}</span>{:else if r.path}<span class="m-chip"><span class="m-at" style:background-image={`url("${fileIconUrl(r.path.split("/").pop() ?? r.path)}")`}>@</span>{r.text.slice(1)}</span>{:else}{r.text}{/if}{/each}{#if ghost}<span class="m-ghost">{ghost}</span>{/if}&#8203;</div>
           {/if}
           <textarea
             bind:this={textarea}
             class:decorated={composerRuns.length > 0}
+            spellcheck={!text.startsWith("/")}
             onscroll={() => mirror && textarea && (mirror.scrollTop = textarea.scrollTop)}
             bind:value={text}
             onkeydown={onKeydown}
@@ -1013,20 +1099,46 @@
       <!-- Sibling of the form, not a child: the form's own backdrop-filter is a backdrop root, so a
            blur inside it would have nothing to sample. -->
       {#if slashMatches.length > 0}
-        <ul
+        {@const cur = slashMatches[skillIndex]}
+        <div
           class="mentions skills"
-          role="listbox"
-          aria-label="Commands and skills"
           in:fly={{ y: 8, duration: 160, easing: cubicOut }}
           out:fly={{ y: 6, duration: 120, easing: cubicIn }}
         >
-          {#each slashMatches as sk, i (sk.key)}
-            <li role="option" aria-selected={i === skillIndex}>
-              <button type="button" class:active={i === skillIndex} onclick={() => pickSkill(sk.name)}>
-                <Icon name={sk.command ? "arrows-minimize" : "sparkles"} size={13} />
-                <span class="m-name">{skillQuery?.sign ?? "$"}{sk.name}{#if sk.hint}<span class="m-arg"> {sk.hint}</span>{/if}</span>
-                <span class="m-dir">{sk.description}</span>
-                {#if sk.scope === "project"}<span class="m-scope">project</span>{/if}
+          <ul class="s-list" role="listbox" aria-label="Commands and skills" bind:this={skillList}>
+            {#each slashMatches as sk, i (sk.key)}
+              <li role="option" aria-selected={i === skillIndex}>
+                <button type="button" class:active={i === skillIndex} onclick={() => pickSkill(sk.name)} onmousemove={() => (skillIndex = i)}>
+                  <Icon name={sk.command ? "arrows-minimize" : "sparkles"} size={13} />
+                  <span class="m-name">{skillQuery?.sign ?? "$"}{sk.name}</span>
+                  {#if sk.scope === "project"}<span class="m-scope">project</span>{/if}
+                </button>
+              </li>
+            {/each}
+          </ul>
+          {#if cur}
+            <div class="s-detail">
+              <div class="s-usage">
+                <span class="m-chip" class:m-cmd={cur.command} class:m-skill={!cur.command}>{skillQuery?.sign ?? "$"}{cur.name}</span>
+                {#each cur.hint ? cur.hint.split(" | ") : [] as o}<span class="m-chip m-opt">{o}</span>{/each}
+              </div>
+              <p>{cur.description || "No description."}</p>
+            </div>
+          {/if}
+        </div>
+      {:else if chatMatches.length > 0}
+        <ul
+          class="mentions"
+          role="listbox"
+          aria-label="Chats"
+          in:fly={{ y: 8, duration: 160, easing: cubicOut }}
+          out:fly={{ y: 6, duration: 120, easing: cubicIn }}
+        >
+          {#each chatMatches as c, i (c.id)}
+            <li role="option" aria-selected={i === chatIndex}>
+              <button type="button" class:active={i === chatIndex} onclick={() => pickChat(c)}>
+                <Icon name="message-circle" size={13} />
+                <span class="m-name">{c.title}</span>
               </button>
             </li>
           {/each}
@@ -1076,10 +1188,13 @@
           items={serverItems}
           bind:value={() => cid ?? undefined, setActiveServer}
           placeholder="Select a server…"
-          triggerIcon={app.connectionMode === "local" ? "computer" : "cloud"}
           triggerTitle="Switch server"
           triggerClass="fc-pill"
-        />
+        >
+          {#snippet triggerLead()}
+            {#if server}<ServerAvatar name={server.label} seed={server.serverId} size={13} bare />{/if}
+          {/snippet}
+        </Dropdown>
       {:else}
         <button
           type="button"
@@ -1087,11 +1202,8 @@
           {@attach tip("Servers")}
           onclick={() => app.openPalette("servers")}
         >
-          <Icon
-            name={app.connectionMode === "local" ? "computer" : "cloud"}
-            size={12}
-          />
-          {app.connectionMode}
+          {#if server}<ServerAvatar name={server.label} seed={server.serverId} size={13} bare />{/if}
+          {server?.label ?? app.connectionMode}
         </button>
       {/if}
     </div>
@@ -1330,15 +1442,18 @@
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    /* Concentric with the send button: button radius (1rem) + its inset padding (0.57rem)
-       = 22px at the 14px root size. Right/bottom padding kept equal so the corners nest. */
-    border-radius: 22px;
+    /* One radius for the composer and the ask card that joins it (--radius-float). */
+    border-radius: var(--radius-float);
     padding: 0.71rem var(--space-1) var(--space-1);
     transition:
       border-color var(--room-fade, calc(0.15s * var(--anim-speed, 1))) ease,
       padding var(--morph) ease,
       transform calc(0.15s * var(--anim-speed, 1)) ease,
       box-shadow var(--room-fade, calc(0.15s * var(--anim-speed, 1))) ease;
+  }
+  .box.asking {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
   }
   .box:focus-within {
     border-color: color-mix(in srgb, var(--text) 24%, transparent);
@@ -1441,7 +1556,7 @@
     padding: 0 0.29rem;
     border: none;
     border-radius: var(--radius-pill);
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wash-3);
     color: var(--text);
     font: inherit;
     cursor: pointer;
@@ -1456,7 +1571,7 @@
     background: none;
   }
   .jump:hover {
-    background: rgba(255, 255, 255, 0.14);
+    background: var(--wash-4);
   }
   .editing-strip {
     display: flex;
@@ -1553,22 +1668,87 @@
     background: color-mix(in srgb, var(--success) 14%, transparent);
     box-shadow: 0 0 0 0.15em color-mix(in srgb, var(--success) 14%, transparent);
   }
-  .m-arg {
-    font-weight: 400;
+  /* The `#[` and `]` around a chat title keep their width (so the caret lines up) but draw as an icon and nothing. The icon is smaller than its box and sits left, which is the gap before the title. */
+  .m-hash {
+    color: transparent;
+    background: color-mix(in srgb, var(--accent) 60%, var(--text));
+    mask: var(--chat-icon) left center / auto 0.8em no-repeat;
+  }
+  .m-end {
+    color: transparent;
+  }
+  .m-cmd {
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 16%, transparent);
+    box-shadow: 0 0 0 0.15em color-mix(in srgb, var(--text) 16%, transparent);
+  }
+  /* An option of the command before it: set apart from the command, plainer than a chip of its own. */
+  .m-opt {
     color: var(--text-dim);
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    box-shadow: 0 0 0 0.15em color-mix(in srgb, var(--text) 10%, transparent);
+  }
+  .mirror .m-opt {
+    color: var(--text);
+  }
+  .m-ghost {
+    color: var(--text-dim);
+    opacity: 0.55;
+  }
+  .s-usage {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .s-usage .m-chip {
+    box-shadow: none;
+    padding: 0.1em 0.5em;
+    font-weight: 600;
+  }
+  .s-usage .m-opt {
+    font-weight: 400;
   }
   .m-scope {
     flex-shrink: 0;
     font-size: 0.68rem;
     color: var(--accent);
   }
-  .skills .m-dir {
-    direction: ltr;
+  .skills {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: var(--space-1);
+  }
+  .s-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: min(12rem, 40vh);
+    overflow-y: auto;
+  }
+  .s-list .m-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .s-detail {
+    padding: 0.36rem var(--space-1);
+    border-left: 1px solid var(--float-border);
+    /* Always full height, so the popup doesn't resize as the filter narrows. */
+    height: min(12rem, 40vh);
+    overflow-y: auto;
+    font-size: var(--text-label-size);
+  }
+  .s-detail p {
+    margin: 0.4rem 0 0;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   /* The file's icon over the @ it stands in for, so the text keeps its width. */
   .m-at {
     color: transparent;
-    background: center / contain no-repeat;
+    background: left center / auto 0.85em no-repeat;
   }
   /* autosize() writes height on every keystroke, but only the floating/docked and compact
      morphs should animate; scoping the transition to .stack.morphing keeps typing instant. */
@@ -1669,7 +1849,7 @@
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--shadow-pop);
     z-index: 5;
   }
   .mentions button {
@@ -1751,7 +1931,7 @@
   }
   :global(.add-chip:hover),
   :global(.add-chip[data-state="open"]) {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     color: var(--text);
   }
   /* Neutral until there's something to send, then the accent: it lights up when ready. */
@@ -1765,7 +1945,7 @@
     padding: 0;
     border: none;
     border-radius: var(--radius-pill);
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wash-3);
     color: var(--text-dim);
     cursor: default;
     transition:
@@ -1841,7 +2021,7 @@
     .pickers {
       gap: 0;
       border-radius: var(--radius-pill);
-      background: rgba(255, 255, 255, 0.05);
+      background: var(--wash-2);
     }
     .pickers :global(.picker-trigger) {
       padding: 0 0.5rem;

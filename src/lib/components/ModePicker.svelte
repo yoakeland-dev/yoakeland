@@ -163,7 +163,7 @@
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-dialog);
     padding: 0.36rem;
     z-index: var(--z-popover);
     animation: floatIn var(--float-enter-duration) ease-out;

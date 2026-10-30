@@ -3,10 +3,10 @@
    A place that needs a different control height sets --ctrl-h around it (the settings panel, the
    sidebar); everything here reads it with a 2rem fallback. */
 :root {
-  --well: rgba(255, 255, 255, 0.08);
-  --field-bg: rgba(255, 255, 255, 0.055);
-  --field-bg-focus: rgba(255, 255, 255, 0.08);
-  --field-border-hover: rgba(255, 255, 255, 0.16);
+  --well: var(--wash-3);
+  --field-bg: var(--wash-2);
+  --field-bg-focus: var(--wash-3);
+  --field-border-hover: var(--wash-4);
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
   --bead: #f2f3f7;
   --ui-ease: cubic-bezier(0.25, 0.9, 0.35, 1);

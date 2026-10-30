@@ -484,7 +484,7 @@
     background: var(--sidebar-hover);
   }
   .row.sel {
-    background: var(--sidebar-active, rgba(255, 255, 255, 0.08));
+    background: var(--sidebar-active, var(--wash-3));
   }
   .row.off > :global(.tile),
   .row.off .text {

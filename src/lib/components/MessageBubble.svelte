@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { tip } from "../tooltip.svelte";
   import { fade as fadeTransition } from "svelte/transition";
   import { isPhotoAvatar } from "../avatar";
@@ -21,6 +22,8 @@
     steering = false,
     withdrawing = false,
   }: { message: ChatMessage; sessionId: string; queued?: boolean; steering?: boolean; withdrawing?: boolean } = $props();
+  // Only a message sent just now eases in; history loading in (session switch, scroll hydration) stays still.
+  const enter = untrack(() => queued || steering || Date.now() - message.createdAt < 2000);
   const text = $derived(message.text);
   const author = $derived(message.author);
   const authorAvatar = $derived(message.authorAvatar);
@@ -75,7 +78,7 @@
   {/if}
 {/snippet}
 
-<div class="row" class:queued={queued || steering} class:stacked={narrow} bind:clientWidth={rowWidth}>
+<div class="row" class:enter class:queued={queued || steering} class:stacked={narrow} bind:clientWidth={rowWidth}>
   {#if narrow}
     <div class="strip">
       <span class="avatar">
@@ -183,6 +186,16 @@
        the name) to have anywhere to slide down *to* while scrolling. */
     align-items: flex-start;
     gap: 8px;
+  }
+  .row.enter {
+    animation: send-in calc(0.4s * var(--anim-speed, 1)) cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* Rises from the composer at the bottom of the screen. */
+  @keyframes send-in {
+    from {
+      opacity: 0;
+      transform: translateY(40vh);
+    }
   }
   .row.stacked {
     flex-direction: column;
@@ -340,6 +353,15 @@
   }
   .strip .author {
     margin: 0;
+  }
+  /* Avatar on the right, smaller so it sits level with the name. */
+  .strip {
+    flex-direction: row-reverse;
+  }
+  .strip .avatar {
+    width: 18px;
+    height: 18px;
+    font-size: 0.7rem;
   }
 
   /* Phone: no hover, so the row's actions stay in view (quietly), with a finger-sized hit area

@@ -12,6 +12,10 @@ export interface TipOptions {
   /** Selector of an ancestor whose edges the tooltip clears instead of the element's own, so a
    * row's card sits outside its whole sidebar rather than over the neighbouring rows. */
   outside?: string;
+  /** Skips the open delay. */
+  instant?: boolean;
+  /** Body-size text instead of label-size. */
+  large?: boolean;
 }
 export interface Tip extends TipOptions {
   el: HTMLElement;
@@ -62,7 +66,7 @@ export function tip(content: string | Snippet | null | undefined | false, keysOr
     if (typeof content === "string" && !el.hasAttribute("aria-label") && !el.textContent?.trim()) {
       el.setAttribute("aria-label", content);
     }
-    const enter = (e: PointerEvent) => e.pointerType !== "touch" && show(t);
+    const enter = (e: PointerEvent) => e.pointerType !== "touch" && show(t, opts?.instant);
     const leave = () => hideTip(el);
     const focus = () => el.matches(":focus-visible") && show(t, true);
     el.addEventListener("pointerenter", enter);

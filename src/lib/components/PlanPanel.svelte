@@ -74,7 +74,7 @@
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-dialog);
     z-index: 3;
   }
   .plan-header {
@@ -105,7 +105,7 @@
     cursor: pointer;
   }
   .icon-chip:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     color: var(--text);
   }
   .plan-body {
@@ -152,7 +152,7 @@
     color: #0d1020;
   }
   .ghost {
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--wash-2);
     color: var(--text);
   }
 </style>

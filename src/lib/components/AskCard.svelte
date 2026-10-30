@@ -4,6 +4,7 @@
   // top edge; any others stack behind it. Its own buttons answer just this one ask. The composer
   // underneath stays the "tell it what to do instead" path, which answers every pending ask at
   // once (dismissAll). Keys arrive through onComposerKey, since focus stays in the composer.
+  import { untrack } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { app } from "../state.svelte";
@@ -21,7 +22,29 @@
   let { sessionId, asks }: { sessionId: string; asks: PendingAsk[] } = $props();
 
   const server = $derived(app.active);
-  const ask = $derived(asks[0]);
+  // Questions raised together ("<call>#0", "<call>#1"…) are answered one by one, but each answer is
+  // only held here until the last one, so an earlier answer can still be changed. The server wants
+  // them one per ask_user_answer and the model is blocked until all are in, so sending them together
+  // at the end loses nothing.
+  const first = $derived(asks[0]);
+  const group = $derived(
+    first?.kind === "question" && first.toolCallId.includes("#")
+      ? asks
+          .filter((a) => a.kind === "question" && a.toolCallId.startsWith(first.toolCallId.split("#")[0] + "#"))
+          .sort((a, b) => ((a as { index?: number }).index ?? 0) - ((b as { index?: number }).index ?? 0))
+      : [],
+  );
+  let drafts = $state<Record<string, string>>({});
+  let viewing = $state<string>();
+  const ask = $derived(
+    group.find((a) => a.toolCallId === viewing) ?? group.find((a) => drafts[a.toolCallId] === undefined) ?? group.at(-1) ?? first,
+  );
+  const step = $derived(group.indexOf(ask));
+  const draft = $derived(drafts[ask.toolCallId]);
+  $effect(() => {
+    const ids = new Set(asks.map((a) => a.toolCallId));
+    for (const id of Object.keys(drafts)) if (!ids.has(id)) delete drafts[id];
+  });
   // Searched by id, nested ones included: a subagent's ask carries its own turn id, not the chat's.
   const call = $derived(findCallInMessages(server?.messagesBySession[sessionId], ask.toolCallId));
   const owner = $derived(subagentOwning(server?.messagesBySession[sessionId], ask.toolCallId));
@@ -106,8 +129,26 @@
   function answer(text: string) {
     const c = cid();
     if (!c || !question) return;
-    askUserAnswer(c, ask.sessionId, ask.toolCallId, text);
-    done();
+    if (group.length < 2) {
+      askUserAnswer(c, ask.sessionId, ask.toolCallId, text);
+      return done();
+    }
+    drafts[ask.toolCallId] = text;
+    const next = group.find((a) => drafts[a.toolCallId] === undefined);
+    if (next) {
+      viewing = next.toolCallId;
+      return;
+    }
+    // The last one is in: send them all, in order.
+    for (const a of group) {
+      askUserAnswer(c, a.sessionId, a.toolCallId, drafts[a.toolCallId]);
+      server?.removeAsk(a.toolCallId);
+    }
+    drafts = {};
+    viewing = undefined;
+  }
+  function back() {
+    if (step > 0) viewing = group[step - 1].toolCallId;
   }
   const skip = () => answer("The user dismissed this question without answering.");
 
@@ -116,6 +157,8 @@
   export function dismissAll(note: string) {
     const c = cid();
     if (!c || !server) return;
+    drafts = {};
+    viewing = undefined;
     for (const a of asks) {
       if (a.kind === "permission") respondPermission(c, a.sessionId, a.turnId, a.toolCallId, false, false, note);
       else askUserAnswer(c, a.sessionId, a.toolCallId, `The user dismissed this question and said instead: ${note}`);
@@ -128,11 +171,14 @@
   let otherOpen = $state(false);
   let otherText = $state("");
   let otherInput = $state<HTMLInputElement>();
+  // Landing on a question already answered shows that answer: its option lit, or the text in the box.
   $effect(() => {
     void ask.toolCallId;
-    highlight = 0;
-    otherOpen = false;
-    otherText = "";
+    const d = untrack(() => draft);
+    const at = d === undefined ? -1 : untrack(() => options).indexOf(d);
+    highlight = Math.max(0, at);
+    otherOpen = d !== undefined && at < 0 && !d.startsWith("The user dismissed");
+    otherText = otherOpen ? d! : "";
   });
   $effect(() => {
     if (otherOpen) otherInput?.focus();
@@ -147,6 +193,10 @@
       return true;
     }
     if (!empty) return false;
+    if (e.key === "ArrowLeft" && step > 0) {
+      back();
+      return true;
+    }
     if (permission && e.key === "Enter" && !e.shiftKey) {
       if (!(e.ctrlKey || e.metaKey)) allow(false);
       else if (canAlways) allowAlways();
@@ -207,7 +257,9 @@
           <span class="kind"><Icon name="message-question" size={14} /></span>
           <span class="question">{question.question}</span>
         {/if}
-        {#if question?.total && question.total > 1}
+        {#if group.length > 1}
+          <span class="count">{step + 1} of {group.length}</span>
+        {:else if question?.total && question.total > 1}
           <span class="count">{question.index} of {question.total}</span>
         {:else if asks.length > 1}<span class="count">1 of {asks.length}</span>{/if}
       </div>
@@ -256,7 +308,7 @@
           <ol class="options">
             {#each options as option, i (option)}
               <li>
-                <button type="button" class:hl={i === highlight} onmouseenter={() => (highlight = i)} onclick={() => answer(option)}>
+                <button type="button" class:hl={i === highlight} class:chosen={draft === option} onmouseenter={() => (highlight = i)} onclick={() => answer(option)}>
                   <span class="num">{i + 1}</span>{option}
                 </button>
               </li>
@@ -286,6 +338,9 @@
           </div>
         {/if}
         <div class="actions">
+          {#if step > 0}
+            <button type="button" class="btn back" onclick={back}><Icon name="chevron-left" size={13} />Back <kbd>←</kbd></button>
+          {/if}
           <button type="button" class="btn" onclick={skip}>Skip <kbd>Esc</kbd></button>
         </div>
       {/if}
@@ -298,13 +353,15 @@
     position: relative;
     /* Under the box (z-index 1), so it rises out from behind the composer's top edge. */
     z-index: 0;
-    margin-bottom: 0.57rem;
+    margin-bottom: 0;
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
     border-block-color: var(--float-border-top) var(--float-border-bottom);
-    border-radius: 18px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    /* Joins the composer below into one surface: the composer's top edge is the rule between them. */
+    border-bottom: none;
+    border-radius: var(--radius-float) var(--radius-float) 0 0;
+    box-shadow: var(--shadow-pop);
   }
   /* More asks waiting: the edges of the cards behind peek out above this one. */
   .ask.stacked::before,
@@ -446,7 +503,7 @@
     display: inline-flex;
     align-items: center;
     border-radius: var(--radius-pill);
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--wash-2);
   }
   .always :global(.dropdown-trigger.ask-pick) {
     max-width: 14rem;
@@ -456,13 +513,13 @@
   }
   .always :global(.dropdown-trigger.ask-pick:hover),
   .always :global(.dropdown-trigger.ask-pick[data-state="open"]) {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wash-3);
   }
   .always .btn {
     background: none;
   }
   .always .btn:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wash-3);
   }
   .btn {
     display: inline-flex;
@@ -472,14 +529,14 @@
     border-radius: var(--radius-pill);
     height: var(--ctrl-h, 2rem);
     padding: 0 0.86rem;
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--wash-2);
     color: var(--text);
     font-size: var(--text-label-size);
     font-weight: 600;
     cursor: pointer;
   }
   .btn:hover {
-    background: rgba(255, 255, 255, 0.11);
+    background: var(--wash-3);
   }
   .btn.danger {
     margin-right: auto;
@@ -500,7 +557,7 @@
   kbd {
     padding: 0.05rem 0.3rem;
     border-radius: var(--radius-xs);
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wash-3);
     font-family: inherit;
     font-size: 0.66rem;
     font-weight: 500;
@@ -536,6 +593,18 @@
   .options button.hl {
     background: var(--sidebar-active);
   }
+  /* A question already answered, revisited with Back. */
+  .options button.chosen {
+    color: var(--accent);
+  }
+  .options button.chosen .num {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .btn.back {
+    margin-right: auto;
+    gap: 0.2rem;
+  }
   .num {
     width: 1.29rem;
     height: 1.29rem;
@@ -544,7 +613,7 @@
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-xs);
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--wash-2);
     color: var(--text-dim);
     font-size: 0.72rem;
     font-variant-numeric: tabular-nums;
@@ -555,7 +624,7 @@
   }
   .other.free {
     margin-top: 0.43rem;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
   }
   .other input {
     flex: 1;

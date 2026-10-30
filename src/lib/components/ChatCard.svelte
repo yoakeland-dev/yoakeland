@@ -64,91 +64,205 @@
   );
 </script>
 
-<div class="tip-title">{sessionTitle(s)}</div>
-<ul class="tip-list">
-  {#if activity}
-    <li class="activity {status}">
-      <span class="tip-icon"><Icon name={STATUS_ICON[status]} size={13} /></span>
-      <span class="grow">{activity}</span>
-    </li>
-    {#if status === "working" && since}
-      <li><span class="tip-icon"><Icon name="clock" size={13} /></span><span class="grow">Running for {relTime(since, app.now)}</span></li>
+<div class="card">
+  <div class="head">
+    <span class="state {status}" aria-hidden="true">
+      {#if status === "action"}<span class="lamp"></span>{:else}<Icon name={STATUS_ICON[status]} size={14} />{/if}
+    </span>
+    <span class="title">{sessionTitle(s)}</span>
+    {#if status === "working" && since}<span class="age">{relTime(since, app.now)}</span>{/if}
+  </div>
+  {#if activity}<p class="activity">{activity}</p>{/if}
+
+  <dl class="facts">
+    {#if projectPath === CHAT_PROJECT}
+      <dt>Where</dt>
+      <dd>Chat{#if s.workspaceBytes} <span class="dim">· {fileSize(s.workspaceBytes)} of files</span>{/if}</dd>
+    {:else if projectPath}
+      <dt>Project</dt>
+      <dd>{server?.projectLabel(projectPath)}</dd>
     {/if}
-  {/if}
-  {#if projectPath === CHAT_PROJECT}
-    <li>
-      <span class="tip-icon"><Icon name="message-circle" size={13} /></span>
-      <span class="grow">Chat{#if s.workspaceBytes} <span class="tip-dim">· {fileSize(s.workspaceBytes)} of files</span>{/if}</span>
-    </li>
-  {:else if projectPath}<li><span class="tip-icon"><Icon name="folder" size={13} /></span><span class="grow">{server?.projectLabel(projectPath)}</span></li>{/if}
-  {#if git}
-    <li>
-      <span class="tip-icon"><Icon name="git-branch" size={13} /></span>
-      <span class="grow">
-        {git.detached ? "detached" : git.branch}
+    {#if git}
+      <dt>Branch</dt>
+      <dd class="branch">
+        <span class="name">{git.detached ? "detached" : git.branch}</span>
         {#if git.dirtyFiles}<span class="dirty">±{git.dirtyFiles}</span>{/if}
-        {#if git.hasUpstream && git.ahead}<span class="tip-dim">↑{git.ahead}</span>{/if}
-        {#if git.hasUpstream && git.behind}<span class="tip-dim">↓{git.behind}</span>{/if}
-      </span>
-    </li>
-  {/if}
+        {#if git.hasUpstream && git.ahead}<span class="dim">↑{git.ahead}</span>{/if}
+        {#if git.hasUpstream && git.behind}<span class="dim">↓{git.behind}</span>{/if}
+      </dd>
+    {/if}
+    {#if server}
+      <dt>Server</dt>
+      <dd><ServerAvatar name={server.label} seed={server.serverId} size={13} /><span class="name">{server.label}</span></dd>
+    {/if}
+    {#if model}
+      <dt>Model</dt>
+      <dd>
+        {#if model.icon}<LobeIcon name={model.icon} variant="mono" fallback="openrouter" size={13} />{:else}<Icon name="brain" size={13} />{/if}
+        <span class="name">{model.title}</span>
+      </dd>
+    {/if}
+    {#if ring.kind === "ok" && ring.pct !== null}
+      <dt>Context</dt>
+      <dd class="meter-row">
+        <span class="meter" class:high={ring.pct >= 85}><i style:width="{Math.min(100, ring.pct)}%"></i></span>
+        <span>{ring.estimated ? "~" : ""}{ring.pct}%</span>
+        <span class="dim">{shortNum(ring.used)} / {shortNum(ring.limit)}</span>
+      </dd>
+    {/if}
+    {#if spend?.sessionTotalUsd}
+      <dt>Spend</dt>
+      <dd>
+        {usd(spend.sessionTotalUsd, spend.sessionCostUnknown)}
+        {#if server?.sessionCapUsd}<span class="dim">of {usd(server.sessionCapUsd)} cap</span>{/if}
+      </dd>
+    {/if}
+  </dl>
+
   {#if unsandboxed}
-    <li class="warn">
-      <span class="tip-icon"><Icon name="warning" size={13} /></span>
-      <span class="grow">No sandbox{shellOff ? " · bash and terminals off" : ""}</span>
-    </li>
+    <div class="alert"><Icon name="warning" size={13} />No sandbox{shellOff ? " · bash and terminals off" : ""}</div>
   {/if}
-  {#if server}<li><span class="tip-icon"><ServerAvatar name={server.label} seed={server.serverId} size={13} /></span><span class="grow">{server.label}</span></li>{/if}
-  {#if model}
-    <li>
-      <span class="tip-icon">{#if model.icon}<LobeIcon name={model.icon} variant="mono" fallback="openrouter" size={13} />{:else}<Icon name="brain" size={13} />{/if}</span>
-      <span class="grow">{model.title}</span>
-    </li>
+  {#if busyTerminals || syncing}
+    <div class="foot">
+      {#if busyTerminals}<Icon name="terminal-2" size={12} />{busyTerminals} command{busyTerminals === 1 ? "" : "s"} running{/if}
+      {#if syncing}Syncing with the server…{/if}
+    </div>
   {/if}
-  {#if ring.kind === "ok" && ring.pct !== null}
-    <li>
-      <span class="tip-icon"><span class="tip-ring" style="--pct: {ring.pct}"></span></span>
-      <span class="grow">{ring.estimated ? "~" : ""}{ring.pct}% context <span class="tip-dim">· {shortNum(ring.used)} / {shortNum(ring.limit)}</span></span>
-    </li>
-  {/if}
-  {#if spend?.sessionTotalUsd}
-    <li>
-      <span class="tip-icon"><Icon name="coin" size={13} /></span>
-      <span class="grow">
-        {usd(spend.sessionTotalUsd, spend.sessionCostUnknown)} this session
-        {#if server?.sessionCapUsd}<span class="tip-dim">· cap {usd(server.sessionCapUsd)}</span>{/if}
-      </span>
-    </li>
-  {/if}
-  {#if busyTerminals}
-    <li><span class="tip-icon"><Icon name="terminal-2" size={13} /></span><span class="grow">{busyTerminals} command{busyTerminals === 1 ? "" : "s"} running</span></li>
-  {/if}
-</ul>
-{#if syncing}<div class="tip-dim tip-foot">Syncing with the server…</div>{/if}
+</div>
 
 <style>
-  .dirty {
+  .card {
+    display: grid;
+    gap: 0.6rem;
+    width: 19rem;
+    max-width: 100%;
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .state {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--sidebar-fg-dim);
+  }
+  .state.action {
     color: var(--warning);
   }
-  .warn,
-  .warn .tip-icon {
-    color: var(--danger);
-  }
-  .activity.action .tip-icon {
-    color: var(--warning);
-  }
-  .activity.finished .tip-icon {
+  .state.finished {
     color: var(--success);
   }
-  .activity.working .tip-icon {
+  .state.working {
     color: var(--info);
   }
-  /* The one line that can be long (an ask's text): wrap it instead of clipping. */
-  .activity .grow {
-    white-space: normal;
+  .title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: var(--text-body-size);
+  }
+  .age {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--info);
+    padding: 0 0.4rem;
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--info) 14%, transparent);
+  }
+  /* What it is doing now: the one line that can be long (an ask's text), so it wraps, capped. */
+  .activity {
+    margin: -0.25rem 0 0;
+    padding-left: calc(14px + 0.5rem);
+    color: var(--text-dim);
     display: -webkit-box;
     -webkit-line-clamp: 3;
     line-clamp: 3;
     -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.35rem 0.9rem;
+    align-items: center;
+    margin: 0;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--panel-border);
+  }
+  .facts dt {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+  }
+  .facts dd {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    margin: 0;
+  }
+  .facts dd > :global(svg) {
+    flex-shrink: 0;
+    color: var(--text-dim);
+  }
+  .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dim {
+    color: var(--text-dim);
+  }
+  .dirty {
+    color: var(--warning);
+  }
+  .branch {
+    font-variant-numeric: tabular-nums;
+  }
+  .meter-row {
+    font-variant-numeric: tabular-nums;
+  }
+  .meter {
+    flex: 1;
+    min-width: 2rem;
+    height: 4px;
+    border-radius: var(--radius-pill);
+    background: var(--wash-3);
+    overflow: hidden;
+  }
+  .meter i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--info);
+  }
+  .meter.high i {
+    background: var(--warning);
+  }
+  .alert {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
+  }
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--text-dim);
+    font-size: 0.72rem;
   }
 </style>

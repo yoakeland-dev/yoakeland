@@ -26,7 +26,7 @@
   import BrowserPanel from "./sidebar/BrowserPanel.svelte";
   import SnapshotsPanel from "./sidebar/SnapshotsPanel.svelte";
   import DiffsPanel from "./sidebar/DiffsPanel.svelte";
-  import ExplorerPanel from "./sidebar/ExplorerPanel.svelte";
+  import Lazy from "./Lazy.svelte";
   import GitPanel from "./sidebar/GitPanel.svelte";
   import SubagentsPanel from "./sidebar/SubagentsPanel.svelte";
   import EmptyState from "./sidebar/EmptyState.svelte";
@@ -241,7 +241,9 @@
       {@const sidPanel = server?.chatSidebarPanelBySession[sid]}
       {@const sidSwapped = !!server?.chatSidebarSwappedBySession[sid]}
       {#each PANELS as p (p.id)}
-        {#if seen[p.id]}
+        <!-- Another chat's browser and editors keep their pages and unsaved edits; the stateless panels
+             (changes, history, subagents) are rebuilt when you come back, rather than kept for every chat. -->
+        {#if seen[p.id] && (here || p.id === "browser" || p.id === "explorer")}
           <div class="pane" class:keep-layout={p.id === "browser"} hidden={!here || p.id !== panel}>
             {#if p.id === "browser"}
               <BrowserPanel sessionId={sid} />
@@ -258,7 +260,7 @@
             {:else if p.id === "diffs"}
               <DiffsPanel sessionId={sid} projectPath={sidProject} visible={here && open && p.id === sidPanel} />
             {:else if p.id === "explorer"}
-              <ExplorerPanel sessionId={sid} projectPath={sidProject} wide={sidSwapped} visible={here && open && p.id === sidPanel} />
+              <Lazy load={() => import("./sidebar/ExplorerPanel.svelte")} props={{ sessionId: sid, projectPath: sidProject, wide: sidSwapped, visible: here && open && p.id === sidPanel }} />
             {:else if p.id === "git"}
               <GitPanel sessionId={sid} projectPath={sidProject} visible={here && open && p.id === sidPanel} />
             {/if}
@@ -422,7 +424,7 @@
     gap: 0.21rem;
     padding: 0.79rem;
     text-align: left;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--wash-1);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-lg);

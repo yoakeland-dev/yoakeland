@@ -145,7 +145,6 @@ export function sniffBrand(text: string): Brand | null {
 const KIND_BRAND: Record<string, Brand> = {
   cli_claude: "claude",
   cli_codex: "openai",
-  cli_gemini: "gemini",
   cli_deepseek: "deepseek",
   cli_kimi: "kimi",
   cli_grok: "grok",

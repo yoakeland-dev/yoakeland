@@ -7,7 +7,7 @@
   import PromptInput from "./PromptInput.svelte";
   import EmptyFeed from "./EmptyFeed.svelte";
   import PlanPanel from "./PlanPanel.svelte";
-  import TerminalPanel from "./TerminalPanel.svelte";
+  import Lazy from "./Lazy.svelte";
   import ChatSidebar from "./ChatSidebar.svelte";
   import Icon from "./Icon.svelte";
   import FindBar from "./FindBar.svelte";
@@ -15,6 +15,7 @@
   import { wallpaperGL } from "../wallpaperGL";
   import { viewport } from "../viewport.svelte";
   import { setChatFocus } from "../editorPresence.svelte";
+  import { workView } from "../workView.svelte";
 
   // `panelEl` lets +page.svelte measure this panel: the corner handle where
   // the right sidebar meets the terminal needs it for its clamp math.
@@ -134,6 +135,7 @@
     if (!id) return;
     const el = document.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"]`);
     if (!el) return;
+    workView.reveal = { id, q: chatFindQuery.trim().toLowerCase() };
     el.scrollIntoView({ block: "center", behavior: "smooth" });
     el.classList.add("chat-find-active");
     setTimeout(() => el.classList.remove("chat-find-active"), 1200);
@@ -247,7 +249,7 @@
     </div>
     <!-- Below the row, not inside it: opening it shrinks .row as a whole
          rather than carving into just .body or ChatSidebar. -->
-    <TerminalPanel {sessionId} />
+    <Lazy load={() => import("./TerminalPanel.svelte")} props={{ sessionId }} />
     {#if isSyncing}
       <div class="syncing-badge"><span class="spinner"></span> Syncing…</div>
     {/if}
@@ -323,7 +325,7 @@
   .body :global(.rows > *) {
     width: 100%;
     max-width: 56rem;
-    align-self: center;
+    margin-inline: auto;
   }
   .wallpaper {
     position: absolute;

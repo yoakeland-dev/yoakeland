@@ -27,6 +27,8 @@ interface YoakeBridge {
   close(): Promise<void>;
   getPathForFile(file: File): string;
   platform: string;
+  arch: string;
+  versions: { electron: string; chrome: string; node: string };
   chrome: { overlay?: boolean; trafficLights?: { w: number; h: number } };
   setWindowChrome(on: boolean): Promise<void>;
   setCloseHook(on: boolean): Promise<void>;
@@ -43,6 +45,11 @@ interface YoakeBridge {
 const bridge = typeof window !== "undefined" ? (window as { yoake?: YoakeBridge }).yoake : undefined;
 
 export const isDesktop = !!bridge;
+
+/** Runtime details for the About dialog and bug reports. */
+export const buildInfo: [string, string][] = bridge
+  ? [["Electron", bridge.versions.electron], ["Chromium", bridge.versions.chrome], ["Node", bridge.versions.node], ["Platform", `${bridge.platform} ${bridge.arch}`]]
+  : [["Browser", typeof navigator === "undefined" ? "" : navigator.userAgent]];
 
 function shell(): YoakeBridge {
   if (!bridge) throw new Error("not running in the desktop shell");

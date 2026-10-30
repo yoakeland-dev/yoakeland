@@ -8,6 +8,7 @@
 import { app } from "./state.svelte";
 import { navigateSessionHistory, newChat } from "./ipc";
 import { sessionModes, chooseMode } from "./modes";
+import { toggleLatestWork } from "./workView.svelte";
 
 export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -91,6 +92,8 @@ export const ACTIONS: KeyAction[] = [
   { id: "chat.model", label: "Change model", group: "Chat", scope: "global", defaults: ["Mod+Shift+M"],
     run: withChat((s) => (app.modelPickerRequest = { sessionId: s, at: Date.now() })) },
   { id: "chat.mode", label: "Cycle mode", group: "Chat", scope: "global", defaults: ["Mod+."], run: withChat(cycleMode) },
+  { id: "chat.toggleWork", label: "Open or close the latest reply's work", group: "Chat", scope: "global", defaults: ["Mod+Shift+O"],
+    run: withChat((s) => toggleLatestWork(s)) },
   { id: "chat.find", label: "Find in chat", group: "Chat", scope: "chat", defaults: ["Mod+F"] },
   ...Array.from({ length: 9 }, (_, i): KeyAction => ({
     id: `chat.pinned${i + 1}`, label: `Open pinned chat ${i + 1}`, group: "Chat", scope: "global", defaults: [`Mod+${i + 1}`],

@@ -235,8 +235,16 @@ export interface SessionHistoryData {
   messages?: HistoryMessage[];
 }
 
+/** How a server's avatar is drawn: no name = initials, no hue = derived from serverId.
+ * `name` is a key in serverIcons.ts. */
+export interface ServerIcon {
+  name?: string;
+  hue?: number;
+}
+
 export interface ServerIdentityData {
   identity: string;
+  icon?: ServerIcon;
   serverId?: string;
   version?: string;
   /** This connection is held to the paired-device scope (a phone's code). Absent: full access. */
@@ -303,13 +311,13 @@ export type CliKind =
   | "cli_cursor"
   | "cli_kimi"
   | "cli_opencode"
-  | "cli_gemini"
   | "cli_grok"
   | "cli_deepseek"
   | "cli_amp"
   | "cli_pi"
   | "cli_ohmypi";
-export type ProviderKind = "api_key" | CliKind;
+// "cli_acp": any ACP agent the user points at by command (see ProviderInfo.command).
+export type ProviderKind = "api_key" | CliKind | "cli_acp";
 export type HttpProvider = "anthropic" | "openai" | "openrouter";
 
 export interface ProviderInfo {
@@ -317,6 +325,14 @@ export interface ProviderInfo {
   kind: ProviderKind;
   httpProvider?: HttpProvider;
   authMethod?: "manual" | "oauth";
+  command?: string;
+  args?: string[];
+  /** What to show; `name` stays the stable id chats refer to. */
+  label?: string;
+  /** Account folder for Claude and Codex (CLAUDE_CONFIG_DIR / CODEX_HOME); empty is the CLI's default. */
+  configDir?: string;
+  /** Names of a custom agent's environment variables; values never leave the server. */
+  envKeys?: string[];
 }
 
 // Mirrors whichever upstream's own shape close to verbatim (SPEC.md §3.2 model_list).
@@ -504,6 +520,8 @@ export interface ProviderRateLimits {
   kind?: string;
   /** Subscription tier as the CLI reports it. */
   plan?: string;
+  /** The login's account email, when the CLI reports it. */
+  email?: string;
   /** RFC 3339. */
   updatedAt?: string;
   fiveHour?: RateWindow;

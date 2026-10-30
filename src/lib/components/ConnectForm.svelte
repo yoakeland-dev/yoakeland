@@ -422,7 +422,7 @@
   :global(.connect-tabs) {
     display: flex;
     gap: var(--space-half);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     padding: var(--space-half);
     border-radius: var(--radius-lg);
     margin-bottom: 1.29rem;
@@ -494,7 +494,7 @@
     justify-content: space-between;
     gap: 0.43rem;
     padding: 0.5rem 0.64rem;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-sm);
@@ -521,7 +521,7 @@
     align-items: center;
     justify-content: center;
     width: 2.71rem;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-sm);

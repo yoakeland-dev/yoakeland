@@ -19,7 +19,7 @@
   import DiagramViewer from "./DiagramViewer.svelte";
   import { openUrl } from "../platform";
   import { app } from "../state.svelte";
-  import { mentionLabels, mentionLabelsFor, MENTION_RE, withMentions, resolveFileRef } from "../mentions";
+  import { mentionLabels, mentionLabelsFor, knownSkills, MENTION_RE, withMentions, resolveFileRef } from "../mentions";
   import { morph, settleFade } from "../morph";
   import { fileIconUrl } from "../fileIcons";
 
@@ -53,7 +53,10 @@
   let markedWith: string[] | undefined;
 
   function render(t: string, fade: boolean) {
-    if (mentions) mentionLabels.current = labelsFor(t);
+    if (mentions) {
+      mentionLabels.current = labelsFor(t);
+      knownSkills.current = new Set(project ? app.active?.skillsByProject[project]?.skills.map((s) => s.name) : []);
+    }
     // The file list can land after a block was cached; link those blocks' file names then.
     const remark = files !== markedWith;
     markedWith = files;
@@ -76,6 +79,7 @@
         root.append(el);
       }
       morph(el, frag, fade);
+      markCodeIcons(el);
       markFileRefs(el);
       cache[i] = tok.raw;
     }
@@ -205,6 +209,12 @@
     }
   }
 
+  function markCodeIcons(el: Element) {
+    for (const ico of el.querySelectorAll<HTMLElement>(".code-ico[data-ext]")) {
+      ico.style.setProperty("--icon", `url("${fileIconUrl("a." + ico.dataset.ext)}")`);
+    }
+  }
+
   function labelsFor(t: string): Map<string, string> {
     return mentionLabelsFor([...t.matchAll(new RegExp(MENTION_RE.source, "g"))].map((m) => m[1]));
   }
@@ -260,9 +270,13 @@
 
   // A file mention opens that file (and its lines) in the chat's side panel explorer.
   function openMention(target: EventTarget | null): boolean {
-    const m = (target as HTMLElement).closest?.<HTMLElement>(".mention[data-path], .file-ref[data-path]");
+    const m = (target as HTMLElement).closest?.<HTMLElement>(".mention[data-path], .file-ref[data-path], .mention[data-chat]");
     const server = app.active;
     if (!m || !server) return false;
+    if (m.dataset.chat) {
+      server.openSession(m.dataset.chat);
+      return true;
+    }
     const sid = m.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId ?? server.currentSessionId;
     if (!sid) return false;
     const { path, from, to } = m.dataset;
@@ -368,7 +382,7 @@
   .markdown :global(code) {
     font-family: var(--code-font-family);
     font-size: var(--code-font-size);
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--wash-3);
     padding: 0.1em 0.35em;
     border-radius: var(--radius-sm);
   }
@@ -385,7 +399,35 @@
     cursor: pointer;
     transition: background-color calc(0.12s * var(--anim-speed, 1)) ease;
   }
-  .markdown :global(.mention:hover),
+  /* A chat mention: the chat icon, then the title cut short. */
+  .markdown :global(.mention.chat-ref) {
+    display: inline-block;
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+    padding-left: 0.35em;
+    background: var(--accent-dim);
+  }
+  .markdown :global(.mention.chat-ref)::before {
+    content: "";
+    display: inline-block;
+    width: 1.05em;
+    height: 1.05em;
+    margin-right: 0.3em;
+    vertical-align: -0.17em;
+    background: currentColor;
+    mask: var(--chat-icon) center / contain no-repeat;
+  }
+  /* A skill the message loads: the composer's green chip, not clickable. */
+  .markdown :global(.mention.skill-ref) {
+    padding: 0.1em 0.35em;
+    color: color-mix(in srgb, var(--success) 60%, var(--text));
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    cursor: default;
+  }
+  .markdown :global(.mention:not(.skill-ref):hover),
   .markdown :global(code.file-ref:hover) {
     background-color: color-mix(in srgb, var(--accent) 24%, transparent);
   }
@@ -445,6 +487,46 @@
   }
   .markdown :global(.code-lang) {
     font-family: var(--code-font-family);
+  }
+  .markdown :global(.code-ico) {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    background: var(--icon) no-repeat center / contain;
+  }
+  /* Settings > Text & code > Show line numbers: a gutter down the left edge, one number per source
+     line (wrapped lines hang beneath it). */
+  .markdown :global(.code-block) {
+    --gutter: calc(2ch + 1.7em);
+  }
+  .markdown :global(.code-block[data-digits="3"]) {
+    --gutter: calc(3ch + 1.7em);
+  }
+  .markdown :global(.code-block[data-digits="4"]) {
+    --gutter: calc(4ch + 1.7em);
+  }
+  .markdown :global(.code-block[data-digits="5"]) {
+    --gutter: calc(5ch + 1.7em);
+  }
+  .markdown :global(.code-block code) {
+    counter-reset: line;
+  }
+  .markdown :global(.cl) {
+    display: block;
+    counter-increment: line;
+  }
+  :global(:root[data-code-lines="on"] .markdown .cl) {
+    position: relative;
+    padding-left: var(--gutter);
+  }
+  :global(:root[data-code-lines="on"] .markdown .cl::before) {
+    content: counter(line);
+    position: absolute;
+    left: 0;
+    width: calc(var(--gutter) - 1.2em);
+    text-align: right;
+    color: color-mix(in srgb, var(--code-fg) 35%, transparent);
+    user-select: none;
   }
   /* The line count only says something when the code itself is hidden. */
   .markdown :global(.code-lines) {
@@ -595,10 +677,10 @@
   }
   .markdown :global(th) {
     font-weight: 700;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--wash-1);
   }
   .markdown :global(tbody tr:nth-child(even) td) {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--wash-1);
   }
   .markdown :global(img) {
     max-width: 100%;
@@ -616,7 +698,7 @@
     padding: 0.2em 0.5em;
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     color: var(--text-dim);
     cursor: pointer;
   }

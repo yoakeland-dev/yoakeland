@@ -27,7 +27,7 @@ app.setPath("userData", path.join(app.getPath("appData"), "com.aveline.yoake-gui
 app.commandLine.appendSwitch("enable-prefer-compositing-to-lcd-text");
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
 ]);
 
 /** @type {BrowserWindow | null} */
@@ -133,6 +133,26 @@ const emit = (channel, payload) => win?.webContents.send(channel, payload);
 const discord = createDiscordRpc({ onStatus: (s) => emit("yoake-discord-status", s) });
 handle("discord_configure", ({ config }) => discord.configure(config));
 handle("discord_presence", ({ activity }) => discord.setPresence(activity));
+
+// The ACP registry sends no CORS headers, so the page asks the main process. Only the launch
+// recipes the app can run (npx, uvx) are passed on; binary-only agents need a manual install.
+const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
+let acpRegistry = { at: 0, agents: [] };
+handle("acp_registry", async () => {
+  if (Date.now() - acpRegistry.at > 10 * 60_000) {
+    const res = await fetch(ACP_REGISTRY_URL, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`The registry answered ${res.status}`);
+    const { agents } = await res.json();
+    acpRegistry = {
+      at: Date.now(),
+      agents: agents.map(({ id, name, version, description, icon, website, distribution = {} }) => ({
+        id, name, version, description, icon, website,
+        npx: distribution.npx, uvx: distribution.uvx,
+      })),
+    };
+  }
+  return acpRegistry.agents;
+});
 handle("discord_status", () => discord.status());
 // The settings preview reads this to show the application's real icon and art.
 handle("discord_assets", ({ clientId }) => fetchDiscordApplication(clientId));

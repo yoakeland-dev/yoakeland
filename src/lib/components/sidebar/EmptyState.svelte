@@ -79,7 +79,7 @@
     align-items: center;
     gap: 0.29rem;
     padding: 0.29rem 0.71rem;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-sm);

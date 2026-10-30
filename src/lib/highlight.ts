@@ -50,6 +50,48 @@ for (const [name, lang] of Object.entries({
 hljs.registerAliases(["svelte", "vue"], { languageName: "xml" });
 hljs.registerAliases(["toml"], { languageName: "ini" });
 
+// Fence id -> [full name, a file extension the icon theme knows]. Unlisted ids show as written, with the generic file icon.
+const LANGS: Record<string, [string, string]> = {
+  bash: ["Bash", "sh"], sh: ["Shell", "sh"], zsh: ["Zsh", "sh"], shell: ["Shell", "sh"], console: ["Shell", "sh"],
+  c: ["C", "c"], cpp: ["C++", "cpp"], "c++": ["C++", "cpp"], csharp: ["C#", "cs"], cs: ["C#", "cs"],
+  css: ["CSS", "css"], scss: ["SCSS", "scss"], diff: ["Diff", "diff"], dockerfile: ["Dockerfile", "dockerfile"],
+  go: ["Go", "go"], ini: ["INI", "ini"], toml: ["TOML", "toml"], java: ["Java", "java"],
+  javascript: ["JavaScript", "js"], js: ["JavaScript", "js"], jsx: ["JSX", "jsx"],
+  typescript: ["TypeScript", "ts"], ts: ["TypeScript", "ts"], tsx: ["TSX", "tsx"],
+  json: ["JSON", "json"], jsonc: ["JSON", "json"], kotlin: ["Kotlin", "kt"], kt: ["Kotlin", "kt"], lua: ["Lua", "lua"],
+  makefile: ["Makefile", "makefile"], make: ["Makefile", "makefile"], markdown: ["Markdown", "md"], md: ["Markdown", "md"],
+  nix: ["Nix", "nix"], php: ["PHP", "php"], python: ["Python", "py"], py: ["Python", "py"], ruby: ["Ruby", "rb"], rb: ["Ruby", "rb"],
+  rust: ["Rust", "rs"], rs: ["Rust", "rs"], sql: ["SQL", "sql"], swift: ["Swift", "swift"],
+  xml: ["XML", "xml"], html: ["HTML", "html"], svelte: ["Svelte", "svelte"], vue: ["Vue", "vue"],
+  yaml: ["YAML", "yaml"], yml: ["YAML", "yml"], text: ["Text", "txt"], txt: ["Text", "txt"],
+};
+
+/** One .cl span per line, reopening any highlight span a line break cut through, so a line can
+ * carry its own number (a CSS counter, see Markdown.svelte) and wrapped lines stay under it. */
+function perLine(html: string): string {
+  const out: string[] = [];
+  const open: string[] = [];
+  let line = "";
+  for (const tok of html.split(/(<span[^>]*>|<\/span>|\n)/)) {
+    if (tok === "\n") {
+      out.push(`<span class="cl">${line}${"</span>".repeat(open.length)}\n</span>`);
+      line = open.join("");
+    } else {
+      if (tok.startsWith("<span")) open.push(tok);
+      else if (tok === "</span>") open.pop();
+      line += tok;
+    }
+  }
+  if (line !== open.join("")) out.push(`<span class="cl">${line}</span>`);
+  return out.join("");
+}
+
+const langLabel = (id: string) => {
+  const [name, ext] = LANGS[id || "text"] ?? [id, id];
+  // An <img src> wouldn't survive sanitize.ts; Markdown.svelte sets the icon from data-ext.
+  return `<span class="code-ico" data-ext="${ext}"></span><span class="code-lang">${escapeHtml(name)}</span>`;
+};
+
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const button = (cls: string, title: string, icons: string) =>
@@ -147,11 +189,11 @@ export const highlightCode: MarkedExtension = {
       const body = known ? hljs.highlight(text, { language: id, ignoreIllegals: true }).value : escapeHtml(text);
       const lines = text.split("\n").length;
       return (
-        `<div class="code-block"><div class="code-head">` +
+        `<div class="code-block" data-digits="${String(lines).length}"><div class="code-head">` +
         `<button type="button" class="code-toggle" title="Collapse or expand">${chevronIcon}` +
-        `<span class="code-lang">${escapeHtml(id || "text")}</span><span class="code-lines">${lines} line${lines === 1 ? "" : "s"}</span></button>` +
+        `${langLabel(id)}<span class="code-lines">${lines} line${lines === 1 ? "" : "s"}</span></button>` +
         `<button type="button" class="code-copy" title="Copy" aria-label="Copy code">${copyIcon}${checkIcon}</button></div>` +
-        `<div class="code-body"><div class="code-clip"><pre><code class="hljs${known ? ` language-${id}` : ""}">${body}</code></pre></div></div></div>\n`
+        `<div class="code-body"><div class="code-clip"><pre><code class="hljs${known ? ` language-${id}` : ""}">${perLine(body)}</code></pre></div></div></div>\n`
       );
     },
   },

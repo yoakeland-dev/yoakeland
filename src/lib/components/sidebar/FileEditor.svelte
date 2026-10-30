@@ -1,7 +1,7 @@
 <script lang="ts" module>
   import { EditorView, basicSetup } from "codemirror";
-  import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
-  import { Decoration, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
+  import { Compartment, EditorState, RangeSet, StateEffect, StateField } from "@codemirror/state";
+  import { Decoration, GutterMarker, gutterLineClass, keymap, lineNumberWidgetMarker, WidgetType, type DecorationSet } from "@codemirror/view";
   import type { FileDiff } from "../../types";
   import { matches } from "../../keybinds.svelte";
   import { indentWithTab } from "@codemirror/commands";
@@ -36,14 +36,17 @@
 
   // The agent's latest edit to this file (state.svelte.ts `Touched.diff`): added lines are tinted and the
   // lines it removed show struck through above where they were. Cleared when the doc is reloaded.
+  // `old` is the first removed line's number in the file before the edit, shown in the line-number gutter.
   class Removed extends WidgetType {
     lines: string[];
-    constructor(lines: string[]) {
+    old: number;
+    constructor(lines: string[], old: number) {
       super();
       this.lines = lines;
+      this.old = old;
     }
     eq(o: Removed) {
-      return o.lines.join("\n") === this.lines.join("\n");
+      return o.old === this.old && o.lines.join("\n") === this.lines.join("\n");
     }
     toDOM() {
       const el = document.createElement("div");
@@ -53,37 +56,76 @@
     }
   }
 
-  const showChanges = StateEffect.define<DecorationSet>();
+  // Gutter side of the same edit: a tinted number cell with a solid green bar for added lines and a dashed
+  // red one (with the old line number) for removed lines, so the two read apart without colour.
+  class Bar extends GutterMarker {
+    cls: string;
+    label: string;
+    constructor(cls: string, label = "") {
+      super();
+      this.cls = this.elementClass = cls;
+      this.label = label;
+    }
+    eq(o: Bar) {
+      return o.cls === this.cls && o.label === this.label;
+    }
+    toDOM() {
+      const el = document.createElement("div");
+      el.textContent = this.label;
+      return el;
+    }
+  }
+  const addedBar = new Bar("cm-gutter-added");
+
+  const showChanges = StateEffect.define<{ set: DecorationSet; bars: RangeSet<GutterMarker> }>();
+  const noChanges = { set: Decoration.none, bars: RangeSet.empty as RangeSet<GutterMarker> };
   const changes = StateField.define<DecorationSet>({
     create: () => Decoration.none,
     update(deco, tr) {
-      for (const e of tr.effects) if (e.is(showChanges)) return e.value;
+      for (const e of tr.effects) if (e.is(showChanges)) return e.value.set;
       return deco.map(tr.changes);
     },
     provide: (f) => EditorView.decorations.from(f),
+  });
+  const bars = StateField.define<RangeSet<GutterMarker>>({
+    create: () => RangeSet.empty,
+    update(set, tr) {
+      for (const e of tr.effects) if (e.is(showChanges)) return e.value.bars;
+      return set.map(tr.changes);
+    },
+    provide: (f) => [
+      gutterLineClass.from(f),
+      lineNumberWidgetMarker.of((view, widget) => (widget instanceof Removed ? new Bar("cm-gutter-removed", widget.lines.map((_, i) => widget.old + i).join("\n")) : null)),
+    ],
   });
 
   /** The first changed line (1-based) and the decorations for `diff` against `state`'s doc. */
   function changeDecorations(state: EditorState, diff: FileDiff | undefined) {
     const marks: { from: number; deco: Decoration; side: number }[] = [];
+    const barMarks: ReturnType<GutterMarker["range"]>[] = [];
     let first = 0;
     const doc = state.doc;
     for (const h of diff?.hunks ?? []) {
       let ln = h.newStart;
+      let old = h.oldStart;
       let gone: string[] = [];
       const flush = () => {
         if (!gone.length) return;
         const at = ln > doc.lines ? doc.length : doc.line(Math.max(ln, 1)).from;
-        marks.push({ from: at, deco: Decoration.widget({ widget: new Removed(gone), block: true, side: -1 }), side: -1 });
+        marks.push({ from: at, deco: Decoration.widget({ widget: new Removed(gone, old - gone.length), block: true, side: -1 }), side: -1 });
         first ||= Math.min(Math.max(ln, 1), doc.lines);
         gone = [];
       };
       for (const l of h.lines) {
-        if (l.type === "-") gone.push(l.content);
-        else {
+        if (l.type === "-") {
+          gone.push(l.content);
+          old++;
+        } else {
+          if (l.type === " ") old++;
           flush();
           if (l.type === "+" && ln >= 1 && ln <= doc.lines) {
             marks.push({ from: doc.line(ln).from, deco: Decoration.line({ class: "cm-added" }), side: 0 });
+            barMarks.push(addedBar.range(doc.line(ln).from));
             first ||= ln;
           }
           ln++;
@@ -92,7 +134,7 @@
       flush();
     }
     marks.sort((a, b) => a.from - b.from || a.side - b.side);
-    return { set: Decoration.set(marks.map((m) => m.deco.range(m.from)), true), first };
+    return { set: Decoration.set(marks.map((m) => m.deco.range(m.from)), true), bars: RangeSet.of(barMarks, true), first };
   }
 
   const theme = EditorView.theme({
@@ -106,7 +148,25 @@
     },
     "&": { height: "100%", color: "var(--code-fg, var(--text))", backgroundColor: "var(--code-bg, transparent)" },
     ".cm-scroller": { fontFamily: "var(--code-font-family, ui-monospace, monospace)", fontSize: "var(--code-font-size, 0.8rem)" },
-    ".cm-gutters": { backgroundColor: "transparent", color: "var(--text-dim)", border: "none" },
+    ".cm-gutters": {
+      backgroundColor: "color-mix(in srgb, var(--text) 6%, var(--code-bg, Canvas))",
+      color: "var(--text-dim)",
+      border: "none",
+    },
+    // Thick bar down the left of the number cell: solid for added lines, dashed for removed ones.
+    ".cm-lineNumbers .cm-gutter-added, .cm-lineNumbers .cm-gutter-removed": { whiteSpace: "pre" },
+    ".cm-lineNumbers .cm-gutter-added": {
+      backgroundColor: "color-mix(in srgb, var(--success, #3fb950) 22%, transparent)",
+      backgroundImage: "linear-gradient(var(--success, #3fb950), var(--success, #3fb950))",
+      backgroundSize: "4px 100%",
+      backgroundRepeat: "no-repeat",
+    },
+    ".cm-lineNumbers .cm-gutter-removed": {
+      backgroundColor: "color-mix(in srgb, var(--error, #e5484d) 22%, transparent)",
+      backgroundImage: "linear-gradient(to bottom, var(--error, #e5484d) 62%, transparent 0)",
+      backgroundSize: "4px 0.9rem",
+      backgroundRepeat: "repeat-y",
+    },
     ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "color-mix(in srgb, var(--accent) 7%, transparent)" },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
       backgroundColor: "color-mix(in srgb, var(--accent) 28%, transparent) !important",
@@ -121,7 +181,7 @@
     ".cm-textfield": {
       margin: "0.14rem 0.29rem 0.14rem 0",
       padding: "0.21rem 0.5rem",
-      background: "rgba(255, 255, 255, 0.04)",
+      background: "var(--wash-1)",
       border: "1px solid var(--panel-border)",
       borderRadius: "var(--radius-sm)",
       color: "var(--text)",
@@ -132,7 +192,7 @@
       margin: "0.14rem 0.29rem 0.14rem 0",
       padding: "0.21rem 0.57rem",
       backgroundImage: "none",
-      background: "rgba(255, 255, 255, 0.06)",
+      background: "var(--wash-2)",
       border: "1px solid var(--panel-border)",
       borderRadius: "var(--radius-sm)",
       color: "var(--text)",
@@ -288,6 +348,7 @@
             syntaxHighlighting(highlight),
             language.of([]),
             changes,
+            bars,
             keymap.of([indentWithTab]),
             EditorView.updateListener.of((u) => {
               if (u.docChanged) dirty = true;
@@ -313,7 +374,7 @@
       if (desc) languageName = desc.name;
       if (desc) desc.load().then((support) => view?.dispatch({ effects: language.reconfigure(support) }));
     } else {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: r.content }, effects: showChanges.of(Decoration.none) });
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: r.content }, effects: showChanges.of(noChanges) });
     }
     dirty = false;
     conflict = null;
@@ -412,9 +473,9 @@
     const diff = edit?.diff;
     void version;
     if (!view) return;
-    const { set, first } = changeDecorations(view.state, diff);
+    const { first, ...next } = changeDecorations(view.state, diff);
     view.dispatch({
-      effects: [showChanges.of(set), ...(first && !untrack(() => dirty) ? [EditorView.scrollIntoView(view.state.doc.line(first).from, { y: "center" })] : [])],
+      effects: [showChanges.of(next), ...(first && !untrack(() => dirty) ? [EditorView.scrollIntoView(view.state.doc.line(first).from, { y: "center" })] : [])],
     });
   });
 
@@ -646,7 +707,7 @@
     background: color-mix(in srgb, var(--danger) 14%, transparent);
   }
   .banner button {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
     color: var(--text);
@@ -702,7 +763,7 @@
     width: 100%;
     margin-bottom: var(--space-2);
     padding: 0.29rem 0.5rem;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
     color: var(--text);

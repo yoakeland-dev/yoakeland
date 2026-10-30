@@ -38,7 +38,7 @@
 
 <style>
   .btn {
-    --bg: rgba(255, 255, 255, 0.06);
+    --bg: var(--wash-2);
     --bd: var(--panel-border);
     --bdt: var(--panel-border-top);
     --bdb: var(--panel-border-bottom);

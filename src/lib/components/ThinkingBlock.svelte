@@ -6,9 +6,10 @@
   let { text }: { text: string } = $props();
 
   let open = $state(false);
+  let opened = $state(false);
 </script>
 
-<button class="thinking-toggle" onclick={() => (open = !open)}>
+<button class="thinking-toggle" onclick={() => (open = !open, (opened = true))}>
   <span class="icon-slot">
     <span class="brain-icon"><Icon name="brain" size={14} /></span>
     <span class="chevron-icon" class:open><Icon name="chevron-right" size={14} /></span>
@@ -17,7 +18,7 @@
 </button>
 <div class="accordion" class:open>
   <div class="accordion-inner">
-    <pre class="thinking scroll-cap selectable" {@attach scrollFade}>{text.trimEnd()}</pre>
+    {#if opened}<pre class="thinking scroll-cap selectable" {@attach scrollFade}>{text.trimEnd()}</pre>{/if}
   </div>
 </div>
 

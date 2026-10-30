@@ -22,6 +22,7 @@
     signInOpenRouter,
   } from "../ipc";
   import { basename } from "../format";
+  import { fmtVersion } from "../serverVersion";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
   import { CLI_AGENTS } from "../modelVendor";
   import { BRANDS, providerBrand } from "../usage";
@@ -373,7 +374,7 @@
                 <span class="mark bare"><ServerAvatar name={server.label} seed={server.serverId} size={34} /></span>
                 <span class="text">
                   <span class="title">{server.label}</span>
-                  <span class="meta">{address(server.connectionId)}{server.serverStatus?.version ? ` · v${server.serverStatus.version}` : ""}</span>
+                  <span class="meta">{address(server.connectionId)}{server.serverStatus?.version ? ` · ${fmtVersion(server.serverStatus.version)}` : ""}</span>
                 </span>
                 <span class="state good"><Icon name="circle-check" size={18} /></span>
               </div>

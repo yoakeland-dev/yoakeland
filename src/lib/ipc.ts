@@ -1,6 +1,6 @@
 import { askConfirm } from "./confirm.svelte";
 import { chooseMode, sessionModes } from "./modes";
-import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerStatus, TreeEntry, ContextBreakdown } from "./types";
+import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerIcon, ServerStatus, TreeEntry, ContextBreakdown } from "./types";
 import {
   app,
   CHAT_PROJECT,
@@ -40,6 +40,22 @@ export async function loadCustomThemes(): Promise<string | null> {
 /** A file inside the themes folder (seeded with an example if empty), so revealing it opens the folder. */
 export async function themesRevealPath(): Promise<string> {
   return invoke<string>("themes_reveal_path");
+}
+
+/** An agent in the public ACP registry that the app can launch (npx or uvx). */
+export interface AcpRegistryAgent {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  icon?: string;
+  website?: string;
+  npx?: { package: string; args?: string[] };
+  uvx?: { package: string; args?: string[] };
+}
+
+export async function acpRegistry(): Promise<AcpRegistryAgent[]> {
+  return invoke<AcpRegistryAgent[]>("acp_registry");
 }
 
 // --- Liveness (§2a) ---
@@ -512,7 +528,7 @@ export async function connectLocalUnix(opts: SpawnUnixServerOpts): Promise<Conne
       await spawnDetachedUnixServer(opts);
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 60));
         if (await probeUnix(opts.socketPath)) break;
       }
     }
@@ -1575,6 +1591,11 @@ export function setRemotePassword(connectionId: ConnectionId, password: string) 
 /** Sets the server's own display name; not a security boundary, so this works over any transport. */
 export function setServerIdentity(connectionId: ConnectionId, name: string) {
   void send(connectionId, { type: "set_server_identity", data: { name } });
+}
+
+/** Sets the server's avatar for every client; an empty icon resets to initials and the derived colour. */
+export function setServerIcon(connectionId: ConnectionId, icon: ServerIcon) {
+  void send(connectionId, { type: "set_server_identity", data: { icon } });
 }
 
 // ---- Per-person tokens (§3.1), local-socket-only, like remote-access ----

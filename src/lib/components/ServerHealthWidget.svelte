@@ -3,6 +3,7 @@
   // Health snapshot comes from each server's ping (SPEC.md §2a status).
   import { Popover } from "bits-ui";
   import { app, type ServerState } from "../state.svelte";
+  import { fmtVersion } from "../serverVersion";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
 
@@ -97,7 +98,7 @@
                   <span class="sb-row-name">{s.label}</span>
                   <span class="sb-row-meta">
                     {#if st}
-                      <span class="dot"></span>up {uptime(st.uptimeSec)}{#if st.version}&nbsp;· v{st.version}{/if}
+                      <span class="dot"></span>up {uptime(st.uptimeSec)}{#if st.version}&nbsp;· {fmtVersion(st.version)}{/if}
                     {:else if s.connectionStatus === "connected"}
                       Waiting for its first status…
                     {:else}
@@ -208,11 +209,12 @@
     background: var(--success);
   }
   :global(.servers-panel) {
-    width: min(30rem, 92vw);
+    width: min(23rem, 92vw);
   }
   .srv-row .sb-row-main {
     align-items: flex-start;
-    padding-block: 0.5rem;
+    padding-block: 0.3rem;
+    gap: 0.6rem;
   }
   .srv-row .sb-row-text {
     gap: 0.14rem;
@@ -238,7 +240,7 @@
   }
   .meters {
     flex-shrink: 0;
-    width: 8.5rem;
+    width: 7.5rem;
     display: flex;
     flex-direction: column;
     gap: 0.29rem;

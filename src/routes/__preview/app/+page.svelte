@@ -47,10 +47,13 @@
     s.connectionStatus = "connected";
     s.serverId = `mock-${cid}`;
     s.serverIdentity = identity;
+    // One server with an icon, one on the derived default, so both avatar paths show up.
+    if (mode === "remote") s.serverIcon = { name: "ghost", hue: 270 };
     s.recentProjects = Object.keys(projects);
     s.sessionsByProject = projects;
     s.providers = [
-      { name: "claude-subscription", kind: "cli_claude" },
+      { name: "claude-subscription", kind: "cli_claude", configDir: "~/.claude" },
+      { name: "claude-work", kind: "cli_claude", label: "Work", configDir: "~/.claude-work" },
       { name: "my-openrouter", kind: "api_key", httpProvider: "openrouter" },
       { name: "opencode", kind: "cli_opencode" },
     ];
@@ -85,6 +88,10 @@
         }),
         withModes("claude-sonnet-5", "Claude Sonnet 5", claudeModes),
         withModes("claude-haiku-4-5", "Claude Haiku 4.5", claudeModes),
+      ],
+      "claude-work": [
+        withModes("claude-opus-5-5", "Claude Opus 5.5", claudeModes),
+        withModes("claude-sonnet-5", "Claude Sonnet 5", claudeModes),
       ],
       "my-openrouter": [withModes("openai/gpt-5", "GPT-5", apiModes), withModes("google/gemini-3-pro", "Gemini 3 Pro", apiModes)],
       opencode: [withModes("opencode/big-pickle", "Big Pickle", acpModes)],
@@ -143,6 +150,15 @@
     { kind: "question", sessionId: "s1", projectPath: "/home/aveline/Projects/yoake/yoake-gui", turnId: "turn-3", toolCallId: "q1", question: "Which toggle style should the rows use?", options: ["Switch", "Checkbox"] },
     { kind: "permission", sessionId: "s1", projectPath: "/home/aveline/Projects/yoake/yoake-gui", turnId: "turn-3", toolCallId: "c3", toolName: "Edit", description: "Edit SettingsPanel.svelte", requiresAsk: true, cacheKey: "", diff: noteDiff, suggestions: [{ id: "e1", label: "Edits in `src/lib/components/**`" }, { id: "e2", label: "All edits" }] },
   ];
+  // ?asks=stacked: one ask_user_question call with three questions raised together ("<call>#<i>").
+  if (typeof location !== "undefined" && new URLSearchParams(location.search).get("asks") === "stacked") {
+    const base = { kind: "question" as const, sessionId: "s1", projectPath: "/home/aveline/Projects/yoake/yoake-gui", turnId: "turn-3", total: 3 };
+    local.pendingAsks = [
+      { ...base, toolCallId: "qq#0", index: 1, question: "Which toggle style should the rows use?", options: ["Switch", "Checkbox"] },
+      { ...base, toolCallId: "qq#1", index: 2, question: "Where should the setting live?", options: ["Appearance", "General", "Advanced"] },
+      { ...base, toolCallId: "qq#2", index: 3, question: "Anything else to change?", options: ["No, that's all", "Rename the heading"] },
+    ];
+  }
   // Status bar: CLI rate limits, server-side spend, a queued turn, a session cap.
   local.serverStatus = {
     ...local.serverStatus!,
@@ -151,11 +167,13 @@
       "claude-subscription": {
         kind: "cli_claude",
         plan: "max",
+        email: "aveline@example.com",
         updatedAt: iso(2),
         fiveHour: { usedPct: 55, resetsAt: iso(-120) },
         sevenDay: { usedPct: 84, resetsAt: iso(-60 * 24 * 3) },
         other: [{ windowMins: 10080, label: "Opus", usedPct: 31, resetsAt: iso(-60 * 24 * 3) }],
       },
+      "claude-work": { kind: "cli_claude", plan: "team", email: "aveline@corp.example", updatedAt: iso(3), fiveHour: { usedPct: 82, resetsAt: iso(-90) } },
       "codex-subscription": {
         kind: "cli_codex",
         plan: "free",
@@ -165,6 +183,17 @@
     },
     spend: { todayUsd: 3.1, monthUsd: 41.25 },
     budgets: [{ scope: "session", period: "total", limitUsd: 5 }],
+  };
+  // The same Claude login on the second server, probed a moment later: folds into one card.
+  remote.serverStatus = {
+    ...remote.serverStatus!,
+    rateLimits: {
+      "claude-subscription": {
+        kind: "cli_claude", plan: "max", email: "Aveline@example.com", updatedAt: iso(1),
+        fiveHour: { usedPct: 56, resetsAt: iso(-120) },
+        sevenDay: { usedPct: 84, resetsAt: iso(-60 * 24 * 3) },
+      },
+    },
   };
   local.gitStatusByProject = {
     "/home/aveline/Projects/yoake/yoake-gui": {
@@ -260,6 +289,8 @@
     {
       id: "m2",
       role: "assistant",
+      provider: "claude-subscription",
+      model: "claude-sonnet-5-5",
       text: "Sure — here's the row pattern I'd use:\n\n```ts\nexport function row(label: string, hint?: string) {\n  return { label, hint }; // one recipe everywhere\n}\n```",
       toolCalls: [],
       streaming: false,
@@ -282,12 +313,14 @@
       createdAt: now - 120_000,
       compaction: { kind: "summary", tokensBefore: 402_000, tokensAfter: 3_100 },
     },
-    { id: "m3", role: "user", text: "Rename the Subscriptions heading too.", toolCalls: [], streaming: false, createdAt: now - 60_000 },
+    { id: "m3", role: "user", text: "Rename the Subscriptions heading too, like we did in #[Fix login](chat:s2).", toolCalls: [], streaming: false, createdAt: now - 60_000 },
     // A native (cli_claude) turn: text, then Read, then Edit (with its diff),
     // then text, the same shape a reload rebuilds from session history.
     {
       id: "m4",
       role: "assistant",
+      provider: "claude-subscription",
+      model: "claude-opus-5-5",
       text: "Let me find it first.",
       toolCalls: [
         { toolCallId: "c1", name: "Read", args: { file_path: noteDiff.filePath }, native: true, kind: "read", title: "Read SettingsPanel.svelte", locations: [noteDiff.filePath], status: "done", output: "…", textOffset: 21 },

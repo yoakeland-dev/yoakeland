@@ -132,7 +132,7 @@
     padding: 0.75rem 0.85rem;
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.025);
+    background: var(--wash-1);
   }
   .head {
     display: flex;

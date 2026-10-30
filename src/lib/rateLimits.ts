@@ -2,7 +2,7 @@
 // read by the status bar's UsageWidget and the usage page.
 import type { ConnectionId, ServerState } from "./state.svelte";
 import { relTime } from "./format";
-import { CLI_AGENTS } from "./modelVendor";
+import { CLI_AGENTS, providerLabel } from "./modelVendor";
 import type { CliKind, ProviderRateLimits, RateWindow } from "./types";
 
 export interface Win {
@@ -15,9 +15,11 @@ export interface Card {
   id: string;
   cid: ConnectionId;
   srv: ServerState;
+  kind?: string;
   title: string;
   icon: string;
   plan?: string;
+  email?: string;
   updatedAt?: string;
   windows: Win[];
   peak?: Win;
@@ -39,7 +41,7 @@ function toWin(w: RateWindow, mins: number | undefined): Win {
     resetsAt: w.resetsAt || undefined,
   };
 }
-function windows(rl: ProviderRateLimits): Win[] {
+export function windows(rl: ProviderRateLimits): Win[] {
   return [
     ...(rl.fiveHour ? [toWin(rl.fiveHour, 300)] : []),
     ...(rl.sevenDay ? [toWin(rl.sevenDay, 7 * 1440)] : []),
@@ -52,17 +54,22 @@ export function limitCards(servers: ServerState[]): Card[] {
   for (const srv of servers) {
     for (const [name, rl] of Object.entries(srv.serverStatus?.rateLimits ?? {})) {
       const agent = CLI_AGENTS[rl.kind as CliKind];
-      // Older servers don't send `kind`; fall back to one card per name.
-      const id = `${srv.serverId ?? srv.connectionId}:${rl.kind ?? name}`;
+      // One card per account (provider name), so two logins of one agent don't collide.
+      const id = `${srv.serverId ?? srv.connectionId}:${name}`;
       if (out.some((c) => c.id === id)) continue;
+      const kind = rl.kind ?? srv.providers.find((p) => p.name === name)?.kind;
+      const siblings = srv.providers.filter((p) => p.kind === kind);
+      const acct = siblings.length > 1 ? siblings.find((p) => p.name === name) : undefined;
       const ws = windows(rl);
       out.push({
         id,
         cid: srv.connectionId,
         srv,
-        title: agent?.title ?? name,
+        kind,
+        title: (agent?.title ?? name) + (acct ? ` · ${providerLabel(acct)}` : ""),
         icon: agent?.icon ?? "",
         plan: rl.plan,
+        email: rl.email,
         updatedAt: rl.updatedAt,
         windows: ws,
         peak: ws.reduce<Win | undefined>((a, w) => (!a || w.pct > a.pct ? w : a), undefined),

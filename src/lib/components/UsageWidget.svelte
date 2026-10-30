@@ -11,13 +11,18 @@
 
   let open = $state(false);
 
-  // One login shared by several remotes reports identical numbers; show it once with every
-  // remote stacked. ponytail: no account id on the wire, so matching usage is the proxy.
+  // One login shared by several remotes is shown once with every remote stacked: same agent and
+  // email when both report one, else (older servers) the same plan and reset times to the minute,
+  // since percentages drift between probes. The title is no match key: it carries a per-server
+  // account label.
+  const resets = (x: Card) => JSON.stringify([x.plan, x.windows.map((w) => [w.label, w.resetsAt?.slice(0, 16)])]);
+  const sameLogin = (a: Card, b: Card) =>
+    a.kind === b.kind &&
+    (a.email && b.email ? a.email.toLowerCase() === b.email.toLowerCase() : !!a.windows.length && resets(a) === resets(b));
   const cards = $derived.by(() => {
     const out: (Card & { ids: string[]; srvs: Card["srv"][] })[] = [];
     for (const c of limitCards(Object.values(app.servers))) {
-      const sig = (x: Card) => JSON.stringify([x.title, x.plan, x.windows]);
-      const same = c.windows.length ? out.find((o) => sig(o) === sig(c)) : undefined;
+      const same = out.find((o) => sameLogin(o, c));
       if (same) same.ids.push(c.id), same.srvs.push(c.srv);
       else out.push({ ...c, ids: [c.id], srvs: [c.srv] });
     }

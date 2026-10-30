@@ -16,7 +16,7 @@ const COMMANDS = new Set([
   "pair_tcp", "disconnect", "send_envelope", "spawn_detached_unix_server", "server_latest_release",
   "server_install", "read_text_file", "read_file_bytes", "load_credential", "store_credential",
   "oauth_listen", "oauth_wait", "oauth_wait_params", "oauth_cancel", "oauth_expect_state", "shell:notify", "shell:badge",
-  "discord_configure", "discord_presence", "discord_status", "discord_assets",
+  "discord_configure", "discord_presence", "discord_status", "discord_assets", "acp_registry",
 ]);
 
 const EVENTS = ["yoake-event", "yoake-log", "yoake-disconnected", "yoake-notification-open", "yoake-themes-changed", "yoake-close-requested", "yoake-discord-status", "yoake-guest-key"];
@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld("yoake", {
     return p;
   },
   platform: process.platform,
+  arch: process.arch,
+  versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
   chrome: chromeArg ? JSON.parse(chromeArg.slice("--yoake-chrome=".length)) : {},
   setCloseHook: (on) => call("shell:set_close_hook", { on }),
   closeAck: () => call("shell:close_ack"),

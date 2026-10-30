@@ -41,7 +41,7 @@
           collisionPadding={8}
           interactOutsideBehavior="defer-otherwise-ignore"
           escapeKeydownBehavior="defer-otherwise-ignore"
-          class="tooltip{typeof shown.content === 'string' ? '' : ' rich'}"
+          class="tooltip{typeof shown.content === 'string' ? '' : ' rich'}{shown.large ? ' large' : ''}"
         >
           {#if typeof shown.content === "string"}
             <span class="tooltip-text">{shown.content}</span>
@@ -74,6 +74,10 @@
     z-index: var(--z-tooltip);
     pointer-events: none;
     animation: floatIn var(--float-enter-duration) ease-out;
+  }
+  :global(.tooltip.large) {
+    font-size: var(--text-body-size);
+    padding: 0.4rem 0.7rem;
   }
   :global(.tooltip[data-state="closed"]) {
     animation: floatOut var(--float-exit-duration) ease-in;

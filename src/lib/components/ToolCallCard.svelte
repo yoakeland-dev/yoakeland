@@ -11,6 +11,8 @@
   let { call }: { call: ToolCallEntry } = $props();
 
   let expanded = $state(false);
+  // The body mounts on first open: collapsed cards otherwise carry their full args and output.
+  let opened = $state(false);
 
   const statusLabel: Record<ToolCallEntry["status"], string> = {
     requested: "queued",
@@ -44,7 +46,7 @@
 </script>
 
 <div class="card status-{call.status}">
-  <button class="head" onclick={() => (expanded = !expanded)}>
+  <button class="head" onclick={() => (expanded = !expanded, (opened = true))}>
     <span class="icon-slot">
       {#if flashDone}
         <span class="check-icon" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
@@ -65,6 +67,7 @@
   <div class="accordion" class:open={expanded}>
     <div class="accordion-inner">
       <div class="body">
+        {#if opened}
         {#if call.locations?.length}
           <div class="locations">
             {#each call.locations as loc (loc)}
@@ -85,6 +88,7 @@
         {#if call.error}
           <pre class="output error scroll-cap selectable" {@attach scrollFade}>{call.error}</pre>
         {/if}
+        {/if}
       </div>
     </div>
   </div>
@@ -100,14 +104,14 @@
     font-size: 0.75rem;
     padding: 0.07rem 0.43rem;
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     color: var(--text-dim);
   }
   .card {
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--wash-1);
     margin: 0.43rem 0;
     overflow: hidden;
   }
@@ -126,7 +130,7 @@
     transition: background calc(0.12s * var(--anim-speed, 1)) ease;
   }
   .head:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--wash-1);
   }
   /* Icon and chevron cross-fade on hover: resting state shows the tool, hover shows it's openable. */
   .icon-slot {

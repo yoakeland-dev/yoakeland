@@ -237,7 +237,7 @@
     padding: 0.8rem;
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.025);
+    background: var(--wash-1);
   }
   .add h4 {
     margin: 0;

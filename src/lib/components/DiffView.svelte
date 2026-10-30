@@ -92,7 +92,7 @@
   }
   .path {
     padding: 0.43rem 0.71rem;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--wash-2);
     color: var(--text-dim);
     border-bottom: 1px solid var(--panel-border);
   }
@@ -130,7 +130,7 @@
   .more {
     width: 100%;
     padding: 0.36rem;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border: none;
     border-top: 1px solid var(--panel-border);
     color: var(--accent);

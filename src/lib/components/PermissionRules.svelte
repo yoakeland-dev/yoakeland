@@ -134,7 +134,7 @@
     border-radius: var(--radius-sm);
   }
   li:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
   }
   .badge {
     flex-shrink: 0;
@@ -145,7 +145,7 @@
     font-size: 0.68rem;
     font-weight: 600;
     text-transform: uppercase;
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--wash-2);
     color: var(--text-dim);
   }
   .badge.allow {
@@ -197,7 +197,7 @@
     box-sizing: border-box;
     height: var(--ctrl-h);
     padding: 0 0.7rem;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--wash-2);
     border: 1px solid var(--panel-border);
     color: var(--text);
     border-radius: var(--radius-sm);

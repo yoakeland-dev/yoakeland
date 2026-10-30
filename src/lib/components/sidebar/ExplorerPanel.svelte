@@ -589,7 +589,7 @@
     color: var(--text-dim);
   }
   .quick:focus-within {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     border-color: var(--panel-border);
   }
   .quick input {
@@ -634,7 +634,7 @@
   }
   .tab.active {
     color: var(--text);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--wash-1);
     box-shadow: inset 0 -2px 0 var(--accent);
   }
   .tab-main {

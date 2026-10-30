@@ -1,6 +1,6 @@
 {
   "name": "yoake-gui",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "yoakeland desktop client",
   "type": "module",
   "scripts": {
@@ -88,6 +88,7 @@
     }
   },
   "dependencies": {
+    "@phosphor-icons/core": "2.1.1",
     "@replit/codemirror-lang-svelte": "^6.0.0",
     "jsqr": "^1.4.0"
   }
