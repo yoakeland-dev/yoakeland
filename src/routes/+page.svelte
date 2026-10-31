@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { app, RIGHT_SIDEBAR_MIN_WIDTH, TERMINAL_MIN_HEIGHT } from "$lib/state.svelte";
   import { windowControls } from "$lib/platform";
   import { wireEvents, autoConnect, loadCustomThemes } from "$lib/ipc";
@@ -18,10 +18,11 @@
   import Onboarding from "$lib/components/Onboarding.svelte";
   import { dispatchKeybind, dispatchMouseNav } from "$lib/keybinds.svelte";
   import { tip } from "$lib/tooltip.svelte";
-  import { viewport, drawerWidth } from "$lib/viewport.svelte";
+  import { viewport, showHome } from "$lib/viewport.svelte";
   import { swipe, commits, ownsHorizontalDrag } from "$lib/gestures";
-import { haptic } from "$lib/haptics";
-  import { initSheetDrag } from "$lib/sheets";
+  import { haptic } from "$lib/haptics";
+  import MobileBar from "$lib/components/MobileBar.svelte";
+  import MobileHome from "$lib/components/MobileHome.svelte";
 
   // Window chrome lives here instead of a dedicated title bar row, as floating
   // pieces over whatever surface is beneath them (see the layout tokens in
@@ -44,7 +45,7 @@ import { haptic } from "$lib/haptics";
   // own lifecycle (that's ServerState.sidebarSessionId, opened/closed from a
   // session row or the linked chat's own header).
   const linkedVisible = $derived(
-    !viewport.narrow && !!app.active?.sidebarSessionId && !app.rightSidebarCollapsed,
+    viewport.kind === "desktop" && !!app.active?.sidebarSessionId && !app.rightSidebarCollapsed,
   );
   const chromeSessionId = $derived(
     linkedVisible ? app.active!.sidebarSessionId! : app.active?.currentSessionId,
@@ -52,7 +53,7 @@ import { haptic } from "$lib/haptics";
 
   // The usage page and the extensions page share the chat panel's place; whichever was asked for last wins.
   $effect(() => {
-    if (app.showUsage) app.showExtensions = false;
+    if (app.showUsage) app.showExtensions = app.showDiagnostics = false;
   });
   let rightPanelEl = $state<HTMLElement | null>(null);
   let contentRowEl = $state<HTMLDivElement | null>(null);
@@ -160,64 +161,148 @@ import { haptic } from "$lib/haptics";
   // header reserve.
   app.applyWindowChrome();
 
-  // Phone layout: the sidebar is a drawer, dragged in from the left edge or out with the scrim.
+  // Phone layout: a stack of two screens. Home is the fleet list; the screen on top of it is a chat,
+  // or one of the pages (usage, extensions, diagnostics) that share the chat's place.
   $effect(() => {
     viewport.narrow;
     app.syncNarrow();
   });
-  // Picking a chat or a page is what you opened the drawer for.
-  let lastDest = "";
-  $effect(() => {
-    const dest = `${app.active?.currentSessionId}|${app.showUsage}|${app.showExtensions}`;
-    if (dest === lastDest) return;
-    lastDest = dest;
-    if (viewport.narrow) app.setSidebarCollapsed(true);
-  });
+  const pageTitle = $derived(
+    app.showUsage ? "Usage" : app.showExtensions ? "Extensions" : app.showDiagnostics ? "Diagnostics" : null,
+  );
+  const deep = $derived(viewport.narrow && (viewport.screen === "chat" || !!pageTitle));
   const toolsPage = $derived(
     viewport.narrow && !!chromeSessionId && !!app.active?.chatSidebarOpenBySession[chromeSessionId],
   );
-  // What "back" means right now: out of the tools page, or out of a page's sub-screen.
-  const goBack = $derived(
-    toolsPage
-      ? () => chromeSessionId && app.active?.toggleChatSidebar(chromeSessionId)
-      : viewport.narrow
-        ? viewport.back
-        : null,
+  const chatTitle = $derived(
+    (chromeSessionId && app.active?.sessionById.get(chromeSessionId)?.title) || "New chat",
   );
-  const drawerProgress = $derived(viewport.drawer ?? (app.sidebarCollapsed ? 0 : 1));
+  // One step back: out of the tools page, out of a page's sub-screen, then off the screen to Home.
+  function back() {
+    if (toolsPage) return void (chromeSessionId && app.active?.toggleChatSidebar(chromeSessionId));
+    if (viewport.back) return viewport.back();
+    app.showUsage = app.showExtensions = app.showDiagnostics = false;
+    showHome();
+  }
+  // Motion: one 0..1 progress (0 = top screen off to the right, 1 = fully in) drives the top screen, the
+  // parallax of Home beneath it (-24%) and its dim veil. Pushes, backs, programmatic changes and swipes all
+  // settle through settleTo(), so any of them can interrupt any other from where it currently is.
+  const DRAWER = "cubic-bezier(.32,.72,0,1)";
+  const OUT = "cubic-bezier(.23,1,.32,1)";
+  let topEl = $state<HTMLElement>();
+  let underEl = $state<HTMLElement>();
+  let dimEl = $state<HTMLElement>();
+  let prog = 0;
+  let anims: Animation[] = [];
+  let release: { ms: number; ease: string } | null = null;
+  const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const frame = (p: number) =>
+    reduced()
+      ? { top: { opacity: p, transform: "none" }, under: { transform: "none" }, dim: { opacity: 0 } }
+      : {
+          top: { opacity: 1, transform: `translateX(${(1 - p) * 100}%)` },
+          under: { transform: `translateX(${-24 * p}%)` },
+          dim: { opacity: 0.9 * p },
+        };
+  function place(p: number) {
+    if (!topEl || !underEl || !dimEl) return;
+    prog = p;
+    const f = frame(p);
+    topEl.style.transform = f.top.transform;
+    topEl.style.opacity = String(f.top.opacity);
+    topEl.style.visibility = p > 0 ? "visible" : "hidden";
+    underEl.style.transform = f.under.transform;
+    dimEl.style.opacity = String(f.dim.opacity);
+  }
+  let deepNow = false;
+  /** Where the top screen is right now, mid-flight included. */
+  function current() {
+    if (!anims.length || !topEl) return prog;
+    const m = new DOMMatrixReadOnly(getComputedStyle(topEl).transform);
+    return reduced() ? Number(getComputedStyle(topEl).opacity) : 1 - m.m41 / topEl.offsetWidth;
+  }
+  function settleTo(to: number, ms: number, ease: string) {
+    if (!topEl || !underEl || !dimEl) return;
+    const from = current();
+    anims.forEach((a) => a.cancel());
+    anims = [];
+    place(from);
+    topEl.style.visibility = "visible";
+    const speed = Number(getComputedStyle(document.documentElement).getPropertyValue("--anim-speed")) || 1;
+    const o = { duration: Math.max(1, ms * speed), easing: ease, fill: "forwards" as const };
+    const a = frame(from);
+    const b = frame(to);
+    anims = [
+      topEl.animate([a.top, b.top], o),
+      underEl.animate([a.under, b.under], o),
+      dimEl.animate([a.dim, b.dim], o),
+    ];
+    const mine = anims;
+    Promise.all(mine.map((x) => x.finished)).then(
+      () => {
+        if (anims !== mine) return;
+        anims = [];
+        place(to);
+        mine.forEach((x) => x.cancel());
+      },
+      () => {},
+    );
+  }
+  $effect(() => {
+    const on = deep;
+    untrack(() => {
+      deepNow = on;
+      if (!topEl) return;
+      topEl.inert = !on;
+      if (prog === (on ? 1 : 0) && !anims.length) return place(on ? 1 : 0);
+      const r = release;
+      release = null;
+      settleTo(on ? 1 : 0, r?.ms ?? (on ? 340 : 300), r?.ease ?? DRAWER);
+    });
+  });
+  $effect(() => {
+    if (!topEl) return;
+    untrack(() => place(deep ? 1 : 0));
+  });
+
   const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
-  // Swipe right from anywhere in the app: opens the drawer, or backs out of the tools page. Left
-  // to whatever already uses a sideways drag there (code blocks, terminals, fields).
-  const edge = {
+  // Swipe right anywhere on the screen to go back. Left to whatever already uses a sideways drag
+  // there (code blocks, terminals, fields). The screen follows the finger 1:1; on release it settles
+  // for a time scaled to the distance left.
+  const popBack = {
     axis: "x",
     start: (e: PointerEvent) => !ownsHorizontalDrag(e.target),
     accept: (d: number) => d > 0,
     onMove: (d: number) => {
-      if (!goBack) viewport.drawer = clamp01(d / drawerWidth());
-    },
-    onEnd: (d: number, v: number) => {
-      if (goBack) {
-        if (commits(d / innerWidth, v, 1)) (haptic(), goBack());
-      } else {
-        const open = commits(clamp01(d / drawerWidth()), v, 1);
-        if (open) haptic();
-        app.setSidebarCollapsed(!open);
+      if (anims.length) {
+        prog = current();
+        anims.forEach((a) => a.cancel());
+        anims = [];
       }
-      viewport.drawer = null;
+      const p = 1 - clamp01(d / innerWidth);
+      viewport.pop = 1 - p;
+      place(p);
     },
-    onCancel: () => (viewport.drawer = null),
-  } as const;
-  const shut = {
-    axis: "x",
-    accept: (d: number) => d < 0 && !app.sidebarCollapsed,
-    onMove: (d: number) => (viewport.drawer = clamp01(1 + d / drawerWidth())),
-    onEnd: (d: number, v: number) => {
-      const closed = commits(1 - clamp01(1 + d / drawerWidth()), -v, 1);
-      if (closed) haptic();
-      app.setSidebarCollapsed(closed);
-      viewport.drawer = null;
+    onEnd: async (d: number, v: number) => {
+      const m = clamp01(d / innerWidth);
+      viewport.pop = null;
+      const go = commits(m, v, 1);
+      const W = innerWidth;
+      const ms = Math.min(320, Math.max(160, ((go ? (1 - m) * W : m * W) / Math.max(Math.abs(v), 0.9))));
+      if (go) {
+        haptic();
+        release = { ms, ease: OUT };
+        back();
+        await tick();
+      }
+      release = null;
+      // Still on this screen (back only closed a sub-screen, or the swipe fell short): spring back.
+      if (deepNow || !go) settleTo(1, ms, OUT);
     },
-    onCancel: () => (viewport.drawer = null),
+    onCancel: () => {
+      viewport.pop = null;
+      settleTo(1, 200, OUT);
+    },
   } as const;
 
   // Discord Rich Presence is desktop-only and off by default. One effect covers both halves: the
@@ -232,7 +317,6 @@ import { haptic } from "$lib/haptics";
     void loadCustomThemes();
     void autoConnect();
     const stopNotifications = startNotifications();
-    const stopSheets = initSheetDrag();
 
     // "System" theme (Settings > Appearance) tracks this live instead of only
     // resolving once at startup.
@@ -246,7 +330,6 @@ import { haptic } from "$lib/haptics";
     window.addEventListener("mouseup", dispatchMouseNav);
     return () => {
       stopNotifications();
-      stopSheets();
       media.removeEventListener("change", onSchemeChange);
       window.removeEventListener("keydown", dispatchKeybind, true);
       window.removeEventListener("mouseup", dispatchMouseNav);
@@ -263,38 +346,44 @@ import { haptic } from "$lib/haptics";
   });
 </script>
 
+{#snippet page()}
+  {#if app.showDiagnostics}
+    <Lazy load={() => import("$lib/components/DiagnosticsPanel.svelte")} />
+  {:else if app.showExtensions}
+    <Lazy load={() => import("$lib/components/ExtensionsPanel.svelte")} />
+  {:else if app.showUsage}
+    <Lazy load={() => import("$lib/components/UsagePanel.svelte")} />
+  {:else if app.active?.currentSessionId}
+    <ChatPanel sessionId={app.active.currentSessionId} ownsChrome={!linkedVisible} />
+  {:else if !app.active}
+    <FirstServerPanel />
+  {/if}
+{/snippet}
+
 <div class="shell">
   <!-- Must stay the first element: see .titlebar-drag in app.css. -->
   <div class="titlebar-drag"></div>
-  {#if !app.onboarding}
-  {#if viewport.narrow}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="drawer-scrim" class:on={drawerProgress > 0} style:opacity={drawerProgress} {@attach swipe(() => shut)} onclick={() => app.setSidebarCollapsed(true)} role="presentation"></div>
-  {/if}
+  {#if !app.onboarding && !viewport.narrow}
   <div class="chrome-surface sidebar-toggle">
     <!-- The macOS traffic lights are positioned over this (syncNativeChrome). -->
     <div class="traffic-lights"></div>
     <button
       class="chrome-btn"
       {@attach tip(app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar", { keys: "sidebar.toggle", side: "bottom" })}
-      aria-label={goBack ? "Back" : app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-      onclick={() => (goBack ? goBack() : app.toggleSidebar())}
-      onpointerenter={() => !goBack && app.peekSidebar(true)}
+      aria-label={app.sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+      onclick={() => app.toggleSidebar()}
+      onpointerenter={() => app.peekSidebar(true)}
       onpointerleave={() => app.peekSidebar(false)}
     >
       <Icon
-        name={goBack
-          ? "chevron-left"
-          : app.sidebarCollapsed
-            ? "sidebar-left-expand"
-            : "sidebar-left-collapse"}
+        name={app.sidebarCollapsed ? "sidebar-left-expand" : "sidebar-left-collapse"}
         size={14}
       />
     </button>
   </div>
   {/if}
-  {#if (app.active?.currentSessionId && !app.fullPage) || (win && app.settings.windowChrome)}
-    <div class="chrome-surface right-island" class:bare={app.fullPage} class:under-drawer={viewport.narrow && drawerProgress > 0}>
+  {#if !viewport.narrow && ((app.active?.currentSessionId && !app.fullPage) || (win && app.settings.windowChrome))}
+    <div class="chrome-surface right-island" class:bare={app.fullPage}>
       {#if chromeSessionId && !app.fullPage}
         <button
           class="chrome-btn"
@@ -343,25 +432,26 @@ import { haptic } from "$lib/haptics";
       {/if}
     </div>
   {/if}
-  <div class="main" {@attach viewport.narrow && app.sidebarCollapsed ? swipe(() => edge) : undefined}>
+  {#if viewport.narrow && !app.onboarding}
+    <div class="stack">
+      <section class="screen" bind:this={underEl} inert={deep} aria-hidden={deep}>
+        <MobileHome />
+        <div class="dim" bind:this={dimEl}></div>
+      </section>
+      <section class="screen top" bind:this={topEl} {@attach swipe(() => popBack)}>
+        <MobileBar title={pageTitle ?? chatTitle} sessionId={pageTitle ? null : chromeSessionId} onBack={back} />
+        <div class="content-row">{@render page()}</div>
+      </section>
+    </div>
+  {:else}
+  <div class="main">
     {#if app.onboarding}
       <Onboarding />
     {:else}
     <Sidebar />
     <div class="content-row" bind:this={contentRowEl}>
-      {#if app.showExtensions}
-        <Lazy load={() => import("$lib/components/ExtensionsPanel.svelte")} />
-      {:else if app.showUsage}
-        <Lazy load={() => import("$lib/components/UsagePanel.svelte")} />
-      {:else if app.active?.currentSessionId}
-        <ChatPanel
-          sessionId={app.active.currentSessionId}
-          ownsChrome={!linkedVisible}
-        />
-      {:else if !app.active}
-        <FirstServerPanel />
-      {/if}
-      {#if !viewport.narrow}<RightSidebar bind:panelEl={rightPanelEl} />{/if}
+      {@render page()}
+      {#if viewport.kind === "desktop"}<RightSidebar bind:panelEl={rightPanelEl} />{/if}
       {#if cornerVisible}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
@@ -378,7 +468,8 @@ import { haptic } from "$lib/haptics";
     </div>
     {/if}
   </div>
-  {#if !app.onboarding && !viewport.narrow}<StatusBar />{/if}
+  {/if}
+  {#if !app.onboarding && viewport.kind === "desktop"}<StatusBar />{/if}
 </div>
 <Lazy load={() => import("$lib/components/SettingsPanel.svelte")} when={app.showSettings} />
 <Lazy load={() => import("$lib/components/CommandPalette.svelte")} when={app.paletteOpen} />
@@ -494,9 +585,8 @@ import { haptic } from "$lib/haptics";
   .right-island .chrome-btn.window-close:hover:active {
     background: color-mix(in srgb, var(--danger) 80%, black);
   }
-  /* Phone layout. The drawer's own rules are in Sidebar.svelte. */
+  /* Phone: the shell is the visual viewport, so the composer rides above the keyboard on iOS too. */
   @media (max-width: 700px) {
-    /* The visual viewport, so the composer rides above the keyboard on iOS too. */
     .shell {
       position: fixed;
       top: var(--vv-top, 0px);
@@ -505,38 +595,37 @@ import { haptic } from "$lib/haptics";
       height: var(--vvh, 100dvh);
       padding: var(--safe-top) env(safe-area-inset-right, 0px) var(--safe-bottom) env(safe-area-inset-left, 0px);
     }
-    .sidebar-toggle,
-    .right-island {
-      top: calc(var(--chrome-inset) + var(--safe-top));
-    }
-    .sidebar-toggle {
-      left: calc(var(--chrome-inset) + env(safe-area-inset-left, 0px));
-    }
-    .right-island {
-      right: calc(var(--chrome-inset) + env(safe-area-inset-right, 0px));
-      transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
-    }
-    /* The drawer covers the strip the island would sit over. */
-    .right-island.under-drawer {
-      opacity: 0;
-      pointer-events: none;
-    }
   }
-  .drawer-scrim {
-    position: fixed;
+  /* Phone: two screens stacked. The top one slides in over Home (and back out under a finger). */
+  .stack {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .screen {
+    position: absolute;
     inset: 0;
-    z-index: 14;
-    background: rgba(6, 7, 11, 0.5);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--bg);
+  }
+  .screen.top {
+    z-index: 2;
+    background: var(--panel-bg);
+    visibility: hidden;
+    transform: translateX(100%);
+    box-shadow: var(--shadow-drawer);
+    touch-action: pan-y;
+    will-change: transform;
+  }
+  .screen .dim {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    background: rgba(6, 7, 11, 1);
     opacity: 0;
     pointer-events: none;
-    touch-action: pan-y;
-  }
-  .drawer-scrim.on {
-    pointer-events: auto;
-  }
-  @media (max-width: 700px) {
-    .main {
-      touch-action: pan-y;
-    }
   }
 </style>

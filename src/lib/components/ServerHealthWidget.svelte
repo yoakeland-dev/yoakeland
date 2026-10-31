@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   // Health snapshot comes from each server's ping (SPEC.md §2a status).
   import { Popover } from "bits-ui";
@@ -85,7 +86,7 @@
     {/if}
   </Popover.Trigger>
   <Popover.Portal>
-    <Popover.Content class="sb-panel servers-panel" side="top" align="start" sideOffset={8}>
+    <PopoverContent class="sb-panel servers-panel" side="top" align="start" sideOffset={8}>
       {#if servers.length}
         <ul class="sb-list">
           {#each servers as s (s.connectionId)}
@@ -143,11 +144,14 @@
       <div class="sb-foot">
         <span class="sb-foot-title">Servers</span>
         <span class="sb-foot-meta">{servers.length - down.length} of {servers.length} online</span>
+        <button type="button" class="sb-foot-btn" onclick={() => ((open = false), app.openDiagnostics())}>
+          <Icon name="activity" size={12} /> Diagnostics
+        </button>
         <button type="button" class="sb-foot-btn" onclick={() => ((open = false), app.openPalette("servers"))}>
           <Icon name="settings" size={12} /> Manage
         </button>
       </div>
-    </Popover.Content>
+    </PopoverContent>
   </Popover.Portal>
 </Popover.Root>
 

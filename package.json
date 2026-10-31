@@ -1,6 +1,7 @@
 {
   "name": "yoake-gui",
-  "productName": "yoakeland",
+  "productName": "Yoakeland",
+  "desktopName": "yoakeland.desktop",
   "version": "0.1.7",
   "description": "Agents that run on your machine",
   "type": "module",
@@ -56,7 +57,7 @@
   "main": "electron/main.js",
   "build": {
     "appId": "com.aveline.yoake-gui",
-    "productName": "yoakeland",
+    "productName": "Yoakeland",
     "files": [
       "build/**",
       "electron/**"

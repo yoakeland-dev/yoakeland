@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MenuContent from "./MenuContent.svelte";
+  import SheetDialog from "./SheetDialog.svelte";
   import { tip } from "../tooltip.svelte";
   // Ctrl+K command palette. Pages form a back-stack: Backspace on an empty
   // search pops one, Escape pops one too if possible, else closes.
@@ -302,6 +304,7 @@
       },
       { id: "view:notifications", label: "Show notifications", icon: "bell", keys: "notifications.open", run: () => run(() => (app.notificationsOpen = true)) },
       { id: "view:extensions", label: "MCP servers and skills", icon: "plug-connected", keys: "extensions.toggle", run: () => run(() => app.openExtensions()) },
+      { id: "view:diagnostics", label: app.showDiagnostics ? "Hide diagnostics" : "Server diagnostics", icon: "activity", run: () => run(() => (app.showDiagnostics ? (app.showDiagnostics = false) : app.openDiagnostics())) },
       { id: "view:usage", label: app.showUsage ? "Hide usage" : "Show usage", icon: "chart-bar", keys: "usage.toggle", run: () => run(() => (app.showUsage = !app.showUsage)) },
     ];
     if (c && server?.notifications.length) {
@@ -458,7 +461,8 @@
 <Dialog.Root bind:open={app.paletteOpen}>
   <Dialog.Portal>
     <Dialog.Overlay class="palette-overlay" />
-    <Dialog.Content
+    <SheetDialog
+      variant="tall"
       class="palette-content"
       onOpenAutoFocus={(e) => {
         e.preventDefault();
@@ -485,7 +489,7 @@
                 <ServerAvatar name={browsingServer.label} seed={browsingServer.serverId} size={14} />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content class="context-menu" align="start" sideOffset={4}>
+                <MenuContent class="context-menu" align="start" sideOffset={4}>
                   {#each browsableServers as [scid, srv] (scid)}
                     <DropdownMenu.Item class="context-menu-item" onSelect={() => browseServer(scid)}>
                       <ServerAvatar name={srv.label} seed={srv.serverId} size={13} />
@@ -493,7 +497,7 @@
                       {#if scid === app.browsingConnectionId}<Icon name="check" size={11} />{/if}
                     </DropdownMenu.Item>
                   {/each}
-                </DropdownMenu.Content>
+                </MenuContent>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
           {/if}
@@ -693,7 +697,7 @@
           <span class="right"><kbd>Esc</kbd> close</span>
         </div>
       </Command.Root>
-    </Dialog.Content>
+    </SheetDialog>
   </Dialog.Portal>
 </Dialog.Root>
 

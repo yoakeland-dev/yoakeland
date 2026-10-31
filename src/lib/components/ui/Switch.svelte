@@ -15,14 +15,68 @@
     onchange?: (checked: boolean) => void;
   } = $props();
 
-  function toggle() {
-    checked = !checked;
-    onchange?.(checked);
+  function set(v: boolean) {
+    if (v === checked) return;
+    checked = v;
+    onchange?.(v);
+  }
+
+  // The bead follows a finger (or mouse) dragged along the well and settles on the nearer end; a
+  // press without a drag is a click, which toggles.
+  let el: HTMLButtonElement;
+  let bead: HTMLSpanElement;
+  let drag = $state<number | null>(null); // 0..1 while dragging
+  let from = { x: 0, travel: 1, start: false, moved: false, id: -1, t: 0, p: 0, v: 0 };
+  function down(e: PointerEvent) {
+    if (disabled || e.button > 0) return;
+    from = { x: e.clientX, travel: el.clientWidth - 2 * bead.offsetLeft - bead.offsetWidth, start: checked, moved: false, id: e.pointerId, t: e.timeStamp, p: checked ? 1 : 0, v: 0 };
+  }
+  function move(e: PointerEvent) {
+    if (e.pointerId !== from.id) return;
+    const dx = e.clientX - from.x;
+    if (!from.moved) {
+      if (Math.abs(dx) < 4) return;
+      from.moved = true;
+      el.setPointerCapture(e.pointerId);
+    }
+    const p = Math.min(1, Math.max(0, (from.start ? 1 : 0) + dx / from.travel));
+    from.v = (p - from.p) / Math.max(1, e.timeStamp - from.t);
+    from.p = p;
+    from.t = e.timeStamp;
+    drag = p;
+  }
+  function up(e: PointerEvent) {
+    if (e.pointerId !== from.id) return;
+    from.id = -1;
+    if (!from.moved) return;
+    // A flick counts for its momentum, like a thrown switch.
+    set(from.p + from.v * 80 > 0.5);
+    drag = null;
+    const eat = (c: Event) => c.stopPropagation();
+    addEventListener("click", eat, { capture: true, once: true });
+    setTimeout(() => removeEventListener("click", eat, true), 120);
   }
 </script>
 
-<button type="button" role="switch" class="switch" aria-checked={checked} aria-label={label} {id} {disabled} onclick={toggle}>
-  <span class="bead"></span>
+<button
+  bind:this={el}
+  type="button"
+  role="switch"
+  class="switch"
+  class:dragging={drag !== null}
+  data-no-swipe
+  aria-checked={checked}
+  aria-label={label}
+  {id}
+  {disabled}
+  style:--p={drag}
+  onclick={() => set(!checked)}
+  onpointerdown={down}
+  onpointermove={move}
+  onpointerup={up}
+  onpointercancel={() => ((from.id = -1), (drag = null))}
+>
+  <span class="bead" bind:this={bead}></span>
 </button>
 
 <style>
@@ -38,6 +92,7 @@
     background: var(--well);
     cursor: pointer;
     outline: none;
+    touch-action: pan-y;
     transition:
       background calc(0.2s * var(--anim-speed, 1)) ease,
       border-color calc(0.2s * var(--anim-speed, 1)) ease;
@@ -84,6 +139,17 @@
   .switch[aria-checked="true"] .bead {
     transform: translateX(1.29rem);
     background: var(--bead);
+  }
+  /* Dragged: the bead and the well follow --p (0..1) with no transition, so they stay under the finger. */
+  .switch.dragging.dragging {
+    background: color-mix(in srgb, var(--accent) calc(var(--p) * 100%), var(--well));
+    border-color: color-mix(in srgb, var(--accent) calc(var(--p) * 100%), var(--panel-border));
+  }
+  .switch.dragging.dragging .bead {
+    width: 1.43rem;
+    transform: translateX(calc(var(--p) * 1.0rem));
+    background: var(--bead);
+    transition: none;
   }
   /* Held while on: grow leftward so the right edge stays put. */
   .switch[aria-checked="true"]:not(:disabled):active .bead {

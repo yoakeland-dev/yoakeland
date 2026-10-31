@@ -1,11 +1,8 @@
-// Drag-to-dismiss for the bottom sheets mobile.css turns popovers and dialogs into. Works on
-// touch events at the document: a pull down on a sheet that is scrolled to its top moves the
-// sheet instead of scrolling it, and letting go far enough (or flicking) sends it Escape,
-// which bits-ui already treats as "close".
-// Settings is a page on phones, not a sheet: it has no pull-down dismissal.
+// Drag-to-dismiss for a bottom sheet (Sheet.svelte). Touch events on the sheet itself: a pull down on
+// a sheet that is scrolled to its top moves the sheet instead of scrolling it, and letting go far
+// enough (or flicking) sends it Escape, which bits-ui already treats as "close".
+import type { Attachment } from "svelte/attachments";
 import { haptic } from "./haptics";
-
-const SHEET = '[data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > *, [data-dialog-content]:not(.settings-content)';
 
 function scrollTopOf(el: Element, sheet: Element): number {
   for (let n: Element | null = el; n; n = n.parentElement) {
@@ -24,83 +21,95 @@ function ownsTouch(el: Element, sheet: Element): boolean {
   return false;
 }
 
-const escape = (el: Element) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 const stillOpen = (el: HTMLElement) => el.isConnected && el.dataset.state !== "closed";
 
+const OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+
+// What dims the page behind this sheet: its own scrim (popovers, menus) or the dialog overlay.
+const scrimOf = (el: HTMLElement): HTMLElement | null => {
+  const s = el.closest(".wrap")?.previousElementSibling;
+  return s?.classList.contains("scrim") ? (s as HTMLElement) : document.querySelector<HTMLElement>("[data-dialog-overlay]:not([data-state=closed])");
+};
+/** Past the edge a pull gets heavier: the further, the less it moves (iOS's curve). */
+const rubber = (d: number, dim = 120) => (1 - 1 / ((d * 0.55) / dim + 1)) * dim;
+
 /** Slides the sheet away, then asks bits-ui to close it. If nothing closes (a layer that swallowed
- * Escape), tries an outside tap, and failing that puts the sheet back: a sheet stranded off-screen
- * under its scrim would leave the page dimmed and dead. */
-function dismiss(el: HTMLElement) {
+ * Escape), the sheet comes back: one stranded off-screen under its scrim would leave the page dead. */
+function dismiss(el: HTMLElement, scrim: HTMLElement | null) {
   haptic();
-  el.style.transition = "transform 0.16s ease-in";
+  el.style.transition = "transform 0.2s ease-in";
   el.style.transform = "translateY(100%)";
-  setTimeout(() => stillOpen(el) && escape(el), 120);
+  if (scrim) ((scrim.style.transition = "opacity 0.2s ease-in"), (scrim.style.opacity = "0"));
+  setTimeout(() => stillOpen(el) && el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 120);
   setTimeout(() => {
     if (!stillOpen(el)) return;
-    for (const type of ["pointerdown", "pointerup", "click"])
-      document.body.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: 2, clientY: 2, pointerType: "touch" }));
-  }, 450);
-  setTimeout(() => {
-    if (!stillOpen(el)) return;
-    el.style.transition = "transform 0.2s var(--ui-ease)";
+    el.style.transition = `transform 0.3s ${OUT}`;
     el.style.transform = "";
-  }, 800);
+    if (scrim) ((scrim.style.transition = `opacity 0.3s ${OUT}`), (scrim.style.opacity = ""));
+  }, 500);
 }
 
-export function initSheetDrag(): () => void {
-  let sheet: HTMLElement | null = null;
-  let y0 = 0;
-  let dy = 0;
-  let claimed = false;
-  let last = { t: 0, y: 0 };
-  let prev = { t: 0, y: 0 };
+export function sheetDrag(): Attachment<HTMLElement> {
+  return (node) => {
+    let live = false;
+    let claimed = false;
+    let y0 = 0;
+    let dy = 0;
+    let scrim: HTMLElement | null = null;
+    let last = { t: 0, y: 0 };
+    let prev = { t: 0, y: 0 };
 
-  const start = (e: TouchEvent) => {
-    const target = e.target as Element;
-    sheet = target.closest<HTMLElement>(SHEET);
-    if (!sheet || sheet.dataset.state === "closed") return void (sheet = null);
-    y0 = e.touches[0].clientY;
-    dy = 0;
-    claimed = false;
-    last = prev = { t: e.timeStamp, y: y0 };
-    // Only the sheet that is at its top can be pulled; inner scrollers keep their scroll.
-    if (scrollTopOf(target, sheet) > 0 || ownsTouch(target, sheet)) sheet = null;
-  };
-  const move = (e: TouchEvent) => {
-    if (!sheet) return;
-    const y = e.touches[0].clientY;
-    dy = y - y0;
-    if (!claimed) {
-      if (dy < 6) return void (dy < -6 && (sheet = null));
-      claimed = true;
-      sheet.style.transition = "none";
-    }
-    e.preventDefault();
-    prev = last;
-    last = { t: e.timeStamp, y };
-    sheet.style.transform = `translateY(${Math.max(0, dy)}px)`;
-  };
-  const end = () => {
-    if (!sheet || !claimed) return void (sheet = null);
-    const el = sheet;
-    sheet = null;
-    const v = last.t > prev.t ? (last.y - prev.y) / (last.t - prev.t) : 0;
-    if (dy > el.offsetHeight * 0.35 || v > 0.5) dismiss(el);
-    else {
-      el.style.transition = "transform 0.2s var(--ui-ease)";
-      el.style.transform = "";
-      setTimeout(() => (el.style.transition = ""), 220);
-    }
-  };
+    const start = (e: TouchEvent) => {
+      const target = e.target as Element;
+      claimed = false;
+      // Only a sheet at its top can be pulled; inner scrollers keep their scroll.
+      live = node.dataset.state !== "closed" && scrollTopOf(target, node) === 0 && !ownsTouch(target, node);
+      if (!live) return;
+      y0 = e.touches[0].clientY;
+      dy = 0;
+      last = prev = { t: e.timeStamp, y: y0 };
+    };
+    const move = (e: TouchEvent) => {
+      if (!live) return;
+      const y = e.touches[0].clientY;
+      dy = y - y0;
+      if (!claimed) {
+        if (dy < 6) return void (dy < -6 && (live = false));
+        claimed = true;
+        node.style.transition = "none";
+        scrim = scrimOf(node);
+        if (scrim) scrim.style.transition = "none";
+      }
+      e.preventDefault();
+      prev = last;
+      last = { t: e.timeStamp, y };
+      // 1:1 down, heavier up.
+      node.style.transform = `translateY(${dy > 0 ? dy : -rubber(-dy)}px)`;
+      if (scrim) scrim.style.opacity = String(Math.max(0, 1 - Math.max(0, dy) / node.offsetHeight));
+    };
+    const end = () => {
+      if (!live || !claimed) return void (live = false);
+      live = false;
+      const v = last.t > prev.t ? (last.y - prev.y) / (last.t - prev.t) : 0;
+      if (dy > node.offsetHeight * 0.35 || v > 0.5) dismiss(node, scrim);
+      else {
+        node.style.transition = `transform 0.3s ${OUT}`;
+        node.style.transform = "";
+        const sc = scrim;
+        if (sc) ((sc.style.transition = `opacity 0.3s ${OUT}`), (sc.style.opacity = ""));
+        setTimeout(() => ((node.style.transition = ""), sc && (sc.style.transition = "")), 320);
+      }
+    };
 
-  addEventListener("touchstart", start, { passive: true });
-  addEventListener("touchmove", move, { passive: false });
-  addEventListener("touchend", end);
-  addEventListener("touchcancel", end);
-  return () => {
-    removeEventListener("touchstart", start);
-    removeEventListener("touchmove", move);
-    removeEventListener("touchend", end);
-    removeEventListener("touchcancel", end);
+    node.addEventListener("touchstart", start, { passive: true });
+    node.addEventListener("touchmove", move, { passive: false });
+    node.addEventListener("touchend", end);
+    node.addEventListener("touchcancel", end);
+    return () => {
+      node.removeEventListener("touchstart", start);
+      node.removeEventListener("touchmove", move);
+      node.removeEventListener("touchend", end);
+      node.removeEventListener("touchcancel", end);
+    };
   };
 }

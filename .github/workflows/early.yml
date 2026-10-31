@@ -36,8 +36,8 @@ jobs:
           V=$(node -p "require('./package.json').version")-early.$(date -u +%Y%m%d)
           echo "TAG=early-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
           npx electron-builder --linux --publish never \
-            -c.productName="yoakeland early" -c.appId=com.aveline.yoake-gui.early \
-            -c.extraMetadata.version="$V" -c.extraMetadata.productName="yoakeland early"
+            -c.productName="Yoakeland Early" -c.appId=com.aveline.yoake-gui.early -c.artifactName='Yoakeland-Early-${version}.${ext}' \
+            -c.extraMetadata.version="$V" -c.extraMetadata.productName="Yoakeland Early" -c.extraMetadata.desktopName=yoakeland-early.desktop
       - run: (cd dist && sha256sum *.AppImage > SHA256SUMS)
       - run: |
           gh release create "$TAG" dist/*.AppImage dist/SHA256SUMS \

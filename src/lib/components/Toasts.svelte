@@ -6,6 +6,7 @@
   import { fly, fade } from "svelte/transition";
   import { flip } from "svelte/animate";
   import { cubicOut } from "svelte/easing";
+  import { relTime } from "../format";
   import { app } from "../state.svelte";
   import { viewport } from "../viewport.svelte";
   import { openNotificationTarget } from "../ipc";
@@ -45,7 +46,7 @@
   function title(g: (typeof groups)[number]): string {
     return (g.sessionId && app.servers[g.connectionId]?.sessionById.get(g.sessionId)?.title) || "Untitled chat";
   }
-  /** Phones: drag an open stack up to fold it. */
+  /** Phones: drag an open stack up to fold it; drag a folded one (or a lone banner) up to dismiss it. */
   function foldSwipe(key: string) {
     return (node: HTMLElement) => {
       const move = (dy: number, animate = false) => {
@@ -54,18 +55,47 @@
       };
       return swipe(() => ({
         axis: "y",
-        start: () => viewport.narrow && expanded.has(key),
+        start: () => viewport.narrow,
         accept: (d) => d < 0,
         onMove: (d) => move(Math.min(0, d)),
         onEnd: (d, v) => {
-          if (d < -50 || v < -0.4) toggle(key, false);
+          const flick = d < -50 || v < -0.4;
+          if (flick && !expanded.has(key)) {
+            // Leave it where the finger let go; the out transition carries on from there.
+            for (const t of groups.find((g) => g.key === key)?.items ?? []) app.dropToast(t.id);
+            return;
+          }
+          if (flick) toggle(key, false);
           move(0, true);
         },
         onCancel: () => move(0, true),
       }))(node);
     };
   }
-  const dy = $derived(viewport.narrow ? -16 : 12);
+  // Motion follows the app's speed setting and prefers-reduced-motion.
+  const speed = () =>
+    matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--anim-speed")) || 1;
+  /** cubic-bezier(.32,.72,0,1) (the drawer curve) as an easing function: Newton on x(s), then y(s). */
+  const drawer = (x: number) => {
+    let s = x;
+    for (let i = 0; i < 6; i++) {
+      const dx = 0.96 * ((1 - s) ** 2 - 2 * s * (1 - s)) + 3 * s * s;
+      if (dx < 1e-6) break;
+      s -= (0.96 * s * (1 - s) ** 2 + s ** 3 - x) / dx;
+    }
+    return 3 * 0.72 * s * (1 - s) ** 2 + 3 * s * s * (1 - s) + s ** 3;
+  };
+  /** Phones: a banner drops in from above (380ms) and leaves upward (220ms), from wherever a swipe left it. */
+  function group(node: HTMLElement, _: unknown, { direction }: { direction: "in" | "out" | "both" }) {
+    if (!viewport.narrow) return fly(node, { y: 12, duration: 180 });
+    const k = speed();
+    if (direction === "in") {
+      return { duration: 380 * k, easing: drawer, css: (t: number, u: number) => `transform:translateY(${-u * 120}%);opacity:${t}` };
+    }
+    const from = new DOMMatrix(getComputedStyle(node).transform).m42;
+    const to = -(node.offsetHeight + 40);
+    return { duration: 220 * k, easing: cubicOut, css: (t: number, u: number) => `transform:translateY(${from + (to - from) * u}px);opacity:${t}` };
+  }
   // A folded stack is the real cards overlapped: each older card is pulled up behind the one in
   // front with a negative margin (its own height minus a small peek), so folding, unfolding and new
   // arrivals are all plain CSS transitions on margin/scale and nothing is measured per frame.
@@ -118,6 +148,7 @@
         <span class="title">{t.title}</span>
         {#if t.body}<span class="detail">{t.body}</span>{/if}
       </span>
+      <time class="when">{relTime(t.createdAt, app.now)}</time>
     </button>
     {#if t.action}
       <button
@@ -165,7 +196,7 @@
       data-open={open}
       {@attach foldSwipe(g.key)}
       animate:flip={{ duration: 220 }}
-      transition:fly={{ y: dy, duration: 180 }}
+      transition:group
       onpointerenter={(e) => e.pointerType === "mouse" && (hovered = mark(hovered, g.key, true))}
       onpointerleave={() => (hovered = mark(hovered, g.key, false))}
     >
@@ -356,6 +387,12 @@
   }
   .title {
     font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .when {
+    display: none;
   }
   .detail {
     font-size: var(--text-label-size);
@@ -415,21 +452,56 @@
     }
   }
 
-  /* Phone: drops in from the top, inset like iOS banners. */
+  /* Phone: a live-alert banner under the status bar, 8px from the sides; swipe it up to dismiss. */
   @media (max-width: 700px) {
     .toasts {
       left: 0;
       right: 0;
-      top: calc(var(--header-height) + var(--safe-top));
+      top: var(--safe-top, 0px);
       bottom: auto;
-      padding: 0.43rem 0.57rem 0;
-      gap: 0.43rem;
+      padding: 8px 8px 0;
+      gap: 8px;
     }
     .group {
       pointer-events: none;
+      touch-action: none;
     }
     .toast {
       width: 100%;
+      border-radius: calc(var(--radius-lg) + 8px);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .body {
+      gap: 12px;
+      padding: 12px 8px 12px 14px;
+    }
+    .body :global(.icon) {
+      flex: none;
+    }
+    .text {
+      flex: 1;
+      gap: 2px;
+    }
+    .when {
+      display: block;
+      flex: none;
+      align-self: flex-start;
+      font-size: 0.86rem;
+      color: var(--text-dim);
+    }
+    .action {
+      min-height: 44px;
+      padding: 0 12px;
+    }
+    .x {
+      align-items: center;
+      justify-content: center;
+      min-width: 44px;
+      min-height: 44px;
+      margin: 0;
+      padding: 0;
     }
     .scrim {
       background: rgba(0, 0, 0, 0.4);

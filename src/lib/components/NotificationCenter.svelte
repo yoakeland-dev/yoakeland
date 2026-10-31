@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   // §3.2 notification: dismissing here dismisses for every device on that server (echoes
   // notification_dismissed to all its peers), and so does reading (notifications_read).
@@ -10,6 +11,9 @@
   import type { ServerNotification } from "../types";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
+  import SwipeRow from "./SwipeRow.svelte";
+  import { viewport } from "../viewport.svelte";
+  import { swipe, ownsHorizontalDrag } from "../gestures";
 
   type Item = ServerNotification & { cid: ConnectionId };
 
@@ -87,19 +91,128 @@
     if (!prefs.muted.includes(n.kind)) setNotifyPrefs(n.cid, { ...prefs, muted: [...prefs.muted, n.kind] });
     for (const o of items) if (o.cid === n.cid && o.kind === n.kind) dismissNotification(n.cid, o.id);
   }
+
+  // On a phone the bell opens a full-screen page instead of the popover. It is moved to <body> (a
+  // transformed ancestor, like a screen in a stack, would otherwise become its containing block) and
+  // slides in from the right; swiping right, or Back, slides it out again.
+  const DRAWER = "cubic-bezier(0.32, 0.72, 0, 1)";
+  const OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+  const spd = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--anim-speed")) || 1;
+  let pageEl = $state<HTMLElement>();
+  let mounted = $state(false);
+  let scrolled = $state(false);
+  let closing: Animation | undefined;
+  function page(el: HTMLElement) {
+    document.body.appendChild(el);
+    pageEl = el;
+    el.animate({ transform: ["translateX(100%)", "none"] }, { duration: 340 * spd(), easing: DRAWER });
+    return () => {
+      el.remove();
+      if (pageEl === el) pageEl = undefined;
+    };
+  }
+  $effect(() => {
+    if (!viewport.narrow) return;
+    if (app.notificationsOpen) {
+      closing?.cancel();
+      closing = undefined;
+      mounted = true;
+      return;
+    }
+    const el = untrack(() => pageEl);
+    if (!el) return void (mounted = false);
+    const from = el.style.transform || "none";
+    el.style.transform = "";
+    const a = (closing = el.animate({ transform: [from, "translateX(100%)"] }, { duration: 300 * spd(), easing: DRAWER, fill: "forwards" }));
+    a.finished.then(
+      () => ((mounted = false), (closing = undefined)),
+      () => {},
+    );
+  });
+  const back = {
+    axis: "x",
+    start: (e: PointerEvent) => !ownsHorizontalDrag(e.target, pageEl),
+    accept: (d: number) => d > 0,
+    onMove: (d: number) => pageEl && (pageEl.style.transform = `translateX(${Math.max(0, d)}px)`),
+    onEnd: (d: number, v: number) => {
+      if (d > innerWidth * 0.4 || v > 0.5) return void (app.notificationsOpen = false);
+      pageEl?.animate({ transform: [`translateX(${d}px)`, "none"] }, { duration: 300 * spd(), easing: OUT });
+      if (pageEl) pageEl.style.transform = "";
+    },
+    onCancel: () => pageEl && (pageEl.style.transform = ""),
+  } as const;
+  const lampOf = (level: string) => (level === "warning" ? "warn" : level === "success" ? "ok" : level === "error" ? "bad" : "");
 </script>
 
 {#snippet from(cid: ConnectionId)}
   {#if multiServer && app.servers[cid]}<ServerAvatar name={app.servers[cid].label} seed={app.servers[cid].serverId} size={12} />{/if}
 {/snippet}
 
+{#if viewport.narrow}
+  <button type="button" class="sb-trigger" aria-label="Notifications" onclick={() => (app.notificationsOpen = !app.notificationsOpen)}>
+    <Icon name={items.length || asks.length ? "bell-filled" : "bell"} size={13} />
+    {#if unread || asks.length}<span class="badge" class:ask={asks.length > 0}>{unread + asks.length}</span>{/if}
+  </button>
+  {#if mounted}
+    <div class="page" role="dialog" aria-label="Notifications" {@attach page} {@attach swipe(() => back)}>
+      <header class="bar" class:scrolled>
+        <button type="button" class="ibtn" aria-label="Back" onclick={() => (app.notificationsOpen = false)}><Icon name="chevron-left" size={24} /></button>
+        <h1>Notifications</h1>
+        {#if items.length}<button type="button" class="txt" onclick={clearAll}>Clear all</button>{/if}
+      </header>
+      <div class="sc" onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 4)}>
+        {#if asks.length}
+          <h2>Needs you<em>{asks.length}</em></h2>
+          {#each asks as a (a.cid + a.toolCallId)}
+            <div class="plain">
+              <button type="button" class="row unread" onclick={() => open(a)}>
+                <span class="lp warn" aria-hidden="true"></span>
+                <span class="t"><b>{askTitle(a)} needs you</b><small>{a.kind === "question" ? a.question : a.description}</small></span>
+                {#if a.createdAt}<time>{when(a.createdAt)}</time>{/if}
+              </button>
+            </div>
+          {/each}
+        {/if}
+        {#each groups as g (g.key)}
+          <h2>
+            <button type="button" class="gh" disabled={!g.sessionId} onclick={() => open({ cid: g.cid, sessionId: g.sessionId, projectPath: g.items[0]?.projectPath })}>
+              {@render from(g.cid)}{groupTitle(g)}
+            </button>
+          </h2>
+          {#each g.items as n (n.id)}
+            <SwipeRow
+              actions={[
+                { label: "Mute", icon: "bell-off", run: () => mute(n) },
+                { label: "Dismiss", icon: "trash", danger: true, run: () => dismissNotification(n.cid, n.id) },
+              ]}
+            >
+              <button type="button" class="row" class:unread={!n.read} onclick={() => open(n)}>
+                <span class="lp {lampOf(n.level)}" aria-hidden="true"></span>
+                <span class="t"><b>{n.title}{#if (n.count ?? 1) > 1} ×{n.count}{/if}</b>{#if n.body}<small>{n.body}</small>{/if}</span>
+                <time>{when(n.createdAt)}</time>
+              </button>
+            </SwipeRow>
+          {/each}
+        {:else}
+          {#if !asks.length}
+            <div class="blank">
+              <span class="ring"><Icon name="bell" size={26} /></span>
+              <b>All caught up</b>
+              <p>Nothing needs you right now.</p>
+            </div>
+          {/if}
+        {/each}
+      </div>
+    </div>
+  {/if}
+{:else}
 <Popover.Root bind:open={app.notificationsOpen}>
   <Popover.Trigger class="sb-trigger" {@attach tip("Notifications", "notifications.open")} aria-label="Notifications">
     <Icon name={items.length || asks.length ? "bell-filled" : "bell"} size={13} />
     {#if unread || asks.length}<span class="badge" class:ask={asks.length > 0}>{unread + asks.length}</span>{/if}
   </Popover.Trigger>
   <Popover.Portal>
-    <Popover.Content class="sb-panel notif-panel" side="top" align="end" sideOffset={8}>
+    <PopoverContent class="sb-panel notif-panel" side="top" align="end" sideOffset={8}>
       <ul>
         {#each asks as a (a.cid + a.toolCallId)}
           <li class="level-warning">
@@ -151,9 +264,10 @@
           </button>
         {/if}
       </div>
-    </Popover.Content>
+    </PopoverContent>
   </Popover.Portal>
 </Popover.Root>
+{/if}
 
 <style>
   .badge {
@@ -331,5 +445,217 @@
     justify-content: center;
     color: var(--text-dim);
     font-size: 0.82rem;
+  }
+
+  /* The phone's page. */
+  .page {
+    position: fixed;
+    inset: 0;
+    z-index: 130;
+    display: flex;
+    flex-direction: column;
+    padding-top: var(--safe-top, 0px);
+    background: var(--bg);
+    color: var(--text);
+    touch-action: pan-y;
+    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.3);
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 54px;
+    padding: 5px 6px;
+    border-bottom: 1px solid transparent;
+    transition: border-color calc(0.16s * var(--anim-speed, 1)) ease;
+  }
+  .bar.scrolled {
+    border-bottom-color: var(--wash-2);
+  }
+  .bar h1 {
+    flex: 1;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+  }
+  .ibtn {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: var(--text);
+    transition:
+      background-color calc(0.12s * var(--anim-speed, 1)) ease,
+      transform calc(0.16s * var(--anim-speed, 1)) ease-out;
+  }
+  .ibtn:active {
+    background: var(--wash-3);
+    transform: scale(0.94);
+  }
+  .txt {
+    height: 44px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-weight: 600;
+  }
+  .txt:active {
+    background: var(--wash-3);
+  }
+  .sc {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: max(var(--safe-bottom, 0px), 1rem);
+  }
+  h2 {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 22px 28px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  h2 em {
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    opacity: 0.8;
+  }
+  .gh {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 24px 1fr auto;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    min-height: 62px;
+    padding: 10px 16px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    transition: background-color calc(0.12s * var(--anim-speed, 1)) ease;
+  }
+  .row:active {
+    background: var(--wash-2);
+  }
+  .t {
+    min-width: 0;
+  }
+  .row b,
+  .row small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row b {
+    font-size: 15.5px;
+    font-weight: 500;
+  }
+  .row.unread b {
+    font-weight: 700;
+  }
+  .row small {
+    margin-top: 1px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .row time {
+    align-self: start;
+    margin-top: 0.2rem;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+  }
+  .lp {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+  }
+  .lp::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    opacity: 0.5;
+  }
+  .lp.warn::before {
+    background: var(--warning);
+    opacity: 1;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent);
+  }
+  .lp.ok::before {
+    background: var(--success);
+    opacity: 1;
+  }
+  .lp.bad::before {
+    background: var(--danger);
+    opacity: 1;
+  }
+  .blank {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 18vh 32px 0;
+    text-align: center;
+    animation: rise calc(0.22s * var(--anim-speed, 1)) cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .blank b {
+    font-size: 17px;
+  }
+  .blank p {
+    margin: 0;
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .ring {
+    display: grid;
+    place-items: center;
+    width: 60px;
+    height: 60px;
+    margin-bottom: 10px;
+    border-radius: 50%;
+    background: var(--wash-2);
+    color: var(--text-dim);
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .blank {
+      animation: none;
+    }
   }
 </style>

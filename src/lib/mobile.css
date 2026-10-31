@@ -1,29 +1,7 @@
-/* Phone layout. The breakpoint is mirrored by NARROW_QUERY in viewport.svelte.ts.
-   Same tokens and surfaces as the desktop UI; what changes is the shape: edge-to-edge chat, the
-   sidebar a drawer, tools a full page, every popover and menu a bottom sheet. Component-level
-   rules (drawer, tools page, terminal) live next to their components. */
-
-@keyframes sheetIn {
-  from {
-    transform: translateY(100%);
-  }
-}
-@keyframes sheetOut {
-  to {
-    transform: translateY(100%);
-  }
-}
-/* Pages (settings, tools) cross-fade; only sheets and the drawer slide. */
-@keyframes pageIn {
-  from {
-    opacity: 0;
-  }
-}
-@keyframes pageOut {
-  to {
-    opacity: 0;
-  }
-}
+/* Phone layout. The breakpoint is mirrored by PHONE_QUERY in viewport.svelte.ts.
+   Same tokens and surfaces as the desktop UI; what changes is the shape: edge-to-edge chat, Home and
+   chat as a screen stack, tools a full page. Popovers, menus and dialogs become sheets in
+   components/Sheet.svelte. Component-level rules (tools page, terminal) live next to their components. */
 
 @media (max-width: 700px) {
   :root {
@@ -31,10 +9,24 @@
     --header-pad-y: 0.5rem;
     --header-pad-x: 0.9rem;
     --header-line: 3rem;
-    --ctrl-h: 2.5rem;
+    /* The chat has no header of its own on a phone (MobileBar is a sibling above it). */
+    --chat-top: 0px;
+    --ctrl-h: 3rem;
     --z-sheet: 140;
+    /* Radii for a thumb: the desktop's 6px control corners read as boxes on a phone. Controls get
+       12px, containers (cards, sheets, popovers) 20px, and the pill stays for toggles and chips. */
+    --radius-xs: 8px;
+    --radius-sm: 12px;
+    --radius-lg: 20px;
+    --radius-float: 24px;
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* One step up in size: rem is the unit of every type size, gap and control, so scaling it makes
+     the whole UI phone-sized at once (14px becomes 16px) without touching a component. */
+  html:root {
+    font-size: calc(var(--ui-font-size) * 1.07);
   }
 
   /* Window chrome sits straight on the bar behind it: no pill, no border. */
@@ -79,117 +71,69 @@
     min-height: 2rem;
   }
 
-  /* Anything bits-ui floats next to its trigger becomes a bottom sheet instead: the same
-     content, one thumb-reach surface. sheets.ts adds the drag-to-dismiss. */
-  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) {
-    position: fixed !important;
-    inset: auto 0 0 0 !important;
-    transform: none !important;
-    width: 100% !important;
-    min-width: 0 !important;
-    z-index: var(--z-sheet) !important;
-  }
-  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > * {
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: none !important;
-    max-height: min(78dvh, calc(var(--vvh, 100dvh) - 3rem)) !important;
-    margin: 0 !important;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
-    border-bottom-width: 0 !important;
-    padding-bottom: max(var(--safe-bottom), var(--space-1)) !important;
-    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35) !important;
-    transform-origin: bottom !important;
-  }
-  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > [data-state="open"] {
-    animation: sheetIn var(--dialog-enter-duration) var(--ui-ease) !important;
-  }
-  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > [data-state="closed"] {
-    animation: sheetOut var(--dialog-exit-duration) ease-in forwards !important;
-  }
-  /* A sheet on its way out must not hold the page hostage while it animates. */
-  [data-bits-floating-content-wrapper]:has(> [data-state="closed"]),
-  [data-dialog-overlay][data-state="closed"],
-  [data-dialog-content][data-state="closed"] {
-    pointer-events: none !important;
-  }
-  /* The grabber: a hint that the sheet can be pulled down. */
-  [data-bits-floating-content-wrapper]:not(:has(> .tooltip)) > ::before {
-    content: "";
-    display: block;
-    width: 2.4rem;
-    height: 4px;
-    margin: 0.5rem auto 0.3rem;
-    border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--text) 22%, transparent);
-  }
-  /* Behind the sheet; taps on it dismiss like any outside tap. */
-  body:has([data-bits-floating-content-wrapper] > [data-state="open"]:not(.tooltip))::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: calc(var(--z-sheet) - 1);
-    background: rgba(6, 7, 11, 0.5);
-    animation: scrimIn var(--dialog-enter-duration) ease-out;
-  }
-
   /* Menus are action sheets: bigger rows. */
   .context-menu-item,
   [role="menuitem"],
   [role="option"] {
-    min-height: 2.7rem;
+    min-height: 3.3rem;
+    padding-inline: var(--space-2);
+    gap: var(--space-2);
+    font-size: 1.05rem;
   }
 
-  /* Dialogs: a tall sheet, or the whole screen for the big ones. */
-  [data-dialog-content] {
-    position: fixed !important;
-    inset: auto 0 0 0 !important;
-    top: auto !important;
-    left: 0 !important;
-    transform: none !important;
-    width: 100% !important;
-    max-width: none !important;
-    max-height: calc(var(--vvh, 100dvh) - var(--safe-top) - 1.2rem) !important;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
-    border-bottom-width: 0 !important;
-    padding-bottom: max(var(--safe-bottom), var(--space-1));
-    z-index: var(--z-sheet) !important;
-  }
-  [data-dialog-content][data-state="open"] {
-    animation: sheetIn var(--dialog-enter-duration) var(--ui-ease) !important;
-  }
-  [data-dialog-content][data-state="closed"] {
-    animation: sheetOut var(--dialog-exit-duration) ease-in forwards !important;
-  }
+  /* Dialog sheets (Sheet.svelte) sit above their overlay; settings has no overlay at all. */
   [data-dialog-overlay] {
     z-index: calc(var(--z-sheet) - 1) !important;
   }
-  /* The palette takes the screen below the status bar. */
-  [data-dialog-content].palette-content {
-    height: calc(var(--vvh, 100dvh) - var(--safe-top) - 1.2rem) !important;
-  }
-  /* Settings is a page, not a popup: the whole screen, faded in. */
-  [data-dialog-content].settings-content {
-    inset: 0 !important;
-    height: var(--vvh, 100dvh) !important;
-    max-height: none !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    box-shadow: none;
-    padding: var(--safe-top) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
-    background: var(--panel-bg);
-    backdrop-filter: none;
-    z-index: var(--z-sheet) !important;
-  }
-  [data-dialog-content].settings-content[data-state="open"] {
-    animation: pageIn var(--dialog-enter-duration) var(--ui-ease) !important;
-  }
-  [data-dialog-content].settings-content[data-state="closed"] {
-    animation: pageOut var(--dialog-exit-duration) ease-in forwards !important;
+  [data-dialog-overlay][data-state="closed"] {
+    pointer-events: none !important;
   }
   .settings-overlay {
     display: none;
+  }
+}
+
+/* Tablet: the fleet list is docked beside the chat (Sidebar.svelte), and the tools column floats
+   over the chat's right edge instead of squeezing it. Selectors lead with :root so they outrank
+   the components' scoped rules without !important on everything. */
+:root[data-layout="tablet"] {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+:root[data-layout="tablet"] .chat-sidebar-slot {
+  position: absolute;
+  inset: 0 0 0 auto;
+  order: 0;
+  flex: none;
+  width: min(30rem, 72%) !important;
+  z-index: 13;
+  overflow: hidden;
+  border-left: 1px solid var(--panel-border);
+  border-right: 0;
+  transform: translateX(100%);
+  visibility: hidden;
+  box-shadow: none;
+  transition:
+    transform calc(0.24s * var(--anim-speed, 1)) var(--ui-ease),
+    visibility 0s linear calc(0.24s * var(--anim-speed, 1));
+}
+:root[data-layout="tablet"] .chat-sidebar-slot.open {
+  transform: none;
+  visibility: visible;
+  box-shadow: var(--shadow-drawer);
+  transition-delay: 0s;
+}
+:root[data-layout="tablet"] .chat-sidebar-body {
+  width: 100% !important;
+  transform: none;
+}
+:root[data-layout="tablet"] .chat-sidebar-slot .resize-handle {
+  display: none;
+}
+/* Touch: every piece of window chrome meets the 44px floor. */
+@media (pointer: coarse) {
+  .chrome-surface .chrome-btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
   }
 }

@@ -60,11 +60,11 @@
   let regError = $state("");
 
   async function load() {
-    if (registry || loading || !isDesktop) return;
+    if (registry || loading || !(isDesktop || cid)) return;
     loading = true;
     regError = "";
     try {
-      registry = await acpRegistry();
+      registry = await acpRegistry(cid ?? undefined);
     } catch (e) {
       regError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -146,13 +146,13 @@
         <button type="button" role="tab" aria-selected={tab === "registry"} onclick={() => (tab = "registry")}>ACP registry</button>
         <button type="button" role="tab" aria-selected={tab === "custom"} onclick={() => (tab = "custom")}>Custom command</button>
       </div>
-      {#if tab === "registry" && isDesktop}
+      {#if tab === "registry" && (isDesktop || cid)}
         <TextField type="search" class="reg-search" placeholder="Search agents…" aria-label="Search the ACP registry" bind:value={q} />
       {/if}
     </div>
     {#if tab === "registry"}
-      {#if !isDesktop}
-        <p class="empty">The registry is only reachable from the desktop app. Use a custom command here.</p>
+      {#if !isDesktop && !cid}
+        <p class="empty">Connect to a server to browse the registry, or use a custom command.</p>
       {:else if regError}
         <p class="empty warn">{regError}</p>
       {:else if !registry}

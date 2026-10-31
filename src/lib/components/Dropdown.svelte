@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Sheet from "./Sheet.svelte";
   import { tip } from "../tooltip.svelte";
   // Shared "pick one of these" control on top of bits-ui's Select; owns
   // layout/chrome/search, item content is up to the caller via `item`.
@@ -90,53 +91,57 @@
       sideOffset={4}
       collisionPadding={8}
     >
-      {#if searchable}
-        <div class="dropdown-search">
-          <Icon name="search" size={13} />
-          <input
-            type="text"
-            placeholder={searchPlaceholder}
-            bind:value={search}
-            onkeydown={(e) => e.stopPropagation()}
-          />
-          {#if search}
-            <button
-              type="button"
-              class="dropdown-search-clear"
-              onclick={() => (search = "")}
-              {@attach tip("Clear search")}
-              aria-label="Clear search"
+      {#snippet child({ props, wrapperProps })}
+        <Sheet {props} {wrapperProps}>
+        {#if searchable}
+          <div class="dropdown-search">
+            <Icon name="search" size={13} />
+            <input
+              type="text"
+              placeholder={searchPlaceholder}
+              bind:value={search}
+              onkeydown={(e) => e.stopPropagation()}
+            />
+            {#if search}
+              <button
+                type="button"
+                class="dropdown-search-clear"
+                onclick={() => (search = "")}
+                {@attach tip("Clear search")}
+                aria-label="Clear search"
+              >
+                <Icon name="xmark" size={11} />
+              </button>
+            {/if}
+          </div>
+        {/if}
+        <Select.Viewport class="dropdown-viewport">
+          {#each filtered as opt, i (opt.value)}
+            {#if opt.group && !opt.header && opt.group !== filtered[i - 1]?.group}
+              <div class="dropdown-group">
+                {#if groupHeader}{@render groupHeader(opt.group)}{:else}{opt.group}{/if}
+              </div>
+            {/if}
+            <Select.Item
+              value={opt.value}
+              label={opt.label}
+              class={opt.header ? "dropdown-item dropdown-group-item" : opt.group ? "dropdown-item grouped" : "dropdown-item"}
             >
-              <Icon name="xmark" size={11} />
-            </button>
-          {/if}
-        </div>
-      {/if}
-      <Select.Viewport class="dropdown-viewport">
-        {#each filtered as opt, i (opt.value)}
-          {#if opt.group && !opt.header && opt.group !== filtered[i - 1]?.group}
-            <div class="dropdown-group">
-              {#if groupHeader}{@render groupHeader(opt.group)}{:else}{opt.group}{/if}
-            </div>
-          {/if}
-          <Select.Item
-            value={opt.value}
-            label={opt.label}
-            class={opt.header ? "dropdown-item dropdown-group-item" : opt.group ? "dropdown-item grouped" : "dropdown-item"}
-          >
-            {#snippet children({ selected })}
-              {#if item}
-                {@render item({ ...opt, selected })}
-              {:else}
-                <span class="dropdown-item-label">{opt.label}</span>
-                {#if selected}<Icon name="check" size={11} />{/if}
-              {/if}
-            {/snippet}
-          </Select.Item>
-        {:else}
-          <p class="dropdown-empty">{emptyText}</p>
-        {/each}
-      </Select.Viewport>
+              {#snippet children({ selected })}
+                {#if item}
+                  {@render item({ ...opt, selected })}
+                {:else}
+                  <span class="dropdown-item-label">{opt.label}</span>
+                  {#if selected}<Icon name="check" size={11} />{/if}
+                {/if}
+              {/snippet}
+            </Select.Item>
+          {:else}
+            <p class="dropdown-empty">{emptyText}</p>
+          {/each}
+        </Select.Viewport>
+        </Sheet>
+      {/snippet}
     </Select.Content>
   </Select.Portal>
 </Select.Root>

@@ -291,7 +291,7 @@
     overflow-y: auto;
     scrollbar-gutter: stable;
     /* Same offset as the rows' top padding, so a picked prompt lands below the header, not under it. */
-    scroll-padding-top: calc(var(--header-height) + 20px);
+    scroll-padding-top: calc(var(--chat-top, var(--header-height)) + 20px);
   }
   /* The bottom padding lives here, not on .list, so the composer growing resizes this box and
      the ResizeObserver above keeps the tail in view. */

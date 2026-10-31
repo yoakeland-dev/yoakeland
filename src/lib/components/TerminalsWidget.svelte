@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   // The terminal taskbar: every terminal on every server (terminal_index, §3.2), including ones
   // started from other devices, grouped by the chat that owns it. Picking one opens that chat
@@ -82,7 +83,7 @@
       {#if failed}<span class="failed" {@attach tip(`${failed} with a failed command or error`)}>{failed}</span>{/if}
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content class="sb-panel terminals-panel" side="top" align="end" sideOffset={8}>
+      <PopoverContent class="sb-panel terminals-panel" side="top" align="end" sideOffset={8}>
         <div class="groups">
           {#each groups as g (g.key)}
             <section class="group">
@@ -118,7 +119,7 @@
           <span class="sb-foot-title">Terminals</span>
           <span class="sb-foot-meta">{busy ? `${busy} running · ` : ""}{all.length} open</span>
         </div>
-      </Popover.Content>
+      </PopoverContent>
     </Popover.Portal>
   </Popover.Root>
 {/if}

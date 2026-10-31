@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app } from "../state.svelte";
@@ -89,7 +90,7 @@
   </Popover.Trigger>
 
   <Popover.Portal>
-    <Popover.Content class="mode-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
+    <PopoverContent class="mode-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
       <div class="panel-head">
         <span class="panel-heading">Mode</span>
         {#if canPlan}
@@ -146,7 +147,7 @@
           <Switch checked={webToolsEnabled} onchange={toggleWebTools} />
         </label>
       {/if}
-    </Popover.Content>
+    </PopoverContent>
   </Popover.Portal>
 </Popover.Root>
 

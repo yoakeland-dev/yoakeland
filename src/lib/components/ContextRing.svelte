@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   // The composer's context ring: how full this chat's context is, and, opened, what it is made of
   // (SPEC.md §3.2 turn_completed.context, get_context_breakdown). The ring reads what the server
   // already sent with each turn; the panel asks for the breakdown when it opens.
@@ -106,7 +107,7 @@
 
   {#if !blank}
     <Popover.Portal>
-      <Popover.Content class="ctx-panel" side="top" align="start" sideOffset={8} collisionPadding={8}>
+      <PopoverContent class="ctx-panel" side="top" align="start" sideOffset={8} collisionPadding={8}>
         <div class="head">
           <span class="heading">Context</span>
           {#if loading}<span class="spin dim"><Icon name="loader-2" size={12} /></span>{/if}
@@ -196,7 +197,7 @@
           {/if}
           {#if error}<div class="note err">{error}</div>{/if}
         {/if}
-      </Popover.Content>
+      </PopoverContent>
     </Popover.Portal>
   {/if}
 </Popover.Root>

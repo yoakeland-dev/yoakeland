@@ -1,8 +1,8 @@
 // The client half of the notification policy: tells each server which chats this device shows
 // (so it can skip pings for a chat you're reading and keep your other devices quiet), keeps the
-// desktop badge at the unread count, and opens the chat behind a clicked OS alert.
+// app badge at the unread count, and opens the chat behind a clicked OS alert.
 import { app } from "./state.svelte";
-import { invoke, isDesktop, listen } from "./platform";
+import { invoke, listen } from "./platform";
 import { openNotificationTarget, setPresence } from "./ipc";
 import type { ConnectionId } from "./state.svelte";
 
@@ -41,7 +41,6 @@ export function startNotifications(): () => void {
       beat();
     });
     $effect(() => {
-      if (!isDesktop) return;
       let unread = 0;
       for (const s of Object.values(app.servers)) unread += s.unreadNotifications + s.pendingAsks.length;
       void invoke("shell:badge", { count: unread }).catch(() => {});

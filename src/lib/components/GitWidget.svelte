@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   // §3.2 git_status: every project's git state on every server, where the
   // chat header only shows the open chat's.
@@ -85,7 +86,7 @@
       {#if behind}<span>↓{behind}</span>{/if}
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content class="sb-panel git-panel" side="top" align="start" sideOffset={8}>
+      <PopoverContent class="sb-panel git-panel" side="top" align="start" sideOffset={8}>
         <ul class="sb-list">
           {#each repos as r (r.key)}
             <li class="sb-row" class:current={r.key === current}>
@@ -117,7 +118,7 @@
           <span class="sb-foot-title">Git</span>
           <span class="sb-foot-meta">{repos.length} {repos.length === 1 ? "repo" : "repos"}</span>
         </div>
-      </Popover.Content>
+      </PopoverContent>
     </Popover.Portal>
   </Popover.Root>
 {/if}

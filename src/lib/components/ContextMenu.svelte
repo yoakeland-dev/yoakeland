@@ -14,6 +14,7 @@
   import { ContextMenu } from "bits-ui";
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
+  import Sheet from "./Sheet.svelte";
 
   // `items` also accepts a thunk for callers needing a fresh read of
   // non-reactive state at open time (e.g. xterm's term.hasSelection()).
@@ -35,16 +36,20 @@
   </ContextMenu.Trigger>
   <ContextMenu.Portal>
     <ContextMenu.Content class="context-menu" onCloseAutoFocus={(e) => !restoreFocus && e.preventDefault()}>
-      {#each resolvedItems as item}
-        <ContextMenu.Item
-          class={item.danger ? "context-menu-item danger" : "context-menu-item"}
-          disabled={item.disabled}
-          onSelect={() => item.onSelect()}
-        >
-          <Icon name={item.icon as any} size={13} />
-          <span>{item.label}</span>
-        </ContextMenu.Item>
-      {/each}
+      {#snippet child({ props, wrapperProps })}
+        <Sheet {props} {wrapperProps}>
+          {#each resolvedItems as item}
+            <ContextMenu.Item
+              class={item.danger ? "context-menu-item danger" : "context-menu-item"}
+              disabled={item.disabled}
+              onSelect={() => item.onSelect()}
+            >
+              <Icon name={item.icon as any} size={13} />
+              <span>{item.label}</span>
+            </ContextMenu.Item>
+          {/each}
+        </Sheet>
+      {/snippet}
     </ContextMenu.Content>
   </ContextMenu.Portal>
 </ContextMenu.Root>

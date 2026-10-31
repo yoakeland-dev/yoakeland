@@ -1,12 +1,13 @@
 <script lang="ts">
+  import SheetDialog from "./SheetDialog.svelte";
   // Pair a phone: the QR code opens the hosted web client with a fresh per-device token, the
   // server's address and its WebRTC fingerprint in the URL fragment (pairing.ts), and the page
   // connects straight to this server (ipc.ts, rtc.ts); nothing to install. A server too old to
   // send a fingerprint can't do that, so it is told to update instead.
   import { Dialog } from "bits-ui";
   import { app } from "../state.svelte";
-  import { answerPairing, registerToken, removeToken, setRemoteAccess } from "../ipc";
-  import { pairInfo } from "../platform";
+  import { answerPairing, getPairInfo, registerToken, removeToken, setRemoteAccess } from "../ipc";
+  import { connectedHost, isDesktop, pairInfo } from "../platform";
   import { pairingUrl } from "../pairing";
   import { isPhotoAvatar } from "../avatar";
   import Button from "./ui/Button.svelte";
@@ -38,14 +39,21 @@
     blocked = false;
     const mine = app.settings.profileName;
     name = mine ? `${mine}'s phone` : "Phone";
-    pairInfo().then(
+    // In a browser the server names its own addresses (the address this page connected to first); it
+    // is already reachable, and only the desktop may change remote access.
+    const seen = connectedHost(cid);
+    const info = isDesktop
+      ? pairInfo()
+      : getPairInfo(cid).then((r) => ({ webRoot: "", hosts: [...new Set([...(seen && /^[\d.]+$|:/.test(seen) && !/^127\.|^0\.0\.0\.0$|^\[?::1?\]?$/.test(seen) ? [seen] : []), ...r.hosts])] }));
+    info.then(
       (info) => {
         hosts = info.hosts;
         host = info.hosts[0] ?? "";
         blocked = !info.hosts.length;
-        if (!info.hosts.length) error = "No network address found. Put this computer on the same network as the phone.";
+        if (!info.hosts.length) error = "No network address found. Put the server on the same network as the phone.";
         // Points the server's own page at the built client (the fallback for a server with no
         // fingerprint); the listener keeps running.
+        else if (!isDesktop) return;
         else if (info.webRoot) setRemoteAccess(cid, true, { webRoot: info.webRoot });
         else setRemoteAccess(cid, true);
       },
@@ -94,7 +102,7 @@
 <Dialog.Root bind:open>
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay" />
-    <Dialog.Content class="dialog-content pair">
+    <SheetDialog class="dialog-content pair">
       <Dialog.Close class="dialog-close pair-close"><Icon name="xmark" size={14} /></Dialog.Close>
       <Dialog.Title class="pair-title"><span class="pair-badge"><Icon name="qrcode" size={16} /></span> Pair a phone</Dialog.Title>
 
@@ -150,7 +158,7 @@
           <Button type="button" variant="primary" onclick={() => (open = false)}>Done</Button>
         </div>
       {/if}
-    </Dialog.Content>
+    </SheetDialog>
   </Dialog.Portal>
 </Dialog.Root>
 

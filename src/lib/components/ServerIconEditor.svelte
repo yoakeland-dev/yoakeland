@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   // Click a server's avatar to pick its icon and colour; the choice is stored on the server,
   // so every device sees the same one.
   import { Popover } from "bits-ui";
@@ -27,7 +28,7 @@
       <span class="sit-badge"><Icon name="pencil" size={10} /></span>
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content class="sb-panel server-icon-panel above-modal" side="bottom" align="start" sideOffset={6}>
+      <PopoverContent class="sb-panel server-icon-panel above-modal" side="bottom" align="start" sideOffset={6}>
         <input class="sip-search" type="text" placeholder="Search icons…" bind:value={query} />
         <div class="sip-icons">
           {#each shown as n (n)}
@@ -58,7 +59,7 @@
           {/each}
         </div>
         <button type="button" class="sip-reset" onclick={() => save({})}>Reset to initials</button>
-      </Popover.Content>
+      </PopoverContent>
     </Popover.Portal>
   </Popover.Root>
 {/if}

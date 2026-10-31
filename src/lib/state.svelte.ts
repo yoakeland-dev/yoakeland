@@ -52,7 +52,9 @@ import type {
   SubagentRun,
   SideAnswerData,
   MessageSummaryData,
+  ProcessList,
 } from "./types";
+import { withCpu } from "./processes";
   import { findCall, findCallInMessages, IN_FLIGHT } from "./subagents";
 
 import {
@@ -628,6 +630,8 @@ export class ServerState {
   // server's, so it follows you across devices.
   notifications = $state<ServerNotification[]>([]);
   notifyPrefs = $state<NotifyPrefs | null>(null);
+  /** Latest list_processes answer, with CPU % against the one before (the diagnostics page polls it). */
+  processes = $state<ProcessList | null>(null);
   /** The permission rules in force per project (SPEC.md §3.2 permission_rules); `error` is why the last change was refused. */
   permissionRules = $state<Record<string, PermissionRulesData>>({});
   /** MCP servers per project (SPEC.md §3.2 mcp_servers), pushed as each one's state changes. */
@@ -1260,6 +1264,7 @@ export class ServerState {
     this.currentSessionId = sessionId;
     app.showUsage = false;
     app.showExtensions = false;
+    app.showDiagnostics = false;
     const partner = this.splitPartnerFor(sessionId);
     if (partner) {
       this.ensureSession(partner.sessionId);
@@ -1713,6 +1718,7 @@ export class ServerState {
     this.sidebarSessionId = null;
     app.showUsage = false;
     app.showExtensions = false;
+    app.showDiagnostics = false;
     return id;
   }
 
@@ -2582,6 +2588,9 @@ export class ServerState {
         this.app.osAlert(this.connectionId, n);
         break;
       }
+      case "process_list":
+        this.processes = withCpu(this.processes, env.data as unknown as ProcessList);
+        break;
       case "notification_list": {
         const data = env.data as { notifications: ServerNotification[] };
         this.notifications = data.notifications ?? [];
@@ -2982,16 +2991,22 @@ class AppState {
   showUsage = $state(false);
   /** MCP servers and skills, a page in the chat panel's place like usage (ExtensionsPanel.svelte). */
   showExtensions = $state(false);
+  /** Per-server process tree, a page in the chat panel's place (DiagnosticsPanel.svelte). */
+  showDiagnostics = $state(false);
   /** A page is showing instead of the chat: the chat's own chrome steps aside. */
   get fullPage() {
-    return this.showUsage || this.showExtensions || this.onboarding;
+    return this.showUsage || this.showExtensions || this.showDiagnostics || this.onboarding;
+  }
+  openDiagnostics() {
+    this.showUsage = this.showExtensions = false;
+    this.showDiagnostics = true;
   }
   /** First run: the setup flow takes the whole window. */
   get onboarding() {
     return !this.settings.onboarded;
   }
   openExtensions() {
-    this.showUsage = false;
+    this.showUsage = this.showDiagnostics = false;
     this.showExtensions = true;
   }
   settingsTab = $state("appearance");
@@ -3013,7 +3028,7 @@ class AppState {
   // Both sidebars slide off-screen when collapsed rather than shrinking; their shared toggle
   // button is pinned top-left of the window, outside either sidebar.
   sidebarCollapsed = $state(
-    viewport.narrow || (typeof localStorage !== "undefined" ? loadBool(SIDEBAR_COLLAPSED_KEY) : false),
+    typeof localStorage !== "undefined" ? loadBool(SIDEBAR_COLLAPSED_KEY) : false,
   );
   /** Collapsed sidebar floating over the chat while the toggle (or the sidebar itself) is hovered. Never persisted. */
   sidebarPeek = $state(false);
@@ -3022,7 +3037,7 @@ class AppState {
   /** Hover in opens after a beat (so a pass over the corner doesn't flash it); out closes after a longer one so the pointer can travel to the panel. */
   peekSidebar(on: boolean) {
     clearTimeout(this.#peekTimer);
-    if (on && (!this.sidebarCollapsed || viewport.narrow)) return;
+    if (on && (!this.sidebarCollapsed || viewport.kind !== "desktop")) return;
     this.#peekTimer = setTimeout(() => (this.sidebarPeek = on), on ? 100 : 350);
   }
   rightSidebarCollapsed = $state(
@@ -3123,7 +3138,7 @@ class AppState {
   }
   /** A client-side toast with an action button (e.g. "Archived, Undo"). */
   toastAction(connectionId: ConnectionId, title: string, action?: { label: string; run: () => void }) {
-    const id = `local-${Date.now()}`;
+    const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.toasts = [
       ...this.toasts.slice(-5),
       { id, level: "info", kind: "local", title, createdAt: new Date().toISOString(), connectionId, action },
@@ -3209,9 +3224,9 @@ class AppState {
     if (!viewport.narrow) saveBool(SIDEBAR_COLLAPSED_KEY, collapsed);
   }
 
-  /** On a phone the sidebar is a drawer that starts shut and isn't remembered; leaving that width restores the saved choice. */
+  /** On a phone the sidebar is the Home screen and has no collapsed state (Sidebar.svelte ignores it); the saved choice is left alone. */
   syncNarrow() {
-    this.sidebarCollapsed = viewport.narrow || loadBool(SIDEBAR_COLLAPSED_KEY);
+    this.sidebarCollapsed = loadBool(SIDEBAR_COLLAPSED_KEY);
   }
 
   /** Same reason setSidebarCollapsed exists, for the right sidebar's drag-to-collapse. */

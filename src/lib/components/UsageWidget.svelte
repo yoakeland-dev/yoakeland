@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   // Subscription usage (SPEC.md §2a status.rateLimits). Clicking a card pins it to the collapsed
   // view (settings.usageFocus); with nothing pinned, the most-used one shows.
@@ -56,7 +57,7 @@
       {/if}
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content class="sb-panel usage-panel" side="top" align="end" sideOffset={8}>
+      <PopoverContent class="sb-panel usage-panel" side="top" align="end" sideOffset={8}>
         <div class="sb-cards">
           {#each cards as c (c.id)}
             <button
@@ -105,7 +106,7 @@
             </button>
           {/if}
         </div>
-      </Popover.Content>
+      </PopoverContent>
     </Popover.Portal>
   </Popover.Root>
 {/if}

@@ -419,18 +419,16 @@
                   {/if}
                 </div>
               {/each}
-              {#if isDesktop || orAccount}
-                <div class="row card">
-                  {@render row("brain", "openrouter", "OpenRouter", orError || (orAccount ? "Signed in" : orStatus === "waiting" ? "Finish in your browser…" : orStatus === "finishing" ? "Finishing…" : "Sign in with your account"), !!orError)}
-                  {#if orAccount}
-                    <span class="state good"><Icon name="circle-check" size={18} /></span>
-                  {:else if orStatus === "idle"}
-                    <Button size="sm" onclick={signInOR}>Sign in</Button>
-                  {:else}
-                    <Button size="sm" variant="ghost" onclick={cancelOR}>Cancel</Button>
-                  {/if}
-                </div>
-              {/if}
+              <div class="row card">
+                {@render row("brain", "openrouter", "OpenRouter", orError || (orAccount ? "Signed in" : orStatus === "waiting" ? "Finish in your browser…" : orStatus === "finishing" ? "Finishing…" : "Sign in with your account"), !!orError)}
+                {#if orAccount}
+                  <span class="state good"><Icon name="circle-check" size={18} /></span>
+                {:else if orStatus === "idle"}
+                  <Button size="sm" onclick={signInOR}>Sign in</Button>
+                {:else}
+                  <Button size="sm" variant="ghost" onclick={cancelOR}>Cancel</Button>
+                {/if}
+              </div>
               {#each keys as k (k.name)}
                 <div class="row card">
                   {@render row("key", providerBrand(k), k.name, "API key")}

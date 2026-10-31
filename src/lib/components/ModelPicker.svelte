@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app, modelKey } from "../state.svelte";
@@ -332,7 +333,7 @@
   </Popover.Trigger>
 
   <Popover.Portal>
-    <Popover.Content
+    <PopoverContent
       class="picker-panel"
       side="bottom"
       align="start"
@@ -555,7 +556,7 @@
           </div>
         </div>
       {/if}
-    </Popover.Content>
+    </PopoverContent>
   </Popover.Portal>
 </Popover.Root>
 

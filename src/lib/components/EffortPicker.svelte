@@ -47,6 +47,7 @@
 </script>
 
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app } from "../state.svelte";
@@ -129,7 +130,7 @@
     </Popover.Trigger>
 
     <Popover.Portal>
-      <Popover.Content class="effort-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
+      <PopoverContent class="effort-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
         <div class="panel-head">
           <span class="panel-heading">Effort</span>
           <button
@@ -150,7 +151,7 @@
             <Switch checked={fast} onchange={toggleFast} />
           </label>
         {/if}
-      </Popover.Content>
+      </PopoverContent>
     </Popover.Portal>
   </Popover.Root>
 {/if}

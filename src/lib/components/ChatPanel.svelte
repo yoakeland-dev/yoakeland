@@ -177,6 +177,7 @@
         use:wallpaperGL={{ src: app.settings.wallpaper, style: app.settings.wallpaperStyle, visible: isEmpty }}
       ></canvas>
     {/if}
+    {#if !viewport.narrow}
     <ChatHeader
       {sessionId}
       {snap}
@@ -189,6 +190,7 @@
       overlay
       bind:leftWidth={headerLeftW}
     />
+    {/if}
     {#if !ownsChrome}
       <!-- Same chrome-surface look as the real window-corner island (app.css),
            anchored to this panel's own corner instead. -->
@@ -226,7 +228,7 @@
         onpointerdown={() => setChatFocus(sessionId)}
         style:flex-basis={swapped ? sbW : null}
       >
-        <MessageList bind:this={list} bind:scrolledUp {sessionId} paddingTop="calc(var(--header-height) + 20px)" />
+        <MessageList bind:this={list} bind:scrolledUp {sessionId} paddingTop="calc(var(--chat-top, var(--header-height)) + 20px)" />
         {#if isEmpty && !sidePanel && app.settings.emptyFeed && !viewport.narrow}<EmptyFeed {sessionId} />{/if}
         <PromptInput {sessionId} {snap} floating={isEmpty} {scrolledUp} onJump={() => list?.jumpToBottom()} />
         {#if app.active?.openPlanSessionId === sessionId}
@@ -374,7 +376,7 @@
   }
   .syncing-badge {
     position: absolute;
-    top: calc(var(--header-height) + 10px);
+    top: calc(var(--chat-top, var(--header-height)) + 10px);
     left: 50%;
     transform: translateX(-50%);
     z-index: 3;
@@ -414,7 +416,7 @@
   /* Pushes FindBar below the floating header; !important beats its own
      scoped rule, which otherwise wins on specificity. */
   :global(.chat-find-bar) {
-    top: calc(var(--header-height) + 10px) !important;
+    top: calc(var(--chat-top, var(--header-height)) + 10px) !important;
   }
   /* :global since the element lives in MessageList's DOM, not this template. */
   :global(.chat-find-active) {
@@ -452,13 +454,13 @@
       backdrop-filter: none;
       border: 0;
       box-shadow: none;
-      top: calc(var(--header-height) + 4px);
+      top: calc(var(--chat-top, var(--header-height)) + 4px);
     }
   }
   /* Phone: the find bar is a strip under the header. */
   @media (max-width: 700px) {
     :global(.chat-find-bar) {
-      top: var(--header-height) !important;
+      top: var(--chat-top, var(--header-height)) !important;
       left: 0;
       right: 0;
       border-width: 0 0 1px !important;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SheetDialog from "./SheetDialog.svelte";
   import { Dialog } from "bits-ui";
   import { app } from "../state.svelte";
   import { fmtVersion } from "../serverVersion";
@@ -19,7 +20,7 @@
     for (const s of servers) lines.push(`server ${s.label}: ${s.serverStatus?.version ? fmtVersion(s.serverStatus.version) : s.connectionStatus}`);
     for (const [k, v] of buildInfo) lines.push(`${k}: ${v}`);
     const text = lines.join("\n");
-    await (isDesktop ? writeClipboard(text) : navigator.clipboard.writeText(text)).catch(() => {});
+    await writeClipboard(text).catch(() => {});
     copied = true;
     setTimeout(() => (copied = false), 1500);
   }
@@ -28,7 +29,7 @@
 <Dialog.Root bind:open>
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay" />
-    <Dialog.Content class="dialog-content about">
+    <SheetDialog class="dialog-content about">
       <Dialog.Close class="dialog-close about-close"><Icon name="xmark" size={14} /></Dialog.Close>
       <div class="mark"><img class="logo" src="logo.png" alt="" /></div>
       <Dialog.Title class="about-title">yoakeland</Dialog.Title>
@@ -73,7 +74,7 @@
         <span aria-hidden="true">·</span>
         <button onclick={() => openUrl(REPO)}>GitHub</button>
       </div>
-    </Dialog.Content>
+    </SheetDialog>
   </Dialog.Portal>
 </Dialog.Root>
 

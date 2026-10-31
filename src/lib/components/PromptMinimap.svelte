@@ -17,7 +17,7 @@
   .minimap {
     position: absolute;
     left: 4px;
-    top: calc(var(--header-height) + 20px);
+    top: calc(var(--chat-top, var(--header-height)) + 20px);
     /* Fixed, not tied to --composer-height: that shrinks when scrolled up and would re-centre the ticks. */
     bottom: 150px;
     width: 18px;

@@ -108,7 +108,7 @@
         label: "Paste",
         icon: "clipboard-list",
         onSelect: async () => {
-          paste(await readClipboard());
+          paste(await readClipboard().catch(() => ""));
         },
       },
       { label: "Select all", icon: "square", onSelect: () => term?.selectAll() },
@@ -225,7 +225,7 @@
       if (matches(e, "terminal.paste")) {
         e.stopPropagation();
         e.preventDefault();
-        void readClipboard().then(paste);
+        void readClipboard().then(paste, () => {});
         return false;
       }
       if (matches(e, "terminal.find")) {

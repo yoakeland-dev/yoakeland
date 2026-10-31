@@ -54,9 +54,9 @@
   let registry = $state<AcpRegistryAgent[] | null>(null);
   let regError = $state("");
   $effect(() => {
-    if (!isDesktop || registry) return;
+    if (!(isDesktop || cid) || registry) return;
     untrack(() => {
-      acpRegistry().then(
+      acpRegistry(cid ?? undefined).then(
         (r) => (registry = r),
         (e) => (regError = e instanceof Error ? e.message : String(e)),
       );
@@ -192,8 +192,8 @@
     </Command.Group>
   {:else if regError}
     <p class="note">{regError}</p>
-  {:else if !isDesktop}
-    <p class="note">The registry is only reachable from the desktop app. Use a custom command here.</p>
+  {:else if !isDesktop && !cid}
+    <p class="note">Connect to a server to browse the registry, or use a custom command.</p>
   {:else if !registry}
     <p class="note">Loading the registry…</p>
   {/if}

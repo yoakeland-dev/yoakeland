@@ -9,7 +9,10 @@
   import Icon from "../Icon.svelte";
   import Dropdown, { type DropdownItem } from "../Dropdown.svelte";
   import EmptyState from "./EmptyState.svelte";
-
+  import ServerBrowserView from "./ServerBrowserView.svelte";
+  import { toUrl } from "../../browserUrl";
+  import { app } from "../../state.svelte";
+  
   interface Webview extends HTMLElement {
     getWebContentsId(): number;
     getURL(): string;
@@ -52,6 +55,11 @@
     error: "",
   });
 
+  // The server's browser stands in for the <webview> on the web build; a desktop is always a browser
+  // host, which the server prefers, so it keeps its own.
+  const cid = $derived(app.activeConnectionId);
+  const serverMode = $derived(!!cid && !isDesktop);
+
   let tabs = $state<Tab[]>([newTab()]);
   let activeId = $state(tabs[0].id);
   const active = $derived(tabs.find((t) => t.id === activeId) ?? tabs[0]);
@@ -63,17 +71,6 @@
   $effect(() => {
     if (!editing) address = active.url === "about:blank" ? "" : active.url;
   });
-
-  /** Typed text to a URL: dev-server shorthands go to http://localhost, bare words to a search. */
-  function toUrl(input: string): string {
-    const s = input.trim();
-    if (!s) return "about:blank";
-    if (/^(https?:\/\/|about:)/i.test(s)) return s;
-    if (/^\d{2,5}$/.test(s)) return `http://localhost:${s}`;
-    if (/^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\]|[\w-]+\.local)(:\d+)?(\/|$)/i.test(s)) return `http://${s}`;
-    if (/^\S+\.\S+$/.test(s)) return `https://${s}`;
-    return `https://duckduckgo.com/?q=${encodeURIComponent(s)}`;
-  }
 
   function go() {
     editing = false;
@@ -281,7 +278,13 @@
   async function screenshot(tab: Tab, w: Webview): Promise<BrowserOutput> {
     const img = new Image();
     // A pane that isn't drawing (hidden, or no GPU surface) can leave capturePage pending forever.
-    const shot = await Promise.race([w.capturePage(), sleep(8000).then(() => undefined)]);
+    const shot = await Promise.race([
+      w.capturePage(),
+      sleep(8000).then(() => undefined),
+    ]).catch(() => {
+      // Chromium's compositor throws UnknownVizError (via the webview manager) when the window isn't drawing.
+      throw new Error("the screenshot failed: the app window isn't drawing (minimized, on another workspace or screen off); bring Yoake to the front on the machine running the browser");
+    });
     if (!shot) throw new Error("the screenshot timed out: the browser pane isn't drawing (is this chat on screen?)");
     img.src = shot.toDataURL();
     await img.decode().catch(() => {});
@@ -435,6 +438,9 @@
   });
 </script>
 
+{#if serverMode && cid}
+  <ServerBrowserView connectionId={cid} {sessionId} />
+{:else}
 <div class="browser">
   {#if tabs.length > 1}
     <div class="tabs">
@@ -560,6 +566,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <style>
   .browser {

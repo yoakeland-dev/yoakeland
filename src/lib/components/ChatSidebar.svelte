@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+  import MenuContent from "./MenuContent.svelte";
   import { tip } from "../tooltip.svelte";
   // Not to be confused with the "split view" feature (ServerState.sidebarSessionId
   // / RightSidebar.svelte), a second independent chat shown side by side.
@@ -185,14 +186,14 @@
                 <Icon name="dots" size={14} />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content class="context-menu" align="start" sideOffset={4}>
+                <MenuContent class="context-menu" align="start" sideOffset={4}>
                   {#each overflow as p (p.id)}
                     <DropdownMenu.Item class="context-menu-item" onSelect={() => (pick(p.id), selectPresenceSurface(p.id))}>
                       <Icon name={p.icon as any} size={13} />
                       <span>{p.label}</span>
                     </DropdownMenu.Item>
                   {/each}
-                </DropdownMenu.Content>
+                </MenuContent>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
           {/if}
@@ -535,9 +536,11 @@
       width: 100% !important;
       transform: none;
     }
+    /* MobileBar already carries back and the toggles, so the row needs no floating-chrome reserve. */
     .tabs {
-      padding-left: var(--toggle-reserve-in-panel) !important;
-      padding-right: var(--chrome-reserve) !important;
+      height: 2.9rem;
+      padding-left: var(--space-1) !important;
+      padding-right: var(--space-1) !important;
     }
     .tabs :global(.tab) {
       width: 2.3rem;
@@ -546,6 +549,48 @@
     .tab-strip {
       overflow-x: auto;
       scrollbar-width: none;
+    }
+    /* The tool picker is a list, not a grid of cards: rows a thumb can hit, led by the icon. */
+    .picker {
+      justify-content: flex-start;
+      gap: 0;
+      padding: var(--space-1) 0 calc(var(--safe-bottom) + var(--space-2));
+    }
+    .picker-head {
+      align-items: flex-start;
+      padding: var(--space-2) var(--space-2) var(--space-1);
+      text-align: left;
+    }
+    .grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      max-width: none;
+    }
+    .card {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      column-gap: var(--space-2);
+      row-gap: 0.1rem;
+      min-height: 4.4rem;
+      padding: var(--space-1) var(--space-2);
+      background: none;
+      border: 0;
+      border-radius: 0;
+    }
+    .card:active {
+      background: var(--wash-2);
+    }
+    .card :global(.card-icon) {
+      grid-row: 1 / 3;
+      width: 2.9rem;
+      height: 2.9rem;
+      border-radius: 50%;
+    }
+    /* No tool picked yet: the picker grid is the whole page, so an empty row would only be a band. */
+    .tabs:has(> .tab-strip:empty) {
+      display: none;
     }
     .tab-title,
     .resize-handle,

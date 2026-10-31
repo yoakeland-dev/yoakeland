@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SheetDialog from "./SheetDialog.svelte";
   import { Dialog } from "bits-ui";
   import { answerConfirm, confirmState } from "../confirm.svelte";
   import Button from "./ui/Button.svelte";
@@ -13,14 +14,14 @@
 <Dialog.Root open={!!confirmState.pending} onOpenChange={(o) => !o && answerConfirm(false)}>
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay confirm-overlay" />
-    <Dialog.Content class="dialog-content confirm">
+    <SheetDialog class="dialog-content confirm">
       <Dialog.Title class="confirm-title">Are you sure?</Dialog.Title>
       <Dialog.Description class="confirm-msg">{message}</Dialog.Description>
       <div class="confirm-actions">
         <Button type="button" variant="ghost" onclick={() => answerConfirm(false)}>Cancel</Button>
         <Button type="button" variant="primary" onclick={() => answerConfirm(true)}>Confirm</Button>
       </div>
-    </Dialog.Content>
+    </SheetDialog>
   </Dialog.Portal>
 </Dialog.Root>
 

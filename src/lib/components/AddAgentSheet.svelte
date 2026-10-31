@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SheetDialog from "./SheetDialog.svelte";
   // Add a coding agent or another account of one: agent, name, folder (Claude/Codex) or command
   // (custom), then sign in. A dialog on desktop, a tall bottom sheet on phones (mobile.css).
   import { Dialog } from "bits-ui";
@@ -147,7 +148,7 @@
 <Dialog.Root bind:open>
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay agent-add-overlay" />
-    <Dialog.Content class="dialog-content agent-add">
+    <SheetDialog class="dialog-content agent-add">
       <div class="strip"><i style:width="{((idx + 1) / steps.length) * 100}%"></i></div>
       <Dialog.Close class="dialog-close agent-add-close" aria-label="Close"><Icon name="xmark" size={14} /></Dialog.Close>
 
@@ -202,7 +203,7 @@
           <Button type="button" variant="primary" disabled={!canNext} onclick={next}>{idx === steps.length - 1 ? "Add" : "Next"}</Button>
         {/if}
       </div>
-    </Dialog.Content>
+    </SheetDialog>
   </Dialog.Portal>
 </Dialog.Root>
 

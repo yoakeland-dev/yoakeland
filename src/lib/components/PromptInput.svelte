@@ -1,8 +1,9 @@
 <script lang="ts">
+  import MenuContent from "./MenuContent.svelte";
   import { tip } from "../tooltip.svelte";
   import { fly, scale, slide } from "svelte/transition";
   import { cubicIn, cubicOut } from "svelte/easing";
-  import { onDestroy, setContext, untrack } from "svelte";
+  import { flushSync, onDestroy, setContext, untrack } from "svelte";
   import { DropdownMenu } from "bits-ui";
   import { app, CHAT_PROJECT } from "../state.svelte";
   import {
@@ -88,7 +89,8 @@
     prevFloating = floating;
   });
   // Compact: scrolled up in a conversation with nothing waiting on an answer. Same height morph.
-  const compact = $derived(scrolledUp && !floating && !(server?.asksFor(sessionId).length ?? 0));
+  // Not on a phone: there the composer folds by focus instead (`rest`).
+  const compact = $derived(!viewport.narrow && scrolledUp && !floating && !(server?.asksFor(sessionId).length ?? 0));
   let prevCompact: boolean | undefined;
   $effect(() => {
     if (prevCompact !== undefined && compact !== prevCompact) {
@@ -144,7 +146,9 @@
     const prevHeight = textarea.style.height;
     textarea.style.height = "auto";
     const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
-    const minHeight = lineHeight * (floating ? 3 : 1);
+    const cs = getComputedStyle(textarea);
+    const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    const minHeight = lineHeight * (floating && !rest ? 3 : 1) + pad;
     const target =
       Math.max(
         minHeight,
@@ -160,6 +164,7 @@
     text;
     floating;
     compact;
+    rest;
     autosize();
   });
 
@@ -773,6 +778,8 @@
       attachmentsBySession[sessionId] = [];
     }
     text = "";
+    // Phone: sending folds the composer back to its resting row and drops the keyboard.
+    if (viewport.narrow) textarea?.blur();
   }
 
   // The $ picker reads this project's skills; the daemon rescans when asked, so a new SKILL.md shows up on the next chat.
@@ -780,6 +787,89 @@
     if (filesRoot && cid && connected && !server?.skillsByProject[filesRoot]) listSkills(cid, filesRoot);
   });
   let focused = $state(false);
+  // Focus anywhere in the composer, or a picker/menu opened from it (its popup takes focus away,
+  // but the toolbar must stay put under it). Phone only matters, see `rest`.
+  let within = $state(false);
+  const recheckWithin = () =>
+    (within = !!boxEl && (boxEl.contains(document.activeElement) || !!boxEl.querySelector('[aria-expanded="true"]')));
+  $effect(() => {
+    if (!boxEl) return;
+    const mo = new MutationObserver(recheckWithin);
+    mo.observe(boxEl, { subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
+    return () => mo.disconnect();
+  });
+  const wantRest = $derived(viewport.narrow && !within && !text.trim() && !attachments.length && !editingId);
+
+  // Phone: resting is one row (attach, field, send); focus or text unfolds the toolbar. `rest` is the
+  // layout actually shown; it follows `wantRest` through a FLIP morph (see foldTo), as in the mockup.
+  let rest = $state(untrack(() => wantRest));
+  let dockAnims: Animation[] = [];
+  let foldToken = 0;
+  let foldTarget = untrack(() => rest);
+  const DOCK_EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+  async function foldTo(next: boolean) {
+    const box = boxEl;
+    const mine = ++foldToken;
+    if (next === rest) {
+      // Changed its mind during the fade-out: back to the open layout.
+      dockAnims.forEach((a) => a.cancel());
+      dockAnims = [];
+      return;
+    }
+    const flip = () => {
+      rest = next;
+      flushSync();
+    };
+    if (!box || matchMedia("(prefers-reduced-motion: reduce)").matches) return flip();
+    const spd = parseFloat(getComputedStyle(box).getPropertyValue("--anim-speed")) || 1;
+    const items = () =>
+      ["input-area", "add-chip", "primary"].map((c) => box.querySelector<HTMLElement>("." + c)).filter((e): e is HTMLElement => !!e);
+    const pickers = () => [...(box.querySelector(".pickers")?.children ?? [])] as HTMLElement[];
+    if (next && !rest) {
+      // Folding away: the toolbar items fade out first, then the layout folds.
+      const fades = pickers().map((e) => e.animate({ opacity: [1, 0] }, { duration: 110 * spd, easing: "ease", fill: "forwards" }));
+      dockAnims.push(...fades);
+      await Promise.all(fades.map((f) => f.finished)).catch(() => {});
+      if (mine !== foldToken) return;
+    }
+    // Measured before cancelling, so an interrupted morph restarts from where it visibly is.
+    const els = items();
+    const from = els.map((e) => e.getBoundingClientRect());
+    const h0 = box.getBoundingClientRect().height;
+    dockAnims.forEach((a) => a.cancel());
+    dockAnims = [];
+    flip();
+    autosize();
+    const o = { duration: 300 * spd, easing: DOCK_EASE };
+    els.forEach((e, i) => {
+      const r = e.getBoundingClientRect();
+      const kf: Keyframe[] = [{ transform: `translate(${from[i].left - r.left}px, ${from[i].top - r.top}px)` }, { transform: "none" }];
+      if (e.classList.contains("input-area")) {
+        kf[0].width = from[i].width + "px";
+        kf[1].width = r.width + "px";
+      }
+      dockAnims.push(e.animate(kf, o));
+    });
+    const h1 = box.getBoundingClientRect().height;
+    dockAnims.push(box.animate({ height: [h0 + "px", h1 + "px"] }, o));
+    if (!next)
+      pickers().forEach((e) =>
+        dockAnims.push(
+          e.animate(
+            { opacity: [0, 1], transform: ["translateY(8px)", "none"] },
+            { duration: 200 * spd, delay: 60 * spd, easing: DOCK_EASE, fill: "backwards" },
+          ),
+        ),
+      );
+  }
+  $effect(() => {
+    const next = wantRest;
+    untrack(() => {
+      if (next === foldTarget) return;
+      foldTarget = next;
+      void foldTo(next);
+    });
+  });
 
   // The + menu: context to add. A double click on it attaches files straight away.
   let addOpen = $state(false);
@@ -873,7 +963,7 @@
   }
 </script>
 
-<div class="wrap" class:floating class:compact class:snap>
+<div class="wrap" class:floating class:compact class:rest class:snap>
   <div class="dim" class:shown={dragOver}></div>
   <div class="stack" class:morphing bind:this={stackEl}>
     <h2 class="hero" class:hidden={!floating}>
@@ -910,9 +1000,11 @@
         </button>
       </div>
 
+      <div class="surface">
       {#if asks.length}
         <AskCard bind:this={askCard} {sessionId} {asks} />
       {/if}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <form
         class="box"
         class:editing={!!editingId && !asks.length}
@@ -920,6 +1012,13 @@
         class:drag-over={dragOver}
         bind:this={boxEl}
         onsubmit={submit}
+        onfocusin={() => (within = true)}
+        onfocusout={() => setTimeout(recheckWithin)}
+        onmousedown={(e) => {
+          // A tap on a button must not blur the textarea: that would fold the composer away
+          // before the tap lands.
+          if (viewport.narrow && document.activeElement === textarea && (e.target as Element).closest("button")) e.preventDefault();
+        }}
         ondragover={onDragOver}
         ondragleave={() => isDesktop || (dragOver = false)}
         ondrop={onDrop}
@@ -1022,7 +1121,7 @@
                 <Icon name="paperclip" size={14} />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content
+                <MenuContent
                   class="context-menu"
                   side="bottom"
                   align="start"
@@ -1053,7 +1152,7 @@
                       <span>Open the plan</span>
                     </DropdownMenu.Item>
                   {/if}
-                </DropdownMenu.Content>
+                </MenuContent>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
             <input
@@ -1067,7 +1166,7 @@
                 input.value = "";
               }}
             />
-            <div class="pickers">
+            <div class="pickers" inert={rest}>
               <ModelPicker {sessionId} />
               <EffortPicker {sessionId} />
               <ModePicker {sessionId} />
@@ -1095,6 +1194,7 @@
           <span class="glyph" class:on={role === "confirm"}><Icon name="check" size={16} /></span>
         </button>
       </form>
+      </div>
 
       <!-- Sibling of the form, not a child: the form's own backdrop-filter is a backdrop root, so a
            blur inside it would have nothing to sample. -->
@@ -1229,7 +1329,7 @@
     position: absolute;
     inset: 0;
     background: radial-gradient(
-      42rem 30rem at 50% calc(50% + var(--header-height) / 2),
+      42rem 30rem at 50% calc(50% + var(--chat-top, var(--header-height)) / 2),
       var(--panel-bg) 0%,
       transparent 70%
     );
@@ -1291,7 +1391,7 @@
       width var(--morph) ease;
     /* Centered on the visible body below the header, not the whole panel: .wrap spans behind
        the overlaid header, so a plain 50% would sit too high. */
-    top: calc(50% + var(--header-height) / 2);
+    top: calc(50% + var(--chat-top, var(--header-height)) / 2);
     width: min(36rem, calc(100% - 3.43rem));
     transform: translate(-50%, -50%);
   }
@@ -1495,6 +1595,10 @@
   }
   .dock {
     position: relative;
+  }
+  /* Only the phone gives the ask card and composer a shared surface. */
+  .surface {
+    display: contents;
   }
   /* Rises out from behind the box's top edge: tucked, it sits inside the box's footprint. */
   .status {
@@ -2039,16 +2143,19 @@
       left: 0;
       right: 0;
       top: auto;
-      bottom: 0;
+      bottom: 0.6rem;
       width: 100%;
       transform: none;
       translate: none;
     }
-    /* Full width, flush to the bottom, corners still rounded at the top. */
+    /* A card floating above the bottom bar, inset from the edges and rounded all round, so the
+       chat shows around it. (When an ask is attached, its top corners square off, see .asking.) */
     .box {
-      border-radius: 22px 22px 0 0;
-      border-bottom-width: 0;
+      width: auto;
+      margin-inline: 0.6rem;
+      border-radius: var(--radius-float);
       padding-inline: var(--space-1);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
     }
     .pickers {
       background: none;
@@ -2110,9 +2217,111 @@
       width: 3rem;
       height: 3rem;
     }
-    .wrap.compact :is(textarea, .mirror) {
+
+    /* The composer's morph is a FLIP in foldTo (script): the class flips the layout at once and
+       the script animates the field, attach and send from their old rects. So nothing here
+       transitions. Resting is one row (attach, field, send); the toolbar row folds to 0 height
+       with the attach button lifted into the field's row. */
+    .box {
+      padding: var(--space-1);
+      background: none;
+      backdrop-filter: none;
+      border: none;
+      border-radius: 0;
+      margin-inline: 0;
+      box-shadow: none;
+    }
+    .box.drag-over {
+      box-shadow: none;
+    }
+    .box.asking {
+      border-radius: 0;
+    }
+    /* The dock: ask card and composer as one surface floating 8px off the edges. */
+    .surface {
+      display: block;
+      margin-inline: 8px;
+      overflow: hidden;
+      background: var(--float-bg);
+      backdrop-filter: var(--float-blur);
+      border: 1px solid var(--float-border);
+      border-block-color: var(--float-border-top) var(--float-border-bottom);
+      border-radius: 24px;
+      box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.28);
+      transition: box-shadow calc(0.16s * var(--anim-speed, 1)) ease;
+    }
+    .surface:focus-within {
+      box-shadow:
+        0 -6px 24px rgba(0, 0, 0, 0.28),
+        0 0 0 3px var(--accent-dim);
+    }
+    /* Rule between the ask and the composer. */
+    .box.asking {
+      border-top: 1px solid var(--float-border);
+    }
+    textarea,
+    .mirror {
       padding-block: calc((3rem - 1.38rem) / 2);
-      padding-right: 3.2rem;
+      padding-inline: 0.6rem 0;
+      transition: none;
+    }
+    .input-area {
+      margin-left: 0;
+    }
+    .toolbar-clip,
+    .toolbar,
+    .pickers {
+      transition: none;
+    }
+    .toolbar {
+      overflow: visible;
+      align-items: flex-start;
+    }
+    .wrap.rest .input-area {
+      margin-left: 2.6rem;
+      margin-right: 3.2rem;
+    }
+    .wrap.rest .toolbar-clip {
+      grid-template-rows: 0fr;
+      margin-top: 0;
+    }
+    .wrap.rest .toolbar {
+      transform: translateY(-2.9rem);
+    }
+    .wrap.rest .pickers {
+      opacity: 0;
+      visibility: hidden;
+    }
+    /* Send: idle (dim arrow), send (accent), stop (neutral); icons crossfade with blur. */
+    .primary {
+      transition:
+        background calc(0.2s * var(--anim-speed, 1)) ease,
+        color calc(0.2s * var(--anim-speed, 1)) ease,
+        transform calc(0.16s * var(--anim-speed, 1)) cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .primary:active {
+      transform: scale(0.92);
+    }
+    .primary.stop {
+      background: var(--wash-4, var(--wash-3));
+      color: var(--text);
+    }
+    .glyph {
+      filter: blur(2px);
+      transform: scale(0.7);
+      transition:
+        opacity calc(0.18s * var(--anim-speed, 1)) ease,
+        filter calc(0.18s * var(--anim-speed, 1)) ease,
+        transform calc(0.18s * var(--anim-speed, 1)) cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .glyph.on {
+      filter: none;
+      transform: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .stack {
+        --morph: 0.01s;
+      }
     }
   }
 </style>

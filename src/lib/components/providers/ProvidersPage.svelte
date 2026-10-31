@@ -17,6 +17,9 @@
   import Icon from "../Icon.svelte";
   import LobeIcon from "../LobeIcon.svelte";
       import ProviderDetail from "./ProviderDetail.svelte";
+  import SubPage from "../SubPage.svelte";
+  import { useNav } from "../../settingsNav.svelte";
+  import { viewport } from "../../viewport.svelte";
 
   let { cid, server, connected }: { cid: string | null; server: ServerState | null; connected: boolean } = $props();
 
@@ -63,9 +66,12 @@
   const current = $derived(items.find((i) => i.p.name === active));
   // Phone: the list and the page are two screens.
   let showDetail = $state(false);
+  const nav = useNav();
   function pick(name: string) {
     sel = name;
-    showDetail = true;
+    // Phone settings: the account opens as a page in the settings stack.
+    if (viewport.narrow && nav) void nav.push("provider");
+    else showDetail = true;
   }
 
   // An account added from the palette shows up a moment later: select it once it does.
@@ -170,6 +176,7 @@
 
     <div class="det">
       <button type="button" class="back" onclick={() => (showDetail = false)}><Icon name="chevron-left" size={14} /> Providers</button>
+      <SubPage id="provider" title={current?.title ?? "Provider"} link={false}>
       {#if current}
         {#key current.p.name}
           <ProviderDetail
@@ -189,6 +196,7 @@
           />
         {/key}
       {/if}
+      </SubPage>
     </div>
   </div>
 </div>

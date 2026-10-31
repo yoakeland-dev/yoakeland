@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MenuContent from "./MenuContent.svelte";
   import { Tabs, DropdownMenu } from "bits-ui";
   import { fade } from "svelte/transition";
   import { tip } from "../tooltip.svelte";
@@ -80,7 +81,7 @@
           <span class="name">+{hidden.length}</span>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
-          <DropdownMenu.Content class="context-menu live-menu" align="center" sideOffset={6}>
+          <MenuContent class="context-menu live-menu" align="center" sideOffset={6}>
             {#each hidden as t (t.key)}
               {@const srv = app.servers[t.cid]}
               <DropdownMenu.Item class="context-menu-item live-item {t.status}" onSelect={() => open(t.key)}>
@@ -90,7 +91,7 @@
                 <span class="label">{LABEL[t.status]}</span>
               </DropdownMenu.Item>
             {/each}
-          </DropdownMenu.Content>
+          </MenuContent>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
     {/if}

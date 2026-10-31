@@ -60,6 +60,7 @@
   import star from "@tabler/icons/outline/star.svg?raw";
   import starFilled from "@tabler/icons/filled/star.svg?raw";
   import paperclip from "@tabler/icons/outline/paperclip.svg?raw";
+  import activity from "@tabler/icons/outline/activity.svg?raw";
   import chevronDown from "@tabler/icons/outline/chevron-down.svg?raw";
   import layoutSidebarRight from "@tabler/icons/outline/layout-sidebar-right.svg?raw";
   import terminal2 from "@tabler/icons/outline/terminal-2.svg?raw";
@@ -177,6 +178,7 @@
     "chevron-up": chevronUp,
     "layout-columns": layoutColumns,
     "message-circle": messageCircle,
+    activity,
     "alert-circle": alertCircle,
     "circle-check": circleCheck,
     "loader-2": loader2,

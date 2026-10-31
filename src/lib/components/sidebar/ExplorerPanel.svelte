@@ -242,7 +242,7 @@
 
   const absolute = (rel: string) => (rel ? `${projectPath.replace(/\/+$/, "")}/${rel}` : projectPath);
   const copy = (text: string) => void navigator.clipboard?.writeText(text);
-  // The file manager and absolute paths only mean something on the machine the files are on.
+  // The file manager only means something on the machine the files are on. The path of a remote server's file is still worth copying.
   const local = $derived(isDesktop && server?.connectionMode === "local");
 
   // One menu for the whole tree; rows set the target on right-click, before it opens.
@@ -261,7 +261,7 @@
         { label: "Copy relative path", icon: "copy", onSelect: () => copy(path) },
       );
     }
-    if (local) items.push({ label: "Copy path", icon: "copy", onSelect: () => copy(absolute(path)) });
+    items.push({ label: "Copy path", icon: "copy", onSelect: () => copy(absolute(path)) });
     items.push({ label: "Open terminal here", icon: "terminal-2", onSelect: () => openTerminal(dir) });
     if (local) items.push({ label: "Reveal in file manager", icon: "folder-open", onSelect: () => void revealItemInDir(absolute(path)) });
     if (path) items.push({ label: "Delete", icon: "trash", danger: true, onSelect: () => remove(path, isDir) });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MenuContent from "./MenuContent.svelte";
   import { awaitingApproval } from "../extensions";
   import { tip } from "../tooltip.svelte";
   import { CHAT_STARTERS } from "../chatBrief";
@@ -20,9 +21,7 @@
   import PairPhoneDialog from "./PairPhoneDialog.svelte";
   import SearchInput from "./SearchInput.svelte";
   import { matches } from "../keybinds.svelte";
-  import { viewport, drawerWidth } from "../viewport.svelte";
-  import { swipe, commits } from "../gestures";
-import { haptic } from "../haptics";
+  import { viewport } from "../viewport.svelte";
   import { DropdownMenu } from "bits-ui";
   import { tick, untrack } from "svelte";
   import { fly, slide } from "svelte/transition";
@@ -34,6 +33,7 @@ import { haptic } from "../haptics";
   // Dragging past the minimum collapses outright, VS Code-style; dragging back out while
   // still down re-opens it (see onResize), so overshooting costs nothing.
   const COLLAPSE_THRESHOLD = 90;
+  const TABLET_WIDTH = 320;
 
   let server = $derived(app.active);
   let cid = $derived(app.activeConnectionId);
@@ -118,8 +118,8 @@ import { haptic } from "../haptics";
   let showAbout = $state(false);
   let showNew = $state(!!pendingWhatsNew(__APP_VERSION__));
   let showPair = $state(false);
-  // Pairing a phone needs the daemon on this machine: it makes the token and serves the page.
-  const localCid = $derived(connectedServers.find(([, srv]) => srv.connectionMode === "local")?.[0]);
+  // Pairing a phone needs a daemon that makes the token: this machine's, or in a browser any server we have full access to.
+  const pairCid = $derived((isDesktop ? connectedServers.find(([, srv]) => srv.connectionMode === "local") : connectedServers.find(([, srv]) => !srv.limited))?.[0]);
   const THEMES = [
     { id: "light", label: "Light", icon: "sun-light" },
     { id: "dark", label: "Dark", icon: "half-moon" },
@@ -271,13 +271,12 @@ import { haptic } from "../haptics";
 
   // The slot shrinks in the flex layout (0 when collapsed); the panel itself stays fixed-width
   // and slides off via transform, so content never squashes mid-transition.
-  const slotWidth = $derived(app.sidebarCollapsed || viewport.narrow ? 0 : app.sidebarWidth);
-  // Phone: a drawer over the chat. The finger sets its position directly while it is down.
-  const drawerStyle = $derived(
-    viewport.narrow
-      ? `width: ${drawerWidth()}px${viewport.drawer !== null ? `; transform: translateX(${(viewport.drawer - 1) * 100}%); transition: none` : ""}`
-      : `width: ${app.sidebarWidth}px`,
-  );
+  // Phone: the Home screen, so the sidebar fills it and never collapses. Tablet: a fixed-width
+  // list pane beside the chat (not resizable by touch, so no handle).
+  const phone = $derived(viewport.narrow);
+  const collapsed = $derived(app.sidebarCollapsed && !phone);
+  const slotWidth = $derived(phone ? null : collapsed ? 0 : viewport.kind === "tablet" ? TABLET_WIDTH : app.sidebarWidth);
+  const paneWidth = $derived(phone ? "100%" : `${viewport.kind === "tablet" ? TABLET_WIDTH : app.sidebarWidth}px`);
 
   // The width this drag started from, so a drag that ends collapsed can put it
   // back, see stopResize.
@@ -596,28 +595,17 @@ import { haptic } from "../haptics";
   {/if}
 {/snippet}
 
-<div class="sidebar-slot" class:resizing class:collapse-anim={collapsedByDrag} class:snap={app.sidebarSnap} style="flex-basis: {slotWidth}px">
+<div class="sidebar-slot" class:resizing class:collapse-anim={collapsedByDrag} class:snap={app.sidebarSnap} style={slotWidth === null ? "flex: 1" : `flex-basis: ${slotWidth}px`}>
   <aside
     class="sidebar"
     bind:this={sidebarEl}
-    class:collapsed={app.sidebarCollapsed}
-    class:peek={app.sidebarPeek && app.sidebarCollapsed}
+    class:collapsed
+    class:phone
+    class:peek={app.sidebarPeek && collapsed}
     class:leaving
     onpointerenter={() => app.sidebarPeek && app.peekSidebar(true)}
     onpointerleave={() => app.peekSidebar(false)}
-    style={drawerStyle}
-    {@attach swipe(() => ({
-      axis: "x",
-      accept: (d) => viewport.narrow && d < 0 && !app.sidebarCollapsed,
-      onMove: (d) => (viewport.drawer = Math.min(1, Math.max(0, 1 + d / drawerWidth()))),
-      onEnd: (d, v) => {
-        const closed = commits(1 - Math.min(1, Math.max(0, 1 + d / drawerWidth())), -v, 1);
-        if (closed) haptic();
-        app.setSidebarCollapsed(closed);
-        viewport.drawer = null;
-      },
-      onCancel: () => (viewport.drawer = null),
-    }))}
+    style:width={paneWidth}
   >
     <div class="brand-row">
       <span class="brand-logo" aria-hidden="true"><span style="mask-image: url(mark.svg)"></span><span class="dot" style="mask-image: url(mark-dot.svg)"></span></span>
@@ -658,7 +646,7 @@ import { haptic } from "../haptics";
           {#if !chip && needsYou.length}<span class="filter-dot"></span>{/if}
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
-          <DropdownMenu.Content class="context-menu" align="end" sideOffset={4}>
+          <MenuContent class="context-menu" align="end" sideOffset={4}>
             {#each CHIPS as c (c.id)}
               <DropdownMenu.Item class="context-menu-item filter-item" onSelect={() => (chip = chip === c.id ? null : c.id)}>
                 <Icon name={c.icon as any} size={13} />
@@ -667,7 +655,7 @@ import { haptic } from "../haptics";
                 {#if chip === c.id}<Icon name="check" size={12} />{/if}
               </DropdownMenu.Item>
             {/each}
-          </DropdownMenu.Content>
+          </MenuContent>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
       <button
@@ -939,7 +927,7 @@ import { haptic } from "../haptics";
           <Icon name="selector" size={14} />
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
-          <DropdownMenu.Content class="context-menu user-menu" side="top" align="start" sideOffset={6}>
+          <MenuContent class="context-menu user-menu" side="top" align="start" sideOffset={6}>
             <DropdownMenu.Item class="context-menu-item" onSelect={() => (app.showSettings = true)}>
               <Icon name="settings" size={13} /><span>Settings</span>
             </DropdownMenu.Item>
@@ -949,7 +937,7 @@ import { haptic } from "../haptics";
               </DropdownMenu.SubTrigger>
               <!-- Portalled: nested inside the parent menu, its backdrop-filter has nothing to blur. -->
               <DropdownMenu.Portal>
-                <DropdownMenu.SubContent class="context-menu" sideOffset={6}>
+                <MenuContent sub class="context-menu" sideOffset={6}>
                   {#each THEMES as t (t.id)}
                     <DropdownMenu.Item class="context-menu-item" closeOnSelect={false} onSelect={() => setTheme(t.id)}>
                       <Icon name={t.icon as any} size={13} /><span class="grow">{t.label}</span>
@@ -960,14 +948,12 @@ import { haptic } from "../haptics";
                   <DropdownMenu.Item class="context-menu-item" onSelect={() => openSettings("appearance")}>
                     <Icon name="settings" size={13} /><span>More settings…</span>
                   </DropdownMenu.Item>
-                </DropdownMenu.SubContent>
+                </MenuContent>
               </DropdownMenu.Portal>
             </DropdownMenu.Sub>
-            {#if isDesktop}
-              <DropdownMenu.Item class="context-menu-item" disabled={!localCid} onSelect={() => (showPair = true)}>
-                <Icon name="qrcode" size={13} /><span>Pair a phone</span>
-              </DropdownMenu.Item>
-            {/if}
+            <DropdownMenu.Item class="context-menu-item" disabled={!pairCid} onSelect={() => (showPair = true)}>
+              <Icon name="qrcode" size={13} /><span>Pair a phone</span>
+            </DropdownMenu.Item>
             <DropdownMenu.Item class="context-menu-item" onSelect={() => (showAbout = true)}>
               <Icon name="info-circle" size={13} /><span>About</span>
             </DropdownMenu.Item>
@@ -975,7 +961,7 @@ import { haptic } from "../haptics";
             <DropdownMenu.Item class="context-menu-item danger" disabled={!connectedServers.length} onSelect={logOut}>
               <Icon name="logout" size={13} /><span>Log out</span>
             </DropdownMenu.Item>
-          </DropdownMenu.Content>
+          </MenuContent>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
       <!-- Same swap as the usage button next to it: the plug turns into a back arrow while its page is open. -->
@@ -1008,9 +994,9 @@ import { haptic } from "../haptics";
     </div>
     <AboutDialog bind:open={showAbout} onWhatsNew={() => (showNew = true)} />
     <WhatsNewDialog bind:open={showNew} />
-    {#if localCid}<PairPhoneDialog bind:open={showPair} cid={localCid} />{/if}
+    {#if pairCid}<PairPhoneDialog bind:open={showPair} cid={pairCid} />{/if}
 
-    {#if !app.sidebarCollapsed || resizing}
+    {#if viewport.kind === "desktop" && (!app.sidebarCollapsed || resizing)}
       <!-- Also mounted mid-drag while collapsed, since unmounting it here
            would drop the pointer capture the drag-to-reopen gesture depends
            on. -->
@@ -1741,32 +1727,24 @@ import { haptic } from "../haptics";
     background: var(--warning, var(--accent));
   }
 
-  /* Phone: the sidebar is a drawer above the chat and the window chrome's toggle. */
+  /* Phone: the Home screen. It fills its slot instead of floating, so there is nothing to slide. */
+  .sidebar.phone {
+    position: static;
+    width: 100%;
+    height: 100%;
+    transform: none;
+    padding-top: var(--space-1);
+    background: var(--bg);
+    border: 0;
+    box-shadow: none;
+    overscroll-behavior: contain;
+  }
+  /* Finger-sized controls (search row, project row, tabs). */
   @media (max-width: 700px) {
     .sidebar-slot {
       position: static;
+      min-width: 0;
     }
-    .sidebar {
-      position: fixed;
-      z-index: 15;
-      top: 0;
-      bottom: 0;
-      height: auto;
-      padding-top: var(--safe-top);
-      padding-bottom: max(var(--safe-bottom), 0.6rem);
-      background: var(--bg);
-      border-right: 1px solid var(--panel-border);
-      box-shadow: var(--shadow-drawer);
-      touch-action: pan-y;
-      overscroll-behavior: contain;
-    }
-    .sidebar.collapsed {
-      box-shadow: none;
-    }
-    .resize-handle {
-      display: none;
-    }
-    /* Finger-sized controls (search row, project row, tabs). */
     .sidebar {
       --ctrl-h: 3rem;
     }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PopoverContent from "./PopoverContent.svelte";
   import { askConfirm } from "../confirm.svelte";
   import { tip } from "../tooltip.svelte";
   // One row per device (matched by deviceId, §3.2 peer_list) even if it's on several servers.
@@ -105,7 +106,7 @@
       {devices.length}
     </Popover.Trigger>
     <Popover.Portal>
-      <Popover.Content class="sb-panel peers-panel" side="top" align="start" sideOffset={8}>
+      <PopoverContent class="sb-panel peers-panel" side="top" align="start" sideOffset={8}>
         <ul class="sb-list">
           {#each devices as d (d.key)}
             <li class="sb-row">
@@ -159,7 +160,7 @@
             <Icon name="settings" size={12} /> Access
           </button>
         </div>
-      </Popover.Content>
+      </PopoverContent>
     </Popover.Portal>
   </Popover.Root>
 {/if}

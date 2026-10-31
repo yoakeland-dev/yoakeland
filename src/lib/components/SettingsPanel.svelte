@@ -1,15 +1,18 @@
 <script lang="ts">
+  import SheetDialog from "./SheetDialog.svelte";
   // App-wide pages (Profile, Appearance, Terminal, Servers) store on this device;
   // server-scoped pages (General, Providers, Projects, Access) store on whichever
   // server the page header points at.
   import { askConfirm } from "../confirm.svelte";
   import { fmtVersion } from "../serverVersion";
   import { Dialog, Tabs } from "bits-ui";
-  import { untrack, type ComponentProps } from "svelte";
+  import { untrack, type ComponentProps, type Snippet } from "svelte";
   import { app, forgetKnownServer, type ConnectionId } from "../state.svelte";
   import { basename } from "../format";
-  import { isDesktop, localServerSupported, revealItemInDir, windowChromeKind } from "../platform";
+  import { isDesktop, localServerSupported, requestWebAlerts, revealItemInDir, windowChromeKind } from "../platform";
   import { swipe, commits, ownsHorizontalDrag } from "../gestures";
+  import { SettingsNav, provideNav, hairline } from "../settingsNav.svelte";
+  import SubPage from "./SubPage.svelte";
   import { viewport } from "../viewport.svelte";
   import {
     browseAndAddProject,
@@ -44,6 +47,7 @@
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
   import type { CliKind, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
+  let webAlerts = $state<string>(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
   /** Each tab's page title, and whether it applies to one server (shown as [server] / page). */
   const HEADS: Record<string, { title: string; scoped: boolean }> = {
     profile: { title: "General", scoped: false },
@@ -61,6 +65,7 @@
     access: { title: "Access", scoped: true },
   };
   import Button from "./ui/Button.svelte";
+  import AvatarEditor from "./AvatarEditor.svelte";
   import NumberField from "./ui/NumberField.svelte";
   import Segmented from "./ui/Segmented.svelte";
   import Slider from "./ui/Slider.svelte";
@@ -312,6 +317,11 @@
   }
 
   let avatarInput: HTMLInputElement;
+  // Phone: the avatar opens a crop editor page; elsewhere it goes straight to the file picker.
+  let editor = $state<ReturnType<typeof AvatarEditor>>();
+  const onAvatarTap = () => (viewport.narrow ? void nav.push("avatar") : avatarInput?.click());
+  const serverCount = $derived(Object.values(app.servers).length);
+  const connectedCount = $derived(connectedIds().length);
   let uploadingAvatar = $state(false);
 
   async function onAvatarFile(e: Event) {
@@ -349,6 +359,15 @@
     if (!req) return;
     addPrefill = req;
     app.addServerRequest = null;
+  });
+
+  // Something asked for the add form (palette, deep link): on a phone that is a page.
+  $effect(() => {
+    if (!addPrefill || !viewport.narrow || !app.showSettings) return;
+    untrack(() => {
+      if (!nav.has("tab")) nav.reset(["tab"]);
+      void nav.push("add-server");
+    });
   });
 
   async function onRemoveRow(r: ServerRow) {
@@ -623,22 +642,23 @@
     notifications: "notifications alerts needs you desktop",
     access: "access network remote password tokens peers people audit log history approved refused",
   };
-  // Phone: the tab list and the page are two screens. Opening to a specific tab (provider or server
-  // prompts) lands straight on its page.
-  let detail = $state(false);
-  // Swipe right to go back a screen: the page follows the finger, then either leaves or springs back.
-  const backTarget = () =>
-    document.querySelector<HTMLElement>(detail ? ".settings-content .tab-panel:not([hidden])" : ".settings-content");
-  const goBack = {
+  // Phone: root list -> a tab's page -> sub-pages is a page stack (settingsNav). Opening to a specific tab
+  // (provider or server prompts) lands straight on its page.
+  const nav = new SettingsNav();
+  provideNav(nav);
+  nav.tabTitle = () => HEADS[app.settingsTab]?.title ?? "";
+  // The outermost level has nothing to pop: a swipe right there closes settings, the page following the finger.
+  const closeEl = () => document.querySelector<HTMLElement>(".settings-content");
+  const closeSwipe = {
     axis: "x",
     start: (e: PointerEvent) => !ownsHorizontalDrag(e.target),
     accept: (d: number) => d > 0,
     onMove: (d: number) => {
-      const el = backTarget();
+      const el = closeEl();
       if (el) (el.style.transition = "none"), (el.style.transform = `translateX(${Math.max(0, d)}px)`);
     },
     onEnd: (d: number, v: number) => {
-      const el = backTarget();
+      const el = closeEl();
       const go = commits(d / innerWidth, v, 1);
       if (!el) return;
       el.style.transition = go ? "opacity 0.14s ease" : "transform 0.2s var(--ui-ease)";
@@ -648,15 +668,31 @@
       if (!go) return void setTimeout(reset, 200);
       // Stay faded while it closes, so it doesn't flash back before bits' own fade-out.
       setTimeout(() => {
-        detail ? (detail = false) : (app.showSettings = false);
+        app.showSettings = false;
         setTimeout(reset, 300);
       }, 140);
     },
-    onCancel: () => backTarget()?.style.removeProperty("transform"),
+    onCancel: () => closeEl()?.style.removeProperty("transform"),
   } as const;
+  const goBack = () => (nav.depth ? nav.gesture : closeSwipe);
+  const hostEl = (el: HTMLElement) => {
+    nav.host = el;
+    queueMicrotask(() => nav.rest());
+    return () => (nav.host = null);
+  };
   $effect(() => {
     if (app.showSettings && viewport.narrow && app.settingsTab === "keyboard") app.settingsTab = "appearance";
-    if (app.showSettings) detail = app.settingsTab !== "appearance";
+  });
+  // Opening lands on the list, or straight on the tab someone asked for.
+  $effect(() => {
+    if (app.showSettings) untrack(() => nav.reset(app.settingsTab !== "appearance" ? ["tab"] : []));
+  });
+  // The outer shell's back button pops one settings level first.
+  $effect(() => {
+    if (!app.showSettings || !viewport.narrow || !nav.depth) return;
+    const prev = untrack(() => viewport.back);
+    viewport.back = () => void nav.pop();
+    return () => (viewport.back = prev);
   });
   let settingsSearch = $state("");
   let tabHasMatch = $state<Record<string, boolean>>({});
@@ -752,29 +788,34 @@
 {#snippet settingsHead()}
   {@const h = HEADS[app.settingsTab] ?? { title: "", scoped: false }}
   <header class="page-head">
-    <button type="button" class="settings-back" aria-label="All settings" onclick={() => (detail = false)}>
-      <Icon name="chevron-left" size={16} />
+    <button type="button" class="settings-back" aria-label="Back" onclick={() => void nav.pop()}>
+      <Icon name="chevron-left" size={18} />
     </button>
-    {#if h.scoped && server}
-      {#if serverItems.length > 1}
-        <Dropdown
-          items={serverItems}
-          bind:value={() => cid ?? undefined, (v) => (selectedConnectionId = v ?? null)}
-          triggerTitle="Which server these settings apply to"
-          triggerClass="scope-pick"
-          contentClass="above-modal"
-        >
-          {#snippet triggerLead()}
+    <div class="head-main">
+      <small class="crumb">{nav.crumb("tab")}</small>
+      <div class="head-row">
+        {#if h.scoped && server}
+          {#if serverItems.length > 1}
+            <Dropdown
+              items={serverItems}
+              bind:value={() => cid ?? undefined, (v) => (selectedConnectionId = v ?? null)}
+              triggerTitle="Which server these settings apply to"
+              triggerClass="scope-pick"
+              contentClass="above-modal"
+            >
+              {#snippet triggerLead()}
+                <ServerAvatar name={server.label} seed={server.serverId} size={22} />
+              {/snippet}
+            </Dropdown>
+          {:else}
             <ServerAvatar name={server.label} seed={server.serverId} size={22} />
-          {/snippet}
-        </Dropdown>
-      {:else}
-        <ServerAvatar name={server.label} seed={server.serverId} size={22} />
-        <span class="scope">{server.label}</span>
-      {/if}
-      <span class="crumb-sep">/</span>
-    {/if}
-    <h2>{h.title}</h2>
+            <span class="scope">{server.label}</span>
+          {/if}
+          <span class="crumb-sep">/</span>
+        {/if}
+        <h2>{h.title}</h2>
+      </div>
+    </div>
   </header>
 {/snippet}
 
@@ -788,6 +829,43 @@
       <Button type="button" onclick={() => (app.settingsTab = "servers")}>Go to Servers</Button>
     </div>
   {/if}
+{/snippet}
+
+{#snippet serverActions(r: ServerRow)}
+  {#if r.connectionId && (r.status === "connected" || r.status === "connecting")}
+    <Button type="button" size="sm" onclick={() => disconnect(r.connectionId!)}>Disconnect</Button>
+  {:else}
+    <Button type="button" size="sm" onclick={() => connectServerRow(r)}>
+      {r.connectionId ? "Reconnect" : "Connect"}
+    </Button>
+  {/if}
+  <Button
+    type="button"
+    icon={!viewport.narrow}
+    variant="ghost"
+    destructive
+    onclick={async () => {
+      await onRemoveRow(r);
+      if (viewport.narrow && !serverList.some((x) => x.key === r.key) && nav.has(`server-${r.key}`)) void nav.pop();
+    }}
+    {@attach tip(r.connectionId ? "Remove" : "Forget")}
+  >
+    <Icon name="trash" size={13} />{#if viewport.narrow}&nbsp;{r.connectionId ? "Remove" : "Forget"}{/if}
+  </Button>
+{/snippet}
+
+{#snippet face(size: number)}
+  <span class="face" style="width: {size}px; height: {size}px; font-size: {size * 0.55}px">
+    {#if isPhotoAvatar(app.settings.profileAvatar)}
+      <img src={app.settings.profileAvatar} alt="" />
+    {:else}
+      {app.settings.profileAvatar || "🐣"}
+    {/if}
+  </span>
+{/snippet}
+
+{#snippet cardPage(body: Snippet)}
+  <section class="settings-section"><div class="card">{@render body()}</div></section>
 {/snippet}
 
 {#snippet rowText(label: string, hint?: string, more?: string)}
@@ -889,7 +967,7 @@
 {/snippet}
 
 {#snippet tab(value: string, label: string, icon: ComponentProps<typeof Icon>["name"])}
-  <Tabs.Trigger value={value} class="settings-tab-trigger {settingsSearch && tabHasMatch[value] === false ? 'tab-dim' : ''}" onclick={() => (detail = true)}>
+  <Tabs.Trigger value={value} class="settings-tab-trigger {settingsSearch && tabHasMatch[value] === false ? 'tab-dim' : ''}" onclick={() => viewport.narrow && void nav.push("tab")}>
     <Icon name={icon} size={14} /> {label}
   </Tabs.Trigger>
 {/snippet}
@@ -979,11 +1057,11 @@
 <Dialog.Root bind:open={app.showSettings}>
   <Dialog.Portal>
     <Dialog.Overlay class="settings-overlay" />
-    <Dialog.Content class="settings-content">
+    <SheetDialog variant="page" class="settings-content">
       <Dialog.Close class="settings-close" aria-label="Close settings"><Icon name="xmark" size={18} /></Dialog.Close>
 
-      <div class="settings-swipe" {@attach swipe(() => goBack)}>
-      <Tabs.Root bind:value={app.settingsTab} orientation="vertical" class="settings-tabs {detail ? 'detail' : ''}">
+      <div class="settings-swipe" {@attach swipe(goBack)} {@attach hostEl}>
+      <Tabs.Root bind:value={app.settingsTab} orientation="vertical" class="settings-tabs">
         <Tabs.List class="tabs-list">
           <div class="settings-bar">
             <Dialog.Close class="settings-exit" aria-label="Close settings"><Icon name="chevron-left" size={16} /></Dialog.Close>
@@ -992,17 +1070,35 @@
           <div class="settings-search"><SearchInput bind:value={settingsSearch} placeholder="Search settings…" /></div>
           {#if noMatches}<div class="no-matches">No settings match “{settingsSearch.trim()}”</div>{/if}
 
+          <button type="button" class="profile-tile" onclick={() => void nav.push("profile")}>
+            <span class="pt-avatar">
+              {#if isPhotoAvatar(app.settings.profileAvatar)}
+                <img src={app.settings.profileAvatar} alt="" />
+              {:else}
+                <span class="emoji">{app.settings.profileAvatar || "🐣"}</span>
+              {/if}
+              <span class="pt-badge"><Icon name="pencil" size={12} /></span>
+            </span>
+            <span class="pt-who">
+              <b>{app.settings.profileName || "anonymous"}</b>
+              <small>{connectedCount} of {serverCount} server{serverCount === 1 ? "" : "s"} connected</small>
+            </span>
+          </button>
+
           <div class="tabs-group-label">App</div>
+          <div class="tabs-group">
           {@render tab("profile", "General", "user")}
           {@render tab("appearance", "Appearance", "palette")}
           {@render tab("text", "Text & code", "terminal-2")}
           {#if !viewport.narrow}{@render tab("keyboard", "Keyboard", "keyboard")}{/if}
           {@render tab("integrations", "Discord", "brand-discord")}
           {@render tab("servers", "Servers", "server")}
+          </div>
 
           <div class="tabs-group-label" {@attach tip("These apply to one server. Pick which at the top of each page.")}>
             {server ? server.label : "Server"}
           </div>
+          <div class="tabs-group">
           {@render tab("general", "Server", "settings")}
           {@render tab("providers", "Providers", "brain")}
           {@render tab("models", "Models", "sparkles")}
@@ -1010,13 +1106,88 @@
           {@render tab("safety", "Safety", "shield-check")}
           {@render tab("notifications", "Notifications", "bell")}
           {@render tab("access", "Access", "network")}
+          </div>
         </Tabs.List>
 
-        <div class="settings-main">
+        <div class="settings-main" {@attach hairline}>
           {@render settingsHead()}
         <Tabs.Content value="profile" class="tab-panel">
           <div class="tab-body" use:searchable={{ tab: "profile", query: settingsSearch }}>
             {@render pageHead("General", false)}
+            {#if viewport.narrow}
+              <SubPage id="profile" title="Profile" link={false}>
+                <div class="hero">
+                  <button type="button" class="hero-av" aria-label="Edit picture" onclick={onAvatarTap}>
+                    {@render face(96)}
+                    <span class="hero-badge"><Icon name="pencil" size={14} /></span>
+                  </button>
+                  <b>{app.settings.profileName || "anonymous"}</b>
+                  <small>This device</small>
+                </div>
+                <section class="settings-section">
+                  <h3 class="section-heading">Display name</h3>
+                  <div class="card">
+                    <div class="field">
+                      <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
+                      <span class="hint">Shown to other people on the servers you connect to.</span>
+                    </div>
+                  </div>
+                </section>
+                <section class="settings-section">
+                  <h3 class="section-heading">Picture</h3>
+                  <div class="card">
+                    <button type="button" class="go-row" onclick={onAvatarTap}>
+                      <span class="go-text"><span>Edit picture</span><small>Presets, upload, crop</small></span>
+                      <Icon name="chevron-right" size={16} />
+                    </button>
+                  </div>
+                  <p class="hint">Pictures are cropped square and scaled to 96×96 before they leave this device.</p>
+                </section>
+                <section class="settings-section">
+                  <h3 class="section-heading">How others see you</h3>
+                  <div class="card">
+                    <div class="setting-row seen">
+                      {@render face(36)}
+                      <div class="setting-text">
+                        <span class="row-label">{app.settings.profileName || "anonymous"}</span>
+                        <span class="hint">This device · online now</span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+                <section class="settings-section">
+                  <h3 class="section-heading">Shared with</h3>
+                  <div class="card">
+                    {#each serverList as r (r.key)}
+                      <div class="setting-row">
+                        <ServerAvatar name={r.label} seed={r.seed} size={22} />
+                        <div class="setting-text"><span class="row-label">{r.label}</span></div>
+                        <span class="hint">{r.status}</span>
+                      </div>
+                    {:else}
+                      <div class="setting-row"><span class="hint">No servers yet.</span></div>
+                    {/each}
+                  </div>
+                </section>
+              </SubPage>
+              <SubPage id="avatar" title="Edit picture" link={false} lazy>
+                {#snippet end()}
+                  <button type="button" class="sp-done" onclick={() => editor?.save()}>Done</button>
+                {/snippet}
+                <AvatarEditor
+                  bind:this={editor}
+                  bare
+                  current={app.settings.profileAvatar}
+                  emojis={QUICK_AVATARS}
+                  oncancel={() => void nav.pop()}
+                  onsave={(v) => {
+                    app.settings.profileAvatar = v;
+                    pushAvatar();
+                    void nav.pop();
+                  }}
+                />
+              </SubPage>
+            {:else}
             <section class="settings-section">
               <h3 class="section-heading">Profile</h3>
               <div class="card">
@@ -1024,7 +1195,7 @@
                 <button
                   type="button"
                   class="avatar-preview"
-                  onclick={() => avatarInput?.click()}
+                  onclick={onAvatarTap}
                   {@attach tip("Choose a picture")}
                   disabled={uploadingAvatar}
                 >
@@ -1042,7 +1213,7 @@
                     <span class="hint">Shown to other people on the servers you connect to.</span>
                   </label>
                   <div class="btn-row">
-                    <Button type="button" onclick={() => avatarInput?.click()} disabled={uploadingAvatar}>
+                    <Button type="button" onclick={onAvatarTap} disabled={uploadingAvatar}>
                       <Icon name="media-image" size={13} />
                       {uploadingAvatar ? "Reading…" : isPhotoAvatar(app.settings.profileAvatar) ? "Replace picture" : "Choose picture"}
                     </Button>
@@ -1069,6 +1240,7 @@
               <p class="hint">Pictures are cropped square and scaled to 96×96 before they leave this device.</p>
               </div>
             </section>
+            {/if}
             <section class="settings-section">
               <h3 class="section-heading">Chats</h3>
               <div class="card">
@@ -1110,17 +1282,20 @@
               <div class="card">
               <div class="setting-row">
                 {@render rowText(
-                  "Desktop alerts on this device",
-                  "Only while the window is in the background.",
+                  isDesktop ? "Desktop alerts on this device" : "Browser alerts on this device",
+                  isDesktop ? "Only while the window is in the background." : webAlerts === "denied" ? "Blocked: allow notifications for this site in the browser's settings." : webAlerts === "unsupported" ? "This browser can't show them." : webAlerts === "default" ? "Allow them in this browser first." : "Only while this tab is in the background and open.",
                   "Never for the chat you're reading, or while another of your devices is in use.",
                 )}
+                {#if !isDesktop && webAlerts === "default" && app.settings.osNotifications !== "off"}
+                  <Button type="button" onclick={() => void requestWebAlerts().then((p) => (webAlerts = p))}>Allow</Button>
+                {/if}
                 <Dropdown
                   items={[
                     { value: "off", label: "Off" },
                     { value: "urgent", label: "When it needs you" },
                     { value: "all", label: "Also when it finishes" },
                   ]}
-                  bind:value={() => app.settings.osNotifications, (v) => ((app.settings.osNotifications = v as typeof app.settings.osNotifications), apply())}
+                  bind:value={() => app.settings.osNotifications, (v) => ((app.settings.osNotifications = v as typeof app.settings.osNotifications), apply(), !isDesktop && v !== "off" && void requestWebAlerts().then((p) => (webAlerts = p)))}
                   contentClass="above-modal"
                 />
               </div>
@@ -1219,6 +1394,7 @@
                 {#if extracting}<p class="hint">Reading colors from the wallpaper…</p>{/if}
               </div>
               {/if}
+              <SubPage id="presets" title="Theme presets" inCard wrap={cardPage} link={{ value: `${app.themeFor("dark")?.name ?? "Default"} · ${app.themeFor("light")?.name ?? "Default"}`, hint: "Dark and light themes, custom themes" }}>
               {#if app.settings.theme !== "light"}
                 {@render slotPicker("dark", "Dark theme")}
               {/if}
@@ -1234,8 +1410,10 @@
                   </div>
                 </div>
               {/if}
+              </SubPage>
               </div>
             </section>
+            <SubPage id="wallpaper" title="Wallpaper" link={{ value: app.settings.wallpaper ? "Image set" : "None", hint: "Shown behind an empty thread's composer." }}>
             <section class="settings-section">
               <h3 class="section-heading">Wallpaper</h3>
               <div class="card">
@@ -1285,6 +1463,7 @@
               {/if}
               </div>
             </section>
+            </SubPage>
             <section class="settings-section">
               <h3 class="section-heading">Window</h3>
               <div class="card">
@@ -1367,6 +1546,8 @@
               </div>
               </div>
             </section>
+            <div class="sub-group">
+            <SubPage id="code" title="Code blocks" inCard link={{ value: app.settings.codeWrapLines ? "Wrapped" : "Scrolls", hint: "Font, wrapping, line numbers, colors" }}>
             <section class="settings-section">
               <h3 class="section-heading">Code blocks</h3>
               <div class="card">
@@ -1403,6 +1584,8 @@
               </div>
               </div>
             </section>
+            </SubPage>
+            <SubPage id="diffs" title="Diffs" inCard link={{ value: app.settings.diffColors === "colorblind" ? "Colorblind" : "Green / red", hint: "Colors" }}>
             <section class="settings-section">
               <h3 class="section-heading">Diffs</h3>
               <div class="card">
@@ -1425,6 +1608,8 @@
               </div>
               </div>
             </section>
+            </SubPage>
+            <SubPage id="term" title="Terminal" inCard link={{ hint: "Colors, padding, scrolling" }}>
             <section class="settings-section">
               <h3 class="section-heading">Terminal</h3>
               <div class="card">
@@ -1460,6 +1645,8 @@
               </div>
               </div>
             </section>
+            </SubPage>
+            </div>
           </div>
         </Tabs.Content>
 
@@ -1693,7 +1880,14 @@
               <div class="card">
               <ul class="list">
                 {#each serverList as r (r.key)}
-                  <li>
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                  <li
+                    class:tappable={viewport.narrow}
+                    role={viewport.narrow ? "button" : undefined}
+                    tabindex={viewport.narrow ? 0 : undefined}
+                    onclick={() => viewport.narrow && void nav.push(`server-${r.key}`)}
+                    onkeydown={(e) => viewport.narrow && e.key === "Enter" && void nav.push(`server-${r.key}`)}
+                  >
                     <ServerAvatar name={r.label} seed={r.seed} size={22} />
                     <div class="list-text">
                       <span class="list-title">
@@ -1702,21 +1896,33 @@
                       </span>
                       <span class="list-meta" {@attach tip(r.address)}>{r.address}</span>
                     </div>
-                    {#if r.connectionId && (r.status === "connected" || r.status === "connecting")}
-                      <Button type="button" size="sm" onclick={() => disconnect(r.connectionId!)}>Disconnect</Button>
-                    {:else}
-                      <Button type="button" size="sm" onclick={() => connectServerRow(r)}>
-                        {r.connectionId ? "Reconnect" : "Connect"}
-                      </Button>
-                    {/if}
-                    <Button type="button" icon variant="ghost" destructive onclick={() => onRemoveRow(r)} {@attach tip(r.connectionId ? "Remove" : "Forget")}>
-                      <Icon name="trash" size={13} />
-                    </Button>
+                    <span class="row-actions">{@render serverActions(r)}</span>
+                    <span class="row-chev"><Icon name="chevron-right" size={16} /></span>
+                    <SubPage id={`server-${r.key}`} title={r.label} link={false}>
+                      <section class="settings-section">
+                        <div class="card">
+                          <div class="setting-row">
+                            {@render rowText("Status", r.status)}
+                          </div>
+                          <div class="setting-row">
+                            {@render rowText("Address", r.address)}
+                          </div>
+                          <div class="setting-row actions-row">{@render serverActions(r)}</div>
+                        </div>
+                      </section>
+                    </SubPage>
                   </li>
                 {:else}
                   <li class="empty">No servers yet.</li>
                 {/each}
               </ul>
+              {#if viewport.narrow}
+                <SubPage id="add-server" title="Add a server" inCard lazy link={{ hint: "Connect to another server" }}>
+                  <section class="settings-section">
+                    <div class="card"><div class="card-pad"><ConnectForm prefill={addPrefill ?? {}} showLocal={false} onconnected={() => ((addPrefill = null), void nav.pop())} /></div></div>
+                  </section>
+                </SubPage>
+              {:else}
               <div class="card-pad">
               {#if addPrefill}
                 {#key addPrefill}
@@ -1736,6 +1942,7 @@
                 </Button>
               {/if}
               </div>
+              {/if}
               </div>
             </section>
           </div>
@@ -1765,9 +1972,9 @@
                   {/if}
                 </div>
               {/if}
-              {#if server?.connectionMode === "local"}
+              {#if server && !server.limited}
                 <div class="setting-row">
-                  {@render rowText("Restart", "Runs the newest installed version. Running chats stop.")}
+                  {@render rowText("Restart", server.connectionMode === "local" ? "Runs the newest installed version. Running chats stop." : "Stops the server; it only comes back if something restarts it (systemd, a supervisor). Running chats stop.")}
                   <Button type="button" onclick={() => restartServer(server.connectionId)} disabled={!connected}>Restart</Button>
                 </div>
               {/if}
@@ -1909,12 +2116,14 @@
               </div>
               </div>
             </section>
+            <SubPage id="rules" title="Permission rules" link={{ hint: "What the agent may run without asking" }}>
             <section class="settings-section">
               <h3 class="section-heading">Permissions</h3>
               <div class="card">
               <div class="card-pad"><PermissionRules {cid} projectPath={server?.currentProjectPath ?? undefined} /></div>
               </div>
             </section>
+            </SubPage>
           </div>
         </Tabs.Content>
 
@@ -1951,6 +2160,7 @@
               </div>
               </div>
             </section>
+            <SubPage id="kinds" title="Kinds" link={{ value: `${NOTIFY_KINDS.length - notifyPrefs.muted.length} of ${NOTIFY_KINDS.length} on`, hint: "Mute or allow each kind of alert" }}>
             <section class="settings-section">
               <h3 class="section-heading">Kinds</h3>
               <div class="card">
@@ -1962,6 +2172,7 @@
               {/each}
               </div>
             </section>
+            </SubPage>
           </div>
         </Tabs.Content>
 
@@ -2108,6 +2319,8 @@
               </div>
             </section>
 
+            <div class="sub-group">
+            <SubPage id="people" title="People" inCard link={{ hint: "Who can connect, and with what access" }}>
             <section class="settings-section">
               <div class="section-head">
                 <h3 class="section-heading">People</h3>
@@ -2191,7 +2404,9 @@
               </ul>
               </div>
             </section>
+            </SubPage>
             {#if server?.connectionStatus === "connected"}
+              <SubPage id="peers" title="Connected now" inCard link={{ value: String((server?.peers ?? []).filter((p) => p.peerId !== server?.selfPeerId).length), hint: "Devices on this server" }}>
               <section class="settings-section">
                 <h3 class="section-heading">Connected now</h3>
                 <div class="card">
@@ -2224,7 +2439,9 @@
                 </ul>
                 </div>
               </section>
+              </SubPage>
             {/if}
+            <SubPage id="audit" title="Audit log" inCard link={{ hint: "Kept on the server" }}>
             <section class="settings-section">
               <h3 class="section-heading">Audit log</h3>
               <p class="hint">Kept on the server (newest 15 MB). Never holds a password, token or key.</p>
@@ -2232,12 +2449,15 @@
               <AuditPanel cid={cid ?? null} connected={!!connected} />
               </div>
             </section>
+            </SubPage>
+            </div>
           </div>
         </Tabs.Content>
         </div>
+        <div class="sub-stage"></div>
       </Tabs.Root>
       </div>
-    </Dialog.Content>
+    </SheetDialog>
   </Dialog.Portal>
 </Dialog.Root>
 
@@ -2341,6 +2561,7 @@
   }
   /* Same small-caps label as the palette's group headings. */
   .tabs-group-label {
+    flex-shrink: 0;
     margin: 0.86rem 0 0.29rem 0.57rem;
     font-size: 0.66rem;
     font-weight: var(--text-heading-weight);
@@ -3530,9 +3751,23 @@
     background: var(--accent-dim);
   }
 
+  .head-main,
+  .head-row {
+    display: contents;
+  }
+  .crumb {
+    display: none;
+  }
   :global(.settings-back),
   :global(.settings-exit) {
     display: none;
+  }
+  /* Phone-only: the profile card above the destinations, and the groups' wrappers (invisible elsewhere). */
+  .profile-tile {
+    display: none;
+  }
+  .tabs-group {
+    display: contents;
   }
   .settings-swipe {
     display: contents;
@@ -3542,25 +3777,52 @@
       position: relative;
       touch-action: pan-y;
     }
+    /* A real header: a round back button and the page's name, tall enough for a thumb. */
     .settings-bar {
       display: flex;
       align-items: center;
       gap: 0.3rem;
-      margin: 0 0 0.5rem -0.5rem;
+      height: 3.5rem;
+      margin: 0;
+      padding: 0 0.35rem;
     }
     :global(.settings-exit) {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 2.3rem;
-      height: 2.3rem;
+      display: grid;
+      place-items: center;
+      width: 2.75rem;
+      height: 2.75rem;
+      padding: 0;
       background: none;
       border: none;
-      border-radius: var(--radius-sm);
-      color: var(--text-dim);
+      border-radius: 50%;
+      color: var(--text);
     }
+    :global(.settings-exit:active) {
+      background: var(--wash-3);
+    }
+    /* Visually hidden on desktop (the sidebar says where you are); a phone has no sidebar. */
     :global(.settings-title) {
+      position: static !important;
+      width: auto !important;
+      height: auto !important;
+      clip-path: none !important;
       margin: 0 !important;
+      overflow: visible !important;
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+    :global(.settings-search .search.search) {
+      height: 3rem;
+      margin: 0.2rem 1rem 0.6rem;
+      padding-inline: 1rem;
+      border-radius: var(--radius-pill);
+      background: var(--wash-3);
+      border-color: transparent;
+    }
+    /* Headings line up with the rows' text: the group's inset plus the row's padding. */
+    .tabs-group-label {
+      margin: 1.3rem 1rem 0.4rem calc(0.8rem + 16px);
+      font-size: max(12px, 0.78rem);
     }
     :global(.settings-close) {
       display: none;
@@ -3576,7 +3838,7 @@
     /* A list of destinations, not a selection. */
     :global(.settings-tabs .settings-tab-trigger[data-state="active"]) {
       background: none;
-      color: inherit;
+      color: var(--text);
       font-weight: inherit;
     }
     :global(.settings-tabs .settings-tab-trigger[data-state="active"]::before) {
@@ -3588,29 +3850,70 @@
       font-size: 1.3em;
       opacity: 0.45;
     }
-    :global(.settings-tabs.detail .tabs-list),
-    :global(.settings-tabs:not(.detail) .settings-main) {
-      display: none;
+    /* Pages stack on top of each other; settingsNav slides and hides them. */
+    :global(.settings-tabs .tabs-list),
+    .settings-main,
+    .sub-stage :global(.sub-page) {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      background: var(--panel-bg);
     }
-    :global(.tab-panel) {
-      padding: 0.7rem 1rem calc(var(--safe-bottom) + 1.4rem);
+    .settings-main {
+      will-change: transform;
+      box-shadow: -12px 0 28px -16px rgb(0 0 0 / 0.5);
     }
-    .settings-back {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      width: 2.3rem;
-      height: 2.3rem;
-      margin-left: -0.5rem;
-      background: none;
-      border: none;
-      border-radius: var(--radius-sm);
+    .sub-stage {
+      display: contents;
+    }
+    .crumb {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: max(11px, 0.72rem);
+      line-height: 1.2;
       color: var(--text-dim);
     }
+    .head-main {
+      display: block;
+      flex: 1;
+      min-width: 0;
+    }
+    .head-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
     .page-head {
-      min-height: 2.4rem;
-      padding-right: 0;
+      min-height: 3.5rem;
+      padding: 0 0.35rem;
+      border-bottom-color: transparent;
+      transition: border-color calc(0.16s * var(--anim-speed, 1)) ease;
+    }
+    .settings-main:global(.scrolled) .page-head {
+      border-bottom-color: var(--panel-border);
+    }
+    .page-head h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    :global(.tab-panel) {
+      padding: 0.7rem 0.8rem calc(var(--safe-bottom) + 1.4rem);
+    }
+    .settings-back {
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      width: 2.75rem;
+      height: 2.75rem;
+      background: none;
+      border: none;
+      border-radius: 50%;
+      color: var(--text);
+    }
+    .settings-back:active {
+      background: var(--wash-3);
     }
     .setting-row {
       flex-wrap: wrap;
@@ -3618,6 +3921,11 @@
     }
     .setting-text {
       flex: 1 1 11rem;
+    }
+    /* In a stacked field the basis would be a height, not a width. */
+    .field > .setting-text,
+    .setting-row.stacked > .setting-text {
+      flex: none;
     }
     .setting-row > :last-child {
       max-width: 100%;
@@ -3629,6 +3937,214 @@
     .form-grid,
     .form-grid.three {
       grid-template-columns: 1fr;
+    }
+
+    /* Floating grouped lists: an inset, rounded surface a shade lighter than the page, hairlines that
+       start at the row's text. The section's title becomes the small label above its group. */
+    .settings-section {
+      --card-pad-x: 1rem;
+      gap: 0.4rem;
+    }
+    .section-heading {
+      margin: 1.3rem 0 0 var(--card-pad-x);
+      font-size: max(12px, 0.8rem);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .card {
+      background: var(--wash-2);
+    }
+    .card > * + *,
+    .card :is(.setting-row, .field) + :is(.setting-row, .field) {
+      border-top: 0;
+      background-image: linear-gradient(var(--panel-border), var(--panel-border));
+      background-size: calc(100% - var(--card-pad-x)) 1px;
+      background-position: right top;
+      background-repeat: no-repeat;
+    }
+    /* The switch is 31px tall; its hit area is not (Switch.svelte is not ours to change). */
+    .card :global(.switch)::after {
+      content: "";
+      position: absolute;
+      inset: -9px -4px;
+    }
+    .card .setting-row,
+    .card > .field,
+    .card > .pair,
+    .card > .num-grid,
+    .card > .disclosure > summary,
+    .card > .disclosure > .disclosure-body {
+      min-height: 52px;
+      padding-block: 0.6rem;
+    }
+    .add-row {
+      min-height: 52px;
+    }
+    /* Controls a thumb can land on: the desktop's 30px fields become 48px, and text steps up with them. */
+    .tab-body {
+      --ctrl-h: 3rem;
+      --text-body-size: 1rem;
+      --text-label-size: 0.9rem;
+    }
+    .tab-body :global(.dropdown-trigger) {
+      min-width: 0;
+    }
+    .mode-cards {
+      width: 100%;
+    }
+    .mode-cards > :global(*) {
+      flex: 1 1 0;
+      min-width: 0;
+      width: auto;
+    }
+    /* The destinations: a profile card, then floating groups of icon-tile rows with a chevron. */
+    :global(.settings-tabs .tabs-list) {
+      padding: 0.4rem 0 calc(var(--safe-bottom) + 1rem) !important;
+    }
+    .profile-tile {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      width: calc(100% - 1.6rem);
+      min-height: 52px;
+      margin: 0.2rem 0.8rem 0;
+      padding: 14px;
+      background: var(--wash-2);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-lg);
+      color: var(--text);
+      text-align: left;
+    }
+    .profile-tile::after {
+      content: "›";
+      margin-left: auto;
+      font-size: 1.3em;
+      opacity: 0.45;
+    }
+    .profile-tile:active {
+      background: var(--wash-3);
+    }
+    .pt-avatar {
+      position: relative;
+      flex: none;
+      display: grid;
+      place-items: center;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: var(--wash-3);
+    }
+    .pt-avatar img {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+    .pt-avatar .emoji {
+      font-size: 30px;
+      line-height: 1;
+    }
+    .pt-badge {
+      position: absolute;
+      right: -2px;
+      bottom: -2px;
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--panel-bg);
+      border: 2px solid var(--panel-bg);
+    }
+    .pt-who {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .pt-who b {
+      font-size: 1.2rem;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pt-who small {
+      font-size: max(12px, 0.85rem);
+      color: var(--text-dim);
+    }
+    .tabs-group {
+      display: flex;
+      flex-direction: column;
+      margin-inline: 0.8rem;
+      background: var(--wash-2);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-lg);
+      overflow: clip;
+    }
+    :global(.settings-tabs .settings-tab-trigger) {
+      min-height: 52px !important;
+      gap: 14px;
+      padding-inline: 16px !important;
+      border-radius: 0 !important;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    :global(.settings-tabs .settings-tab-trigger:hover) {
+      background: none;
+    }
+    :global(.settings-tabs .settings-tab-trigger:active) {
+      background: var(--wash-3);
+    }
+    /* The icon becomes a 30px tile; the hairline starts after it. */
+    :global(.settings-tabs .settings-tab-trigger .icon) {
+      width: 30px !important;
+      height: 30px !important;
+      border-radius: 8px;
+      background: var(--wash-3);
+      color: var(--text);
+      opacity: 1;
+    }
+    :global(.settings-tabs .settings-tab-trigger .icon svg) {
+      width: 18px;
+      height: 18px;
+    }
+    :global(.settings-tabs .settings-tab-trigger + .settings-tab-trigger::before) {
+      content: "";
+      display: block;
+      position: absolute;
+      top: 0;
+      bottom: auto;
+      left: 60px;
+      right: 0;
+      width: auto;
+      height: 1px;
+      border-radius: 0;
+      background: var(--panel-border);
+    }
+    /* While the picture editor is open it is the whole page. */
+    .tab-body:has(:global(.avatar-editor)) > .settings-section {
+      display: none;
+    }
+    /* A phone sees the photo's edit pencil as a badge, not a hover veil. */
+    .avatar-preview {
+      overflow: visible;
+    }
+    .avatar-preview img,
+    .avatar-preview .emoji {
+      border-radius: 50%;
+    }
+    .avatar-preview .avatar-edit {
+      inset: auto -2px -2px auto;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--panel-bg);
+      opacity: 1;
     }
   }
   .discord-status {
@@ -3787,5 +4303,129 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* ---- Phone sub-pages (SubPage.svelte, settingsNav) ---- */
+  .sub-group {
+    display: contents;
+  }
+  .face {
+    display: grid;
+    place-items: center;
+    flex: none;
+    overflow: hidden;
+    border-radius: 50%;
+    background: var(--accent-dim);
+    line-height: 1;
+  }
+  .face img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .row-actions {
+    display: contents;
+  }
+  .row-chev {
+    display: none;
+  }
+  .go-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    min-height: 52px;
+    padding: 0.6rem var(--card-pad-x);
+    background: none;
+    border: 0;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+  }
+  .go-row:active {
+    background: var(--wash-3);
+  }
+  .go-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .go-text small {
+    color: var(--text-dim);
+    font-size: max(12px, 0.8rem);
+  }
+  .sp-done {
+    height: 2.75rem;
+    padding: 0 0.9rem;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-pill);
+    color: var(--accent);
+    font: inherit;
+    font-weight: 600;
+  }
+  .sp-done:active {
+    background: var(--wash-3);
+  }
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.8rem 0 0.2rem;
+  }
+  .hero b {
+    font-size: 1.25rem;
+  }
+  .hero small {
+    color: var(--text-dim);
+  }
+  .hero-av {
+    position: relative;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 50%;
+  }
+  .hero-badge {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-fg, #fff);
+    border: 2px solid var(--panel-bg);
+  }
+  .seen {
+    align-items: center;
+  }
+  @media (max-width: 700px) {
+    .sub-group {
+      display: block;
+      background: var(--wash-2);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-lg);
+      overflow: clip;
+    }
+    .sub-group > :global(.sub-link + .sub-link) {
+      border-top: 1px solid var(--panel-border);
+    }
+    .row-actions {
+      display: none;
+    }
+    .row-chev {
+      display: block;
+      opacity: 0.55;
+    }
+    .actions-row {
+      flex-wrap: nowrap;
+    }
+    .actions-row > :global(*) {
+      flex: 1;
+    }
   }
 </style>

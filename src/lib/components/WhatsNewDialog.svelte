@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SheetDialog from "./SheetDialog.svelte";
   import { Dialog } from "bits-ui";
   import { WHATS_NEW } from "../whatsnew";
   import { fmtVersion } from "../serverVersion";
@@ -16,7 +17,7 @@
   <Dialog.Root bind:open>
     <Dialog.Portal>
       <Dialog.Overlay class="dialog-overlay" />
-      <Dialog.Content class="dialog-content whatsnew">
+      <SheetDialog class="dialog-content whatsnew">
         <div class="hero">
           {#if entry.image}<img src={entry.image} alt="" />{:else}<img class="mark" src="logo.png" alt="" />{/if}
         </div>
@@ -36,7 +37,7 @@
           <Button variant="ghost" onclick={() => openUrl(releaseUrl)}><Icon name="brand-github" size={14} />View release</Button>
           <Dialog.Close>{#snippet child({ props })}<Button {...props} variant="primary">Got it</Button>{/snippet}</Dialog.Close>
         </div>
-      </Dialog.Content>
+      </SheetDialog>
     </Dialog.Portal>
   </Dialog.Root>
 {/if}

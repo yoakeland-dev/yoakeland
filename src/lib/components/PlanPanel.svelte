@@ -63,7 +63,7 @@
 <style>
   .plan-panel {
     position: absolute;
-    top: calc(var(--header-height) + 12px);
+    top: calc(var(--chat-top, var(--header-height)) + 12px);
     right: 12px;
     bottom: calc(var(--composer-height, 90px) + 24px);
     width: min(24rem, calc(100% - 2rem));

@@ -7,6 +7,7 @@
   import { untrack } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import { viewport } from "../viewport.svelte";
   import { app } from "../state.svelte";
   import { respondPermission, askUserAnswer } from "../ipc";
   import { chooseMode, sessionModes } from "../modes";
@@ -230,15 +231,27 @@
       otherOpen = false;
     }
   }
+
+  // Desktop: the card flies out of the composer's edge. Phone: it is one surface with the
+  // composer, so it folds open/shut (grid rows 1fr <-> 0fr + fade) and the composer stays put.
+  const speed = (n: Element) => parseFloat(getComputedStyle(n).getPropertyValue("--anim-speed")) || 1;
+  const fold = (n: Element, ms: number) => ({
+    duration: ms * speed(n),
+    easing: cubicOut,
+    css: (t: number) => `grid-template-rows: ${t}fr; opacity: ${t}`,
+  });
+  const enter = (n: Element) => (viewport.narrow ? fold(n, 280) : fly(n, { y: 28, duration: 240, easing: cubicOut }));
+  const leave = (n: Element) => (viewport.narrow ? fold(n, 280) : fly(n, { y: 20, duration: 160 }));
 </script>
 
 <div
   class="ask"
   class:stacked={asks.length > 1}
   class:stacked-more={asks.length > 2}
-  in:fly={{ y: 28, duration: 240, easing: cubicOut }}
-  out:fly={{ y: 20, duration: 160 }}
+  in:enter
+  out:leave
 >
+  <div class="clip">
   {#key ask.toolCallId}
     <div class="inner" in:fly={{ y: 8, duration: 180, easing: cubicOut }}>
       <div class="head">
@@ -346,6 +359,7 @@
       {/if}
     </div>
   {/key}
+  </div>
 </div>
 
 <style>
@@ -354,6 +368,8 @@
     /* Under the box (z-index 1), so it rises out from behind the composer's top edge. */
     z-index: 0;
     margin-bottom: 0;
+    display: grid;
+    grid-template-rows: 1fr;
     background: var(--float-bg);
     backdrop-filter: var(--float-blur);
     border: 1px solid var(--float-border);
@@ -385,6 +401,10 @@
     top: -11px;
     height: 5px;
     opacity: 0.4;
+  }
+  .clip {
+    min-height: 0;
+    overflow: hidden;
   }
   .inner {
     padding: 0.71rem var(--space-1) var(--space-1);
@@ -636,25 +656,34 @@
     font: inherit;
   }
 
-  /* Phone: the composer is docked full width, so the card sits behind it, a little narrower, its
-     bottom tucked under the composer's rounded top. */
+  /* Phone: the card is the top of the composer's surface (PromptInput's .surface owns the fill,
+     border, radius and shadow); the composer's top edge is the only rule between them. */
   @media (max-width: 700px) {
     .ask {
-      margin: 0 0.6rem -22px;
-      border-width: 1px 1px 0;
-      border-radius: 18px 18px 0 0;
+      margin: 0;
+      z-index: auto;
+      background: none;
+      backdrop-filter: none;
+      border: none;
+      border-radius: 0;
       box-shadow: none;
     }
+    .ask.stacked::before,
+    .ask.stacked-more::after {
+      display: none;
+    }
     .inner {
-      padding-bottom: calc(var(--space-1) + 22px);
+      padding-bottom: var(--space-1);
     }
     /* Tap targets: rows and buttons a thumb can hit; the number chips are keyboard shortcuts. */
     .options button,
     .other {
-      min-height: 2.7rem;
+      min-height: 3.2rem;
     }
     .btn {
-      min-height: 2.5rem;
+      min-height: 3rem;
+      padding-inline: 1.3rem;
+      border-radius: var(--radius-pill);
     }
     .num {
       display: none;

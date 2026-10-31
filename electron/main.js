@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, Notification, protocol, safeStorage, session, shell } from "electron";
-import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from "node:fs";
 import os from "node:os";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -18,7 +18,15 @@ const APP_ORIGIN = DEV_URL ? new URL(DEV_URL).origin : "app://yoake";
 const isAppUrl = (url) => url.startsWith(APP_ORIGIN + "/");
 const BUILD_DIR = path.join(here, "..", "build");
 
-app.setPath("userData", path.join(app.getPath("appData"), "com.aveline.yoake-gui"));
+// Config lives in <appData>/<product name> ("Yoakeland", "Yoakeland-Early"), so the early channel
+// keeps its own. Stable moves over from its old reverse-DNS folder on first launch (same
+// filesystem, so a rename); the server's own state (~/.yoake) is separate and untouched.
+const userData = path.join(app.getPath("appData"), app.getName().replace(/\s+/g, "-"));
+const legacyData = path.join(app.getPath("appData"), "com.aveline.yoake-gui");
+if (app.getName() === "Yoakeland" && !existsSync(userData) && existsSync(legacyData)) {
+  try { renameSync(legacyData, userData); } catch { /* keep going on a fresh folder rather than not start */ }
+}
+app.setPath("userData", userData);
 
 // At 1x scale Chromium won't give a scroller with a transparent background its own layer (it
 // would lose LCD subpixel text), so scrolling the chat, a diff or the editor repainted and
@@ -65,7 +73,7 @@ function createWindow() {
   overlayOn = process.platform === "win32" && chrome;
   win = new BrowserWindow({
     ...chromeOptions(chrome),
-    title: "yoakeland",
+    title: app.getName(),
     width: 1280,
     height: 800,
     minWidth: 900,
