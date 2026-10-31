@@ -1760,6 +1760,9 @@
               {#if server?.outdated}
                 <div class="setting-row">
                   {@render rowText("Out of date", `Running ${server.version ? fmtVersion(server.version) : "an unknown version"}, latest is v${app.latestServerVersion}.`)}
+                  {#if server.connectionMode === "local" && app.updateServer}
+                    <Button type="button" variant="primary" onclick={() => app.updateServer?.(server.connectionId)} disabled={!connected}>Update</Button>
+                  {/if}
                 </div>
               {/if}
               {#if server?.connectionMode === "local"}

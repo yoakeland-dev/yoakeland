@@ -16,6 +16,7 @@ import { briefOf, continuationDraft } from "./chatBrief";
 import { closeAck, connectedHost, isDesktop, invoke, listen, openUrl, pickFiles, quitApp } from "./platform";
 import { bytesToBase64, base64ToBytes } from "./base64";
 import { decodePairingCode } from "./pairing";
+import { isOlder } from "./serverVersion";
 import { handleBrowserRequest } from "./browserAgent.svelte";
 import type { UsageReport } from "./usage";
 import { parseThemeFiles } from "./theme";
@@ -331,16 +332,33 @@ async function spawnDetachedUnixServer(opts: SpawnUnixServerOpts) {
   });
 }
 
-let latestLookup: Promise<void> | undefined;
-/** Looks the newest server release up once per run, then flags every connected server that is behind. */
-function checkServerUpdate() {
-  latestLookup ??= invoke<{ version: string }>("server_latest_release").then(
-    (r) => {
-      app.latestServerVersion = r.version;
-      for (const s of Object.values(app.servers)) s.announceOutdated();
-    },
-    () => {}, // offline or no release yet: nothing to flag
-  );
+const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
+let updateTimer: ReturnType<typeof setInterval> | undefined;
+/** Looks up the newest server and app releases now and every few hours after, so a long-running
+ * app still hears of new ones and an offline start just tries again later. Newly connected servers
+ * compare themselves against the cached version when their identity arrives (announceOutdated). */
+function startUpdateChecks() {
+  if (updateTimer) return;
+  const run = () => {
+    invoke<{ version: string }>("server_latest_release").then(
+      (r) => {
+        app.latestServerVersion = r.version;
+        for (const s of Object.values(app.servers)) s.announceOutdated();
+      },
+      () => {}, // offline or no release yet: nothing to flag
+    );
+    invoke<{ version: string; url: string; install: "download" | "package" } | null>("app_latest_release").then((r) => {
+      const fresh = r && isOlder(__APP_VERSION__, r.version) ? r : null;
+      if (fresh && fresh.version !== app.appUpdate?.version) {
+        const action = fresh.install === "download" ? { label: "Download", run: () => void openUrl(fresh.url) } : undefined;
+        const how = fresh.install === "download" ? "" : " Update it with your package manager.";
+        app.toastAction(app.activeConnectionId ?? "", `yoakeland v${fresh.version} is available.${how}`, action);
+      }
+      app.appUpdate = fresh;
+    }, () => {});
+  };
+  run();
+  updateTimer = setInterval(run, UPDATE_CHECK_MS);
 }
 
 /** Downloads the newest server. A running daemon keeps its old binary until it is restarted. */
@@ -395,7 +413,6 @@ app.restartServer = (id, force) => restartServer(id, force);
 function afterConnect(connectionId: ConnectionId) {
   const server = app.servers[connectionId];
   if (!server) return;
-  if (isDesktop) checkServerUpdate();
   startLiveness(connectionId);
   clearTimeout(stableTimers.get(server));
   stableTimers.set(server, setTimeout(() => (server.reconnectAttempt = 0), STABLE_MS));
@@ -585,6 +602,7 @@ async function connectFromUrl(): Promise<ConnectionId | null> {
  * connected by hand; if nothing connects, FirstServerPanel takes over. */
 export async function autoConnect() {
   const socketPath = isDesktop ? await getDefaultSocketPath() : "";
+  if (isDesktop) startUpdateChecks();
   if (isDesktop) await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
   const pairedId = await connectFromUrl();
   const pairedServerId = pairedId ? app.servers[pairedId]?.serverId : undefined;

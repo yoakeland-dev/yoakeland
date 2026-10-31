@@ -33,6 +33,16 @@
       <div class="mark"><img class="logo" src="logo.png" alt="" /></div>
       <Dialog.Title class="about-title">yoakeland</Dialog.Title>
       <Dialog.Description class="about-version">{client} {fmtVersion(__APP_VERSION__)}</Dialog.Description>
+      {#if app.appUpdate}
+        <p class="app-update">
+          v{app.appUpdate.version} is available.
+          {#if app.appUpdate.install === "download"}
+            <button onclick={() => openUrl(app.appUpdate!.url)}>Download</button>
+          {:else}
+            Update it with your package manager.
+          {/if}
+        </p>
+      {/if}
       <div class="card">
         {#if servers.length}
           <ul>
@@ -248,5 +258,19 @@
   }
   .links button:hover {
     color: var(--text);
+  }
+  .app-update {
+    margin: 0.5rem 0 0;
+    font-size: var(--text-label-size);
+    color: var(--accent);
+  }
+  .app-update button {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
 </style>

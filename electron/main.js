@@ -153,6 +153,23 @@ handle("acp_registry", async () => {
   }
   return acpRegistry.agents;
 });
+// The newest desktop release, or null for a dev run. AppImage, Windows and macOS builds update by
+// downloading the new release; any other packaged Linux build came from a package manager.
+handle("app_latest_release", async () => {
+  if (!app.isPackaged) return null;
+  const res = await fetch("https://api.github.com/repos/yoakeland-dev/yoakeland/releases?per_page=5", {
+    headers: { accept: "application/vnd.github+json" },
+  });
+  if (!res.ok) throw new Error(`GitHub answered ${res.status} for the releases`);
+  // Releases are all prereleases, which /releases/latest never returns.
+  const rel = (await res.json()).find((r) => !r.draft && r.assets?.length);
+  if (!rel) return null;
+  return {
+    version: String(rel.tag_name).replace(/^v/, ""),
+    url: rel.html_url,
+    install: process.platform === "linux" && !process.env.APPIMAGE ? "package" : "download",
+  };
+});
 handle("discord_status", () => discord.status());
 // The settings preview reads this to show the application's real icon and art.
 handle("discord_assets", ({ clientId }) => fetchDiscordApplication(clientId));

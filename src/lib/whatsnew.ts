@@ -17,6 +17,7 @@ export const WHATS_NEW: Record<string, WhatsNewEntry> = {
       { icon: "arrows-minimize", title: "Simple view", body: "Everything the agent did before its answer folds into one dropdown. Open it when you want the details." },
       { icon: "list-search", title: "Jump around long chats", body: "A minimap beside the chat has one tick per prompt. Click one to go there." },
       { icon: "server", title: "Icons for your servers", body: "Pick an icon and colour for each server. Every device you use sees the same one." },
+      { icon: "refresh", title: "Update notices", body: "The app tells you when a new version is out, and Settings can update a local server in one click." },
     ],
   },
 };

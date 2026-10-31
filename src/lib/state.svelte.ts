@@ -570,14 +570,15 @@ export class ServerState {
   serverId = $state<string | null>(null);
   /** What the server says it is (server_identity); null from one that predates reporting it. */
   version = $state<string | null>(null);
-  private outdatedToasted = false;
+  /** The latest version this connection already toasted about, so a newer release toasts again. */
+  private outdatedToastedFor: string | null = null;
   get outdated() {
     return this.serverId != null && !!this.app.latestServerVersion && isOlder(this.version, this.app.latestServerVersion);
   }
-  /** Once per connection, and only after both the identity and the newest release are known. */
+  /** Once per connection and release, and only after both the identity and the newest release are known. */
   announceOutdated() {
-    if (!this.outdated || this.outdatedToasted) return;
-    this.outdatedToasted = true;
+    if (!this.outdated || this.outdatedToastedFor === this.app.latestServerVersion) return;
+    this.outdatedToastedFor = this.app.latestServerVersion;
     const have = this.version ? fmtVersion(this.version) : "an old version";
     const title = `Server is out of date (${have}, latest v${this.app.latestServerVersion})`;
     this.app.toastAction(this.connectionId, title, this.connectionMode === "local" && this.app.updateServer ? { label: "Update", run: () => this.app.updateServer?.(this.connectionId) } : undefined);
@@ -2937,6 +2938,10 @@ class AppState {
   activeConnectionId = $state<ConnectionId | null>(null);
   /** Newest published server release; null until looked up (desktop only), or when there is none. */
   latestServerVersion = $state<string | null>(null);
+  /** A newer desktop app release, from ipc.ts's update check; null when current or unknown.
+   * `install` says how this copy updates: "download" from the release page, or "package" through
+   * the system's package manager (AUR and the like), where a download link would be wrong. */
+  appUpdate = $state<{ version: string; url: string; install: "download" | "package" } | null>(null);
   /** Set by ipc.ts on desktop, where the app can download the server itself. */
   updateServer: ((connectionId: ConnectionId) => void) | null = null;
   /** Set by ipc.ts: restarts the local daemon. */
