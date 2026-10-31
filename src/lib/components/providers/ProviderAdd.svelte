@@ -4,7 +4,6 @@
   // the desktop app (openrouter_oauth_*, SPEC.md §3.1).
   import { registerProvider, signInOpenRouter, cancelOpenRouterSignIn } from "../../ipc";
   import type { AgentGroup } from "../../modelVendor";
-  import { isDesktop } from "../../platform";
   import type { ServerState } from "../../state.svelte";
   import AddProvider from "../AddProvider.svelte";
   import Button from "../ui/Button.svelte";
@@ -96,7 +95,7 @@
     <h4>API key</h4>
     <p class="sd">Keys are stored on the server.</p>
     <div class="pcard">
-      {#if isDesktop && !orAccount}
+      {#if !orAccount}
         <div class="prow">
           <span class="ico"><LobeIcon name="openrouter" size={18} /></span>
           <div class="l">

@@ -930,3 +930,21 @@ export interface SkillDetailData {
   truncated?: boolean;
   error?: string;
 }
+
+/** One process of a server's own tree (SPEC.md §3.1 list_processes). */
+export interface ProcessInfo {
+  pid: number;
+  ppid: number;
+  startTimeMs: number;
+  name: string;
+  command?: string;
+  status: string;
+  cpuTimeMs: number;
+  rssBytes: number;
+  cpuPercent?: number;
+}
+export interface ProcessList {
+  sampledAtMs: number;
+  processes: ProcessInfo[];
+}
+export type ProcessRow = ProcessInfo & { depth: number; key: string; hasChildren: boolean };

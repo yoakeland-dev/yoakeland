@@ -106,8 +106,45 @@ async function openWebSocket(host: string, port: number): Promise<Wire> {
 const webHosts = new Map<string, string>();
 export const connectedHost = (connectionId: string): string | undefined => webHosts.get(connectionId);
 
+// Alerts and the badge in a browser: the Notification API while the tab is in the background (the
+// desktop's osAlerts.js twin), the app badge where the browser has one. Nothing arrives once the tab is closed.
+const liveAlerts = new Map<string, Notification>();
+let alertsFocusHooked = false; // at most one pending focus listener
+const clip = (s: unknown, n: number) => (typeof s === "string" && s.length > n ? s.slice(0, n - 1) + "…" : String(s ?? ""));
+
+/** Asks the browser for permission to alert; only a user gesture (a click) gets the prompt. */
+export const requestWebAlerts = async (): Promise<NotificationPermission | "unsupported"> =>
+  typeof Notification === "undefined" ? "unsupported" : Notification.requestPermission();
+
+function webNotify(req: Record<string, unknown>) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return "unsupported";
+  if (document.visibilityState === "visible" && document.hasFocus()) return "focused"; // the in-app toast/bell has it
+  const tag = req.sessionId ? `${req.connectionId}|${req.sessionId}` : `${req.connectionId}|${req.id}`;
+  liveAlerts.get(tag)?.close();
+  const n = new Notification(clip(req.title, 120), { body: clip(req.body, 240), tag, silent: req.priority === "normal" });
+  n.onclick = () => {
+    window.focus();
+    n.close();
+    webEmit("yoake-notification-open", { connectionId: req.connectionId, sessionId: req.sessionId ?? "", projectPath: req.projectPath ?? "" });
+  };
+  n.onclose = () => liveAlerts.get(tag) === n && liveAlerts.delete(tag);
+  liveAlerts.set(tag, n);
+  if (!alertsFocusHooked) {
+    alertsFocusHooked = true;
+    window.addEventListener("focus", () => ((alertsFocusHooked = false), liveAlerts.forEach((a) => a.close()), liveAlerts.clear()), { once: true });
+  }
+  return "shown";
+}
+
 async function webInvoke(cmd: string, args: Record<string, unknown>): Promise<unknown> {
   switch (cmd) {
+    case "shell:notify":
+      return webNotify(args);
+    case "shell:badge": {
+      const nav = navigator as Navigator & { setAppBadge?: (n: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+      const n = Math.max(0, Math.floor(Number(args.count) || 0));
+      return (n ? nav.setAppBadge?.(n) : nav.clearAppBadge?.())?.catch(() => {});
+    }
     case "connect_tcp": {
       const { host, port, token, caPem: _ca, rtcFp, alternates, ...identity } = args;
       let wire: Wire;
@@ -176,8 +213,8 @@ export const browserUnguard = (id: number): Promise<string[]> => shell().browser
 /** The built web client's directory ("" if there is none) and this machine's LAN IPv4 addresses. */
 export const pairInfo = (): Promise<{ webRoot: string; hosts: string[] }> => shell().pairInfo();
 export const revealItemInDir = (path: string): Promise<unknown> => shell().revealItemInDir(path);
-export const readClipboard = (): Promise<string> => shell().readClipboard();
-export const writeClipboard = (text: string): Promise<void> => shell().writeClipboard(text);
+export const readClipboard = (): Promise<string> => (bridge ? bridge.readClipboard() : navigator.clipboard.readText());
+export const writeClipboard = (text: string): Promise<void> => (bridge ? bridge.writeClipboard(text) : navigator.clipboard.writeText(text));
 
 /** The desktop app can only reach a local server over a Unix socket; Windows' named pipe isn't supported yet (backend.js openLocal). */
 export const localServerSupported = !!bridge && bridge.platform !== "win32";

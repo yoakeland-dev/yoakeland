@@ -17,11 +17,14 @@ import { closeAck, connectedHost, isDesktop, invoke, listen, openUrl, pickFiles,
 import { bytesToBase64, base64ToBytes } from "./base64";
 import { decodePairingCode } from "./pairing";
 import { isOlder } from "./serverVersion";
+import { cancelWebSignIn, startWebSignIn } from "./webSignIn";
 import { handleBrowserRequest } from "./browserAgent.svelte";
+import { handleServerBrowserEvent } from "./serverBrowser.svelte";
 import type { UsageReport } from "./usage";
 import { parseThemeFiles } from "./theme";
 import { setDiscordRpcStatus } from "./discordRpc.svelte";
 import type { DiscordRpcStatus } from "./platform";
+import { showChat } from "./viewport.svelte";
 
 let wired = false;
 
@@ -55,8 +58,12 @@ export interface AcpRegistryAgent {
   uvx?: { package: string; args?: string[] };
 }
 
-export async function acpRegistry(): Promise<AcpRegistryAgent[]> {
-  return invoke<AcpRegistryAgent[]>("acp_registry");
+/** The desktop fetches it in its main process; the browser build asks the server (list_acp_registry). */
+export async function acpRegistry(connectionId?: ConnectionId): Promise<AcpRegistryAgent[]> {
+  if (isDesktop || !connectionId) return invoke<AcpRegistryAgent[]>("acp_registry");
+  const r = await rpc<{ agents?: AcpRegistryAgent[]; error?: string }>(connectionId, "list_acp_registry", {});
+  if (r.error) throw new Error(r.error);
+  return r.agents ?? [];
 }
 
 // --- Liveness (§2a) ---
@@ -233,6 +240,7 @@ export function wireEvents() {
       mcpOauthWaiters.get(connectionId)?.(env.data as { requestId: string; url: string });
       return;
     }
+    if (handleServerBrowserEvent(connectionId, env.type, env.data)) return;
     if (env.type === "browser_request") {
       void handleBrowserRequest(connectionId, env.data as never, (data) => void send(connectionId, { type: "browser_response", data: data as Record<string, unknown> }));
       return;
@@ -332,6 +340,14 @@ async function spawnDetachedUnixServer(opts: SpawnUnixServerOpts) {
   });
 }
 
+/** The desktop picks the release with a binary for its own platform; a browser can't know the server's, so it takes the newest. */
+const latestServerRelease = (): Promise<{ version: string }> =>
+  isDesktop
+    ? invoke("server_latest_release")
+    : fetch("https://api.github.com/repos/yoakeland-dev/yoakeland-server/releases?per_page=1", { headers: { accept: "application/vnd.github+json" } })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`GitHub answered ${r.status}`))))
+        .then(([rel]) => ({ version: String(rel.tag_name).replace(/^v/, "") }));
+
 const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
 let updateTimer: ReturnType<typeof setInterval> | undefined;
 /** Looks up the newest server and app releases now and every few hours after, so a long-running
@@ -340,13 +356,14 @@ let updateTimer: ReturnType<typeof setInterval> | undefined;
 function startUpdateChecks() {
   if (updateTimer) return;
   const run = () => {
-    invoke<{ version: string }>("server_latest_release").then(
+    latestServerRelease().then(
       (r) => {
         app.latestServerVersion = r.version;
         for (const s of Object.values(app.servers)) s.announceOutdated();
       },
       () => {}, // offline or no release yet: nothing to flag
     );
+    if (!isDesktop) return; // the hosted page is always the newest app
     invoke<{ version: string; url: string; install: "download" | "package" } | null>("app_latest_release").then((r) => {
       const fresh = r && isOlder(__APP_VERSION__, r.version) ? r : null;
       if (fresh && fresh.version !== app.appUpdate?.version) {
@@ -602,7 +619,7 @@ async function connectFromUrl(): Promise<ConnectionId | null> {
  * connected by hand; if nothing connects, FirstServerPanel takes over. */
 export async function autoConnect() {
   const socketPath = isDesktop ? await getDefaultSocketPath() : "";
-  if (isDesktop) startUpdateChecks();
+  startUpdateChecks();
   if (isDesktop) await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
   const pairedId = await connectFromUrl();
   const pairedServerId = pairedId ? app.servers[pairedId]?.serverId : undefined;
@@ -908,6 +925,7 @@ export function openChatSession(connectionId: ConnectionId, sessionId: string) {
   app.activeConnectionId = connectionId;
   if (sessionId !== server.currentSessionId) server.pushNavHistory(server.currentSessionId);
   server.openSession(sessionId);
+  showChat();
   if (server.connectionStatus === "connected") {
     getSessionHistory(connectionId, sessionId);
     reassertSessionSettings(connectionId, sessionId);
@@ -1180,6 +1198,7 @@ export async function newChat(connectionId: ConnectionId, projectPath?: string) 
     server.freshChatId = server.newSessionInProject(path);
   }
   carryBlankChat(from, server);
+  showChat();
 }
 
 /** Moving to another server from an untouched chat takes its unsent text, model, effort and
@@ -1296,6 +1315,7 @@ export function listSessionsForProjects(connectionId: ConnectionId, paths: strin
 
 /** Fetches the project's file list (§3.1) for @file mention autocomplete. */
 export function listFiles(connectionId: ConnectionId, projectPath: string) {
+  if (projectPath === CHAT_PROJECT) return; // a chat's files are listed by its root (rootOf), not the sentinel
   void send(connectionId, { type: "list_files", data: { projectPath } });
 }
 
@@ -1428,8 +1448,9 @@ const oauthUrlWaiters = new Map<ConnectionId, (d: { requestId: string; url: stri
  * authMethod "oauth". Resolves once the code is handed to the server: provider_registered (or an error
  * event) follows. Rejects if the browser step fails, times out or is cancelled. */
 export async function signInOpenRouter(connectionId: ConnectionId, name: string) {
-  const { callbackUrl } = await invoke<{ callbackUrl: string }>("oauth_listen");
+  const web = isDesktop ? null : startWebSignIn();
   try {
+    const { callbackUrl } = web ?? (await invoke<{ callbackUrl: string }>("oauth_listen"));
     const { requestId, url } = await new Promise<{ requestId: string; url: string }>((resolve, reject) => {
       const timer = setTimeout(() => {
         oauthUrlWaiters.delete(connectionId);
@@ -1442,16 +1463,22 @@ export async function signInOpenRouter(connectionId: ConnectionId, name: string)
       });
       void send(connectionId, { type: "openrouter_oauth_start", data: { name, callbackUrl } });
     });
-    await openUrl(url);
-    const code = await invoke<string>("oauth_wait");
+    // OpenRouter's redirect carries no state; the nonce in the callback URL stands in for it.
+    const answer = web?.wait();
+    answer?.catch(() => {}); // the await below reports it; this only keeps it handled if open() throws first
+    if (web) web.open(url);
+    else await openUrl(url);
+    const code = answer ? (await answer).code : await invoke<string>("oauth_wait");
     void send(connectionId, { type: "openrouter_oauth_complete", data: { requestId, code } });
   } catch (e) {
-    void invoke("oauth_cancel").catch(() => {});
+    if (!web) void invoke("oauth_cancel").catch(() => {});
     throw e;
+  } finally {
+    web?.end();
   }
 }
 
-export const cancelOpenRouterSignIn = () => invoke("oauth_cancel");
+export const cancelOpenRouterSignIn = () => (isDesktop ? invoke("oauth_cancel") : Promise.resolve(cancelWebSignIn()));
 
 // ---- MCP servers (§3.1 list_mcp_servers … mcp_sign_out) ----
 // Every reply is an `mcp_servers` event, which lands in `server.mcpByProject[projectPath]`; a refused
@@ -1493,8 +1520,9 @@ const mcpOauthWaiters = new Map<ConnectionId, (d: { requestId: string; url: stri
  * code reaches the server whichever machine it runs on. Resolves once the server has the code
  * (`mcp_servers` follows, with the server signed in or an `error`); rejects if the browser step fails. */
 export async function signInMcpServer(connectionId: ConnectionId, projectPath: string | undefined, name: string) {
-  const { callbackUrl } = await invoke<{ callbackUrl: string }>("oauth_listen");
+  const web = isDesktop ? null : startWebSignIn();
   try {
+    const { callbackUrl } = web ?? (await invoke<{ callbackUrl: string }>("oauth_listen"));
     const { requestId, url } = await new Promise<{ requestId: string; url: string }>((resolve, reject) => {
       const waiter = (d: { requestId: string; url: string }) => {
         clearTimeout(timer);
@@ -1509,14 +1537,21 @@ export async function signInMcpServer(connectionId: ConnectionId, projectPath: s
       void send(connectionId, { type: "mcp_oauth_start", data: { projectPath, name, callbackUrl } });
     });
     // Only the redirect that carries this sign-in's state is taken (oauthListener.js).
-    const state = new URL(url).searchParams.get("state");
-    if (state) await invoke("oauth_expect_state", { state });
-    await openUrl(url);
-    const { code, state: returned, iss } = await invoke<{ code: string; state?: string; iss?: string }>("oauth_wait_params");
+    const state = new URL(url).searchParams.get("state") ?? undefined;
+    const answer = web?.wait(state);
+    answer?.catch(() => {});
+    if (web) web.open(url);
+    else {
+      if (state) await invoke("oauth_expect_state", { state });
+      await openUrl(url);
+    }
+    const { code, state: returned, iss } = await (answer ?? invoke<{ code: string; state?: string; iss?: string }>("oauth_wait_params"));
     void send(connectionId, { type: "mcp_oauth_complete", data: { projectPath, requestId, code, state: returned, iss } });
   } catch (e) {
-    void invoke("oauth_cancel").catch(() => {});
+    if (!web) void invoke("oauth_cancel").catch(() => {});
     throw e;
+  } finally {
+    web?.end();
   }
 }
 
@@ -1531,7 +1566,7 @@ export function importMcpServers(connectionId: ConnectionId, projectPath: string
 }
 
 /** Gives up a sign-in waiting on the browser; the pending `signInMcpServer` rejects with "sign-in cancelled". */
-export const cancelMcpSignIn = () => invoke("oauth_cancel");
+export const cancelMcpSignIn = () => (isDesktop ? invoke("oauth_cancel") : Promise.resolve(cancelWebSignIn()));
 
 // ---- Skills (§3.1 list_skills, set_skill_enabled, get_skill) ----
 // Replies land in `server.skillsByProject[projectPath]` and `server.skillDetails[dir]`.
@@ -1709,6 +1744,14 @@ export function terminalClose(connectionId: ConnectionId, sessionId: string, ter
  * tab strip/status icons are current even before the terminal drawer itself opens. */
 function listTerminals(connectionId: ConnectionId, sessionId: string) {
   void send(connectionId, { type: "list_terminals", sessionId, data: { sessionId } });
+}
+
+/** The addresses the server could be reached at from a phone, for the pairing QR (§3.1 get_pair_info). */
+export const getPairInfo = (cid: ConnectionId) => rpc<{ hosts: string[] }>(cid, "get_pair_info", {});
+
+/** One sample of the server's process tree; the answer lands in ServerState.processes. */
+export function listProcesses(connectionId: ConnectionId) {
+  void send(connectionId, { type: "list_processes", data: {} });
 }
 
 // ---- Notifications (§3.1 list_notifications/dismiss_notification) ----
