@@ -1,7 +1,7 @@
 {
   "name": "yoake-gui",
   "version": "0.1.7",
-  "description": "yoakeland desktop client",
+  "description": "Agents that run on your machine",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

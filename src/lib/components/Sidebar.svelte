@@ -620,7 +620,7 @@ import { haptic } from "../haptics";
     }))}
   >
     <div class="brand-row">
-      <img class="brand-logo" src="logo.png" alt="" />
+      <span class="brand-logo" aria-hidden="true"><span style="mask-image: url(mark.svg)"></span><span class="dot" style="mask-image: url(mark-dot.svg)"></span></span>
       <div class="tabs" role="tablist" aria-label="Sidebar">
         <button
           role="tab"
@@ -1118,12 +1118,28 @@ import { haptic } from "../haptics";
     flex-shrink: 0;
     padding-left: calc(var(--toggle-reserve) - var(--pad-x));
   }
+  /* The mono mark, filled with the text colour so it follows light/dark and the accent themes.
+     On hover the dot fades in a light akane red over it. Images are set inline so they resolve like the other static assets. */
   .brand-logo {
+    position: relative;
     width: 1.1rem;
     height: 1.1rem;
     flex-shrink: 0;
-    border-radius: var(--radius-sm);
-    object-fit: cover;
+    -webkit-app-region: no-drag; /* it sits in the titlebar drag strip, which would swallow the hover */
+  }
+  .brand-logo > span {
+    position: absolute;
+    inset: 0;
+    background: var(--text);
+    mask: center / contain no-repeat;
+  }
+  .brand-logo > .dot {
+    background: #f48a8f;
+    opacity: 0;
+    transition: opacity calc(0.3s * var(--anim-speed, 1)) ease;
+  }
+  .brand-logo:hover > .dot {
+    opacity: 1;
   }
   .tabs {
     margin-left: auto;
