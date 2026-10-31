@@ -1,5 +1,6 @@
 {
   "name": "yoake-gui",
+  "productName": "yoakeland",
   "version": "0.1.7",
   "description": "Agents that run on your machine",
   "type": "module",

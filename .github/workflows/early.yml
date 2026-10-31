@@ -1,0 +1,50 @@
+# Early Linux build with the early icon, published to the separate early repo so the stable
+# repo's release list (read by the landing page and the server installer) stays stable-only.
+# Needs an EARLY_TOKEN secret: a fine-grained token with contents:write on yoakeland-dev/yoakeland-early.
+name: Early
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  EARLY_REPO: yoakeland-dev/yoakeland-early
+
+jobs:
+  early:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: rm -rf src/routes/__preview
+      - run: |
+          cp electron/icon-early.png electron/icon.png
+          cp static/logo-early.png static/logo.png
+      - run: npm run build
+      # Own product name and app id: an early build installs beside stable, and its window class (the
+      # dock's icon match) differs. The version sorts below the next stable (0.1.8-early < 0.1.8).
+      - run: |
+          V=$(node -p "require('./package.json').version")-early.$(date -u +%Y%m%d)
+          echo "TAG=early-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+          npx electron-builder --linux --publish never \
+            -c.productName="yoakeland early" -c.appId=com.aveline.yoake-gui.early \
+            -c.extraMetadata.version="$V" -c.extraMetadata.productName="yoakeland early"
+      - run: (cd dist && sha256sum *.AppImage > SHA256SUMS)
+      - run: |
+          gh release create "$TAG" dist/*.AppImage dist/SHA256SUMS \
+            --repo "$EARLY_REPO" --title "$TAG" --prerelease \
+            --notes "Early build of $GITHUB_SHA. Unstable."
+          # keep a week
+          gh release list --repo "$EARLY_REPO" --limit 100 --json tagName --jq '.[7:][].tagName' |
+            xargs -rn1 gh release delete --repo "$EARLY_REPO" --cleanup-tag --yes
+        env:
+          GH_TOKEN: ${{ secrets.EARLY_TOKEN }}
