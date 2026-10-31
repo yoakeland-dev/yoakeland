@@ -26,7 +26,8 @@ const KEY = "yoake.lastSeenVersion";
 /** The entry to show for this launch, or null. A first run only records the version. */
 export function pendingWhatsNew(current: string): WhatsNewEntry | null {
   try {
-    const seen = localStorage.getItem(KEY);
+    // Versions before 0.1.7 didn't record one: saved settings mean an upgrade, not a first run.
+    const seen = localStorage.getItem(KEY) ?? (localStorage.getItem("yoake.settings") ? "0" : null);
     localStorage.setItem(KEY, current);
     return seen && seen !== current ? (WHATS_NEW[current] ?? null) : null;
   } catch {
