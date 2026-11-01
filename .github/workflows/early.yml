@@ -40,9 +40,11 @@ jobs:
         with:
           go-version-file: server-src/go.mod
       - run: |
-          V=$(node -p "require('./package.json').version")-early.$(date -u +%Y%m%d)
+          # To the minute, so a second run on the same day gets its own tag and sorts above the first.
+          STAMP=$(date -u +%Y%m%d%H%M)
+          V=$(node -p "require('./package.json').version")-early.$STAMP
           echo "V=$V" >> "$GITHUB_ENV"
-          echo "TAG=early-$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+          echo "TAG=early-$STAMP" >> "$GITHUB_ENV"
           (cd server-src && go vet ./...)
           scripts/bundle-server.sh server-src "$V" linux-x64
       # YOAKE_VERSION puts the nightly version in the app's UI (the About dialog reads it at build time).
