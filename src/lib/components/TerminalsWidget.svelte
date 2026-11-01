@@ -28,7 +28,9 @@
   const groups = $derived(
     Object.values(app.servers).flatMap((srv) =>
       Object.entries(srv.terminalsBySession).flatMap(([sid, ids]): Group[] => {
-        const terms = ids.map((id) => srv.terminalById[id]).filter((t): t is TerminalTab => !!t);
+        // Only what needs a glance: a command running, or a terminal the agent has going. An idle
+        // shell of yours is just a drawer tab, and the server forgets it once you leave it.
+        const terms = ids.map((id) => srv.terminalById[id]).filter((t): t is TerminalTab => !!t && (!!t.busy || (!!t.agent && t.status === "running")));
         if (!terms.length) return [];
         const s = srv.sessionById.get(sid);
         const path = Object.entries(srv.sessionsByProject).find(([, list]) => list.some((x) => x.sessionId === sid))?.[0];
@@ -71,7 +73,7 @@
   <Popover.Root bind:open>
     <Popover.Trigger
       class="sb-trigger"
-      {@attach tip(busy ? `${busy} running, ${all.length} terminals` : `${all.length} terminals`)}
+      {@attach tip(busy ? `${busy} running, ${all.length} terminals` : `${all.length} agent ${all.length === 1 ? "terminal" : "terminals"}`)}
       aria-label="Terminals"
     >
       {#if busy}

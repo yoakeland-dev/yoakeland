@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- The page an ```artifact frame loads (src/lib/artifact.ts). It is a real URL, not srcdoc/data:/blob:,
+     because those inherit the app's CSP (script-src 'self') and the page's inline scripts would be
+     blocked. Here the policy is its own. The frame is sandboxed without allow-same-origin, so it is an
+     opaque origin that can't reach the app; the app posts the page's HTML in and it replaces this one. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'">
+<script>
+  addEventListener("message", (e) => {
+    if (e.source !== parent || typeof e.data?.yoakeDoc !== "string") return;
+    document.open();
+    document.write(e.data.yoakeDoc);
+    document.close();
+  }, { once: true });
+</script>

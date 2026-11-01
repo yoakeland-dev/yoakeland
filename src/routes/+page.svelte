@@ -17,6 +17,7 @@
   import QuietRoom from "$lib/components/QuietRoom.svelte";
   import Onboarding from "$lib/components/Onboarding.svelte";
   import { dispatchKeybind, dispatchMouseNav } from "$lib/keybinds.svelte";
+  import { startUsagePrefetch } from "$lib/usageFetch.svelte";
   import { tip } from "$lib/tooltip.svelte";
   import { viewport, showHome } from "$lib/viewport.svelte";
   import { swipe, commits, ownsHorizontalDrag } from "$lib/gestures";
@@ -317,6 +318,7 @@
     void loadCustomThemes();
     void autoConnect();
     const stopNotifications = startNotifications();
+    const stopUsage = startUsagePrefetch();
 
     // "System" theme (Settings > Appearance) tracks this live instead of only
     // resolving once at startup.
@@ -330,6 +332,7 @@
     window.addEventListener("mouseup", dispatchMouseNav);
     return () => {
       stopNotifications();
+      stopUsage();
       media.removeEventListener("change", onSchemeChange);
       window.removeEventListener("keydown", dispatchKeybind, true);
       window.removeEventListener("mouseup", dispatchMouseNav);

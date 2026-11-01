@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { setContext } from "svelte";
   import { tip } from "../tooltip.svelte";
   import type { AssistantStep, ChatMessage, ToolCallEntry } from "../types";
   import { app } from "../state.svelte";
@@ -25,6 +26,8 @@
   import { speech, toggleSpeech } from "../speech.svelte";
 
   let { message, sessionId }: { message: ChatMessage; sessionId: string } = $props();
+  // Lets an artifact page in this message's text answer it (Markdown.svelte, artifact_event).
+  setContext("artifactHost", { get sessionId() { return sessionId; }, get messageId() { return message.id; } });
 
   function retry() {
     const cid = app.activeConnectionId;

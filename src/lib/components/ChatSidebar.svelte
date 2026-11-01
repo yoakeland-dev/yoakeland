@@ -289,15 +289,16 @@
     position: relative;
     overflow: hidden;
     width: 0;
-    border-left: 1px solid transparent;
+    /* Closed it must take no width at all: a 1px border would leave a panel-bg strip at the window edge. */
+    border-left: 0 solid var(--panel-border);
     /* Same fill as the chat panel, no blur; matches TerminalPanel.svelte. */
     background: var(--panel-bg);
     transition:
       width calc(0.2s * var(--anim-speed, 1)) ease,
-      border-color calc(0.2s * var(--anim-speed, 1)) ease;
+      border-left-width calc(0.2s * var(--anim-speed, 1)) ease;
   }
   .chat-sidebar-slot.open {
-    border-left-color: var(--panel-border);
+    border-left-width: 1px;
   }
   /* Tools on the left taking what the chat column leaves (ChatPanel.svelte sizes that). */
   .chat-sidebar-slot.swapped {

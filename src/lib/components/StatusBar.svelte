@@ -40,6 +40,7 @@
         }
       : { today: localSpend, month: undefined },
   );
+  const scheduledCount = $derived(servers.reduce((n, s) => n + s.schedules.filter((x) => x.status === "pending" || x.status === "paused").length, 0));
   const queued = $derived(servers.reduce((n, s) => n + (s.serverStatus?.queuedTurns ?? 0), 0));
 
   // Clicking a count jumps to the next chat in it, cycling on repeat clicks.
@@ -98,6 +99,11 @@
         <Icon name="clock" size={12} /> {queued} queued
       </span>
     {/if}
+    {#if scheduledCount > 0}
+      <span class="item" {@attach tip("Scheduled turns waiting to run")}>
+        <Icon name="clock" size={12} /> {scheduledCount} scheduled
+      </span>
+    {/if}
     <UsageWidget />
     {#if spend.today > 0 || spend.month}
       <span
@@ -122,12 +128,16 @@
     justify-content: space-between;
     gap: 1rem;
     padding: 0 0.57rem;
-    background: var(--statusbar-bg);
+    /* Floating main area: blends into the window; flat keeps its own bar and hairline. */
+    background: var(--bg);
     color: var(--statusbar-fg);
     font-size: 0.72rem;
     font-variant-numeric: tabular-nums;
-    border-top: 1px solid var(--panel-border);
     white-space: nowrap;
+  }
+  :global(:root[data-main="flat"]) .statusbar {
+    background: var(--statusbar-bg);
+    border-top: 1px solid var(--panel-border);
   }
   .left,
   .right {

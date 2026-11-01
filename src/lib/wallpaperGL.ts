@@ -19,14 +19,14 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string) {
   return shader;
 }
 
-export type WallpaperStyle = "dither" | "scanlines" | "ascii" | "dotmatrix" | "gameboy";
+export type WallpaperStyle = "dither" | "scanlines" | "mosaic" | "gameboy" | "none";
 
 const STYLE_MAP: Record<WallpaperStyle, number> = {
   dither: 0.0,
   scanlines: 1.0,
-  ascii: 2.0,
-  dotmatrix: 3.0,
+  mosaic: 2.0,
   gameboy: 4.0,
+  none: 5.0,
 };
 
 export function wallpaperGL(

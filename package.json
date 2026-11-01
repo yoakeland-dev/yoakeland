@@ -65,6 +65,12 @@
     "asarUnpack": [
       "build/**"
     ],
+    "extraResources": [
+      {
+        "from": "bundled-server/${os}-${arch}",
+        "to": "server"
+      }
+    ],
     "electronFuses": {
       "runAsNode": false,
       "enableNodeOptionsEnvironmentVariable": false,

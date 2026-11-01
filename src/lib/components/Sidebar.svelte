@@ -2,6 +2,7 @@
   import MenuContent from "./MenuContent.svelte";
   import { awaitingApproval } from "../extensions";
   import { tip } from "../tooltip.svelte";
+  import { dangle, type Bounds } from "../dangle";
   import { CHAT_STARTERS } from "../chatBrief";
   import { app, CHAT_PROJECT, SIDEBAR_TAB_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, type ConnectionId, type ServerState } from "../state.svelte";
   import { browseAndAddProject, openChatSession, startChatWith, listSessionsForProjects, newChat as newChatIn, switchServer, disconnect, reconnectServer } from "../ipc";
@@ -233,6 +234,25 @@
   ];
 
   let resizing = $state(false);
+
+  // Where the mark may be dragged: the whole sidebar width left of the Projects/Chats switcher,
+  // and a bit taller than the brand row. Measured at grab time, so it follows resizing.
+  function logoBounds(): Bounds {
+    const row = sidebarEl?.querySelector(".brand-row");
+    const logo = sidebarEl?.querySelector(".brand-logo");
+    const tabs = sidebarEl?.querySelector(".tabs");
+    if (!row || !logo || !tabs) return { l: 14, r: 14, u: 14, d: 14 };
+    const rr = row.getBoundingClientRect();
+    const lr = logo.getBoundingClientRect();
+    const tr = tabs.getBoundingClientRect();
+    const vert = rr.height * 0.75;
+    return {
+      l: Math.max(0, lr.left - sidebarEl!.getBoundingClientRect().left - 4),
+      r: Math.max(0, tr.left - lr.right - 6),
+      u: vert,
+      d: vert,
+    };
+  }
 
   // The peek card fades and drifts in from just off the edge instead of crossing the whole
   // sidebar width. Animations beat the CSS transform transition (same duration, so they end
@@ -608,7 +628,7 @@
     style:width={paneWidth}
   >
     <div class="brand-row">
-      <span class="brand-logo" aria-hidden="true"><span style="mask-image: url(mark.svg)"></span><span class="dot" style="mask-image: url(mark-dot.svg)"></span></span>
+      <span class="brand-logo" aria-hidden="true" use:dangle={logoBounds}><span style="mask-image: url(mark.svg)"></span><span class="dot" style="mask-image: url(mark-dot.svg)"></span></span>
       <div class="tabs" role="tablist" aria-label="Sidebar">
         <button
           role="tab"
@@ -1053,8 +1073,9 @@
     display: flex;
     flex-direction: column;
     /* Top padding is the chat panel's own margin, so the first row below
-       starts on the same line the panel's header does. */
-    padding: var(--chat-margin) var(--pad-x) 0.6rem;
+       starts on the same line the panel's header does, plus the panel's 1px hairline (the peek
+       card's own border covers it there). */
+    padding: calc(var(--chat-margin) + 1px) var(--pad-x) 0.6rem;
     --sb-gap: 0.55rem;
     gap: var(--sb-gap);
     /* Chrome (labels, buttons, statuses) reads as UI, not content, so it

@@ -334,7 +334,6 @@
   .det :global(.stack) {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
   }
   .det :global(.dhd) {
     padding: 1.1rem 1.14rem 0.5rem;
@@ -342,6 +341,12 @@
   .det :global(.sec) {
     display: flex;
     flex-direction: column;
+  }
+  .det :global(.pcard + .sec > h4) {
+    padding-top: 0;
+  }
+  .det :global(.dhd + .sec > h4) {
+    padding-top: 0.5rem;
   }
   .det :global(.sec > h4) {
     margin: 0;

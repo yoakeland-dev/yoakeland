@@ -438,6 +438,32 @@
   }
   app.activeConnectionId = "local";
 
+  // Diagnostics: a process tree and recent problems (the page polls these; the mock never answers).
+  local.processes = {
+    sampledAtMs: now,
+    processes: [
+      { pid: 100, ppid: 1, startTimeMs: now - 3e8, name: "yoakeland", command: "yoakeland", status: "S", cpuTimeMs: 1000, rssBytes: 180 * 2 ** 20, cpuPercent: 2.1 },
+      { pid: 210, ppid: 100, startTimeMs: now - 9e5, name: "claude", command: "claude --resume", status: "S", cpuTimeMs: 1000, rssBytes: 420 * 2 ** 20, cpuPercent: 14.2 },
+      { pid: 311, ppid: 210, startTimeMs: now - 8e5, name: "node", command: "node mcp-server-github", status: "S", cpuTimeMs: 1000, rssBytes: 96 * 2 ** 20, cpuPercent: 0.4 },
+      { pid: 400, ppid: 100, startTimeMs: now - 6e5, name: "bash", command: "bash", status: "S", cpuTimeMs: 1000, rssBytes: 8 * 2 ** 20, cpuPercent: 0 },
+      { pid: 401, ppid: 400, startTimeMs: now - 5e5, name: "vite", command: "vite dev", status: "R", cpuTimeMs: 1000, rssBytes: 240 * 2 ** 20, cpuPercent: 6.8 },
+    ],
+  } as typeof local.processes;
+  local.problems = {
+    readAtMs: now - 12_000,
+    toolCalls: 214,
+    failedCount: 3,
+    slowThresholdMs: 10_000,
+    slowCount: 2,
+    warnCount: 4,
+    latestFailures: [
+      { tool: "Bash", cause: "exit status 1", durationMs: 2400, atMs: now - 60_000 },
+      { tool: "Edit", cause: "old_string not found", durationMs: 40, atMs: now - 300_000 },
+      { tool: "Bash", cause: "exit status 1", durationMs: 900, atMs: now - 900_000 },
+    ],
+    slowest: [{ tool: "Bash", durationMs: 48_000, atMs: now - 120_000 }],
+    warnings: [{ atMs: now - 30_000, level: "WARN", message: "mcp github: reconnecting after EOF" }],
+  };
   // ?flat: flat main area. ?open=model|mode: open that composer picker.
   // &q=...: type into the model picker's search. For headless screenshots.
   const params = new URLSearchParams(location.search);
@@ -445,6 +471,20 @@
   onMount(() => {
     app.applySettings();
     if (params.get("ext")) app.openExtensions();
+    if (params.has("diag")) {
+      app.openDiagnostics();
+      local.projects = ["/home/aveline/Projects/yoake/yoake-gui", "/home/aveline/Projects/yoakeland"];
+      // Wobble the host figures so the diagnostics graphs have a history to draw.
+      let t = 0;
+      const wobble = setInterval(() => {
+        t++;
+        const st = local.serverStatus!;
+        local.serverStatus = { ...st, load1: 1.7 + Math.sin(t / 3) * 1.1 + Math.sin(t) * 0.3, memAvailBytes: (19 - Math.sin(t / 5) * 4) * 2 ** 30, heapBytes: (180 + t * 1.5 + Math.sin(t) * 12) * 2 ** 20 };
+        if (t > 50) clearInterval(wobble);
+      }, 150);
+    }
+    if (params.has("usage")) app.showUsage = true;
+    (window as unknown as { __app: typeof app }).__app = app;
     // ?toasts: a burst of notifications every few seconds (a stack for s2, singles for the rest).
     if (params.has("toasts")) {
       let n = 0;
@@ -463,8 +503,7 @@
     const open = params.get("open");
     if (!open) return;
     setTimeout(() => {
-      const triggers = document.querySelectorAll<HTMLElement>(".toolbar .picker-trigger");
-      const t = triggers[open === "mode" ? triggers.length - 1 : open === "effort" ? triggers.length - 2 : 0];
+      const t = document.querySelector<HTMLElement>(open === "mode" ? ".toolbar .picker-trigger" : open === "effort" ? ".toolbar .effort-trigger" : ".toolbar .model-trigger");
       for (const type of ["pointerdown", "pointerup"]) t?.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0 }));
       t?.click();
       const q = params.get("q");

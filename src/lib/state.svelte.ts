@@ -4,6 +4,12 @@ import type {
   AskUserQuestionData,
   ChatMessage,
   ChatMode,
+  TodoList,
+  ScheduledTurn,
+  Origin,
+  ScheduleList,
+  LimitHit,
+  LimitAction,
   HistoryMessage,
   HistoryToolCall,
   ProjectOpenedData,
@@ -52,7 +58,9 @@ import type {
   SubagentRun,
   SideAnswerData,
   MessageSummaryData,
+  ProblemList,
   ProcessList,
+  ProcessSignaled,
 } from "./types";
 import { withCpu } from "./processes";
   import { findCall, findCallInMessages, IN_FLIGHT } from "./subagents";
@@ -448,7 +456,7 @@ export interface AppSettings {
   profileAvatar: string;
   wallpaper: string;
   /** Shader treatment applied to the new-chat wallpaper, see wallpaperGL.ts. */
-  wallpaperStyle: "dither" | "scanlines" | "ascii" | "dotmatrix" | "gameboy";
+  wallpaperStyle: "dither" | "scanlines" | "mosaic" | "gameboy" | "none";
   /** "opaque": plain panel fill. "frosted": floating surfaces (composer, popups, dialogs, window
    * chrome) go translucent over a blur; pure CSS via `data-surface` (app.css). */
   surface: "opaque" | "frosted";
@@ -544,6 +552,8 @@ function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     const loaded = raw ? { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<AppSettings>) } : { ...DEFAULT_SETTINGS };
+    // Styles that were removed fall back to the default.
+    if (!["dither", "scanlines", "mosaic", "gameboy", "none"].includes(loaded.wallpaperStyle)) loaded.wallpaperStyle = "dither";
     // Saved before this setting existed: an existing install, not a first run.
     if (raw && !("onboarded" in JSON.parse(raw))) loaded.onboarded = true;
     // Older settings may have neither field as an object; guard against `map[key] = ...` throwing on undefined.
@@ -632,6 +642,10 @@ export class ServerState {
   notifyPrefs = $state<NotifyPrefs | null>(null);
   /** Latest list_processes answer, with CPU % against the one before (the diagnostics page polls it). */
   processes = $state<ProcessList | null>(null);
+  /** Pids with a signal_process in flight (the diagnostics page disables their buttons). */
+  signaling = $state<number[]>([]);
+  /** Latest list_problems answer (the diagnostics page polls it). */
+  problems = $state<ProblemList | null>(null);
   /** The permission rules in force per project (SPEC.md §3.2 permission_rules); `error` is why the last change was refused. */
   permissionRules = $state<Record<string, PermissionRulesData>>({});
   /** MCP servers per project (SPEC.md §3.2 mcp_servers), pushed as each one's state changes. */
@@ -850,6 +864,14 @@ export class ServerState {
   // write_plan's output (§4c), keyed by session so a re-write lands in place rather than stacking.
   planBySession = $state<Record<string, { path: string; content: string; updatedAt: number }>>({});
   openPlanSessionId = $state<string | null>(null);
+  // The model's todo list (SPEC.md §3.2 todo_list), whole-list replace, per session.
+  todoBySession = $state<Record<string, TodoList>>({});
+  // Scheduled turns (SPEC.md §3.2 schedule_list), every session's; whole schedule paused flag.
+  schedules = $state<ScheduledTurn[]>([]);
+  allPaused = $state(false);
+  // Chats stopped at a usage limit (schedule_list.limitHits, whole-list replace) and the server's limit_action.
+  limitHits = $state<LimitHit[]>([]);
+  limitAction = $state<LimitAction>("ask");
 
   // Every unanswered ask across all sessions, replaced wholesale by each pending_asks snapshot
   // (§3.2); live permission_request/ask_user_question_requested events only append for instant feedback.
@@ -1301,11 +1323,14 @@ export class ServerState {
    * second open). Plain Map, only read at mount. */
   freshTerminals = new Map<string, string | undefined>();
 
-  /** Opens the drawer with a new shell in it. A draft chat has no server session yet, so it only
-   * opens the drawer, which explains that. */
+  /** Per terminal, whether the last OSC 633 mark seen was a command start. Only pairs a D with its
+   * C so the exit code and command line show; whether the shell is busy is the server's (TerminalTab.busy). */
+  private markBusy = new Map<string, boolean>();
+
+  /** Opens the drawer with a new shell in it. A draft chat works too: terminal_open names its
+   * project, which is all the server needs to bind the session. */
   newTerminal(sessionId: string, cwd?: string) {
     this.terminalOpenBySession[sessionId] = true;
-    if (!(this.messagesBySession[sessionId] ?? []).length) return;
     const id = `term-${crypto.randomUUID().slice(0, 8)}`;
     this.freshTerminals.set(id, cwd);
     this.registerTerminalTab(sessionId, id);
@@ -1347,16 +1372,29 @@ export class ServerState {
     this.splitTerminalBySession[sessionId] = terminalId;
   }
 
-  /** Turning it on defaults the second pane to whichever other tab is open; turning it off
-   * just hides that pane, it doesn't close the tab in it. */
+  /** Splitting puts a terminal beside the current one: the one that was last in the second pane
+   * if it still exists, else a fresh shell, so it works from a single tab. Turning it off just
+   * hides that pane, it doesn't close the tab in it. */
   toggleTerminalSplit(sessionId: string) {
-    const on = !this.terminalSplitBySession[sessionId];
-    this.terminalSplitBySession[sessionId] = on;
-    if (on && !this.splitTerminalBySession[sessionId]) {
-      const tabs = this.terminalsBySession[sessionId] ?? [];
-      const other = tabs.find((id) => id !== this.activeTerminalBySession[sessionId]);
-      this.splitTerminalBySession[sessionId] = other ?? this.activeTerminalBySession[sessionId];
+    if (this.terminalSplitBySession[sessionId]) {
+      this.terminalSplitBySession[sessionId] = false;
+      return;
     }
+    const tabs = this.terminalsBySession[sessionId] ?? [];
+    const main = this.activeTerminalBySession[sessionId];
+    const remembered = this.splitTerminalBySession[sessionId];
+    if (remembered && remembered !== main && tabs.includes(remembered)) {
+      this.terminalSplitBySession[sessionId] = true;
+      return;
+    }
+    // newTerminal makes the new shell the main one; move it to the second pane and keep what was shown.
+    this.newTerminal(sessionId);
+    const fresh = this.activeTerminalBySession[sessionId];
+    if (main && fresh && fresh !== main) {
+      this.activeTerminalBySession[sessionId] = main;
+      this.splitTerminalBySession[sessionId] = fresh;
+    }
+    this.terminalSplitBySession[sessionId] = true;
   }
 
   /** Purely local: the wire protocol has no ordering concept for tabs. Moves `fromId` to sit where `toId` is. */
@@ -1374,9 +1412,10 @@ export class ServerState {
     if (tab) this.terminalById = { ...this.terminalById, [terminalId]: { ...tab, name: name.trim() || undefined } };
   }
 
-  /** Drops a tab from local bookkeeping; only from "terminal_closed" (no optimistic removal,
-   * closing isn't reversible). Picks a replacement for whichever pane(s) were showing it. */
-  private forgetTerminalTab(terminalId: string) {
+  /** Drops a tab from local bookkeeping: on "terminal_closed" (no optimistic removal of a real
+   * one, closing isn't reversible) or for a tab that never left this client. Picks a replacement for whichever pane(s) were showing it. */
+  forgetTerminalTab(terminalId: string) {
+    this.markBusy.delete(terminalId);
     const tab = this.terminalById[terminalId];
     if (!tab) return;
     const { [terminalId]: _removed, ...rest } = this.terminalById;
@@ -1525,6 +1564,7 @@ export class ServerState {
             ? m.authorAvatar
             : this.app.settings.profileAvatar || undefined,
           attachments: m.attachments,
+          origin: m.origin,
         });
       } else {
         // A turn with tool calls makes one round-trip per assistant entry here, but the live
@@ -1706,6 +1746,7 @@ export class ServerState {
       this.discardUnsentSession(prev);
     }
     this.projectBySession[id] = projectPath;
+    this.terminalsListedBySession[id] = true; // brand new: the server has nothing to list
     const existing = this.sessionsByProject[projectPath] ?? [];
     this.sessionsByProject[projectPath] = [
       { sessionId: id, updatedAt: new Date().toISOString(), messageCount: 0 },
@@ -1743,6 +1784,7 @@ export class ServerState {
     delete this.modeBySession[sessionId];
     delete this.tierBeforePlan[sessionId];
     delete this.planBySession[sessionId];
+    delete this.todoBySession[sessionId];
     delete this.syncingSessions[sessionId];
     delete this.composerDraftBySession[sessionId];
     this.seededBySession.delete(sessionId);
@@ -1787,7 +1829,7 @@ export class ServerState {
     this.forgetSessionState(sessionId);
   }
 
-  addUserMessage(sessionId: string, turnId: string, text: string, attachments?: string[], by?: { author?: string; avatar?: string }) {
+  addUserMessage(sessionId: string, turnId: string, text: string, attachments?: string[], by?: { author?: string; avatar?: string; origin?: Origin }) {
     this.ensureSession(sessionId);
     const msg: ChatMessage = {
       id: turnId,
@@ -1800,6 +1842,7 @@ export class ServerState {
       createdAt: Date.now(),
       author: by ? by.author : this.app.settings.profileName || undefined,
       authorAvatar: by ? by.avatar : this.app.settings.profileAvatar || undefined,
+      origin: by?.origin,
     };
     this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], msg];
     this.activeTurnBySession[sessionId] = turnId;
@@ -2052,7 +2095,7 @@ export class ServerState {
         title: existing?.title,
         name: existing?.name ?? t.name,
         agent: t.agent,
-        busy: t.status === "running" ? existing?.busy : false,
+        busy: t.status === "running" && !!t.busy,
         command: existing?.command,
         lastExit: existing?.lastExit,
         cols: existing?.cols ?? 80,
@@ -2244,9 +2287,9 @@ export class ServerState {
       }
       case "user_message": {
         // Sent to every watcher; the device that sent the prompt already has it.
-        const data = env.data as { messageId: string; content: string; attachments?: string[]; author?: string; authorAvatar?: string };
+        const data = env.data as { messageId: string; content: string; attachments?: string[]; author?: string; authorAvatar?: string; origin?: Origin };
         const have = this.messagesBySession[sessionId]?.some((m) => m.id === data.messageId || (m.turnId === env.turnId && m.role === "user"));
-        if (!have && env.turnId) this.addUserMessage(sessionId, env.turnId, data.content, data.attachments, { author: data.author, avatar: data.authorAvatar });
+        if (!have && env.turnId) this.addUserMessage(sessionId, env.turnId, data.content, data.attachments, { author: data.author, avatar: data.authorAvatar, origin: data.origin });
         break;
       }
       case "turn_started": {
@@ -2591,6 +2634,28 @@ export class ServerState {
       case "process_list":
         this.processes = withCpu(this.processes, env.data as unknown as ProcessList);
         break;
+      case "process_signaled": {
+        const d = env.data as unknown as ProcessSignaled;
+        this.signaling = this.signaling.filter((p) => p !== d.pid);
+        if (!d.signaled) {
+          if (d.message?.includes("not a live descendant")) this.app.toastAction(this.connectionId, "Process already exited");
+          else this.app.toastAction(this.connectionId, d.message || "Couldn't signal the process", undefined, "error");
+        }
+        void import("./ipc").then((m) => m.listProcesses(this.connectionId)); // dynamic: ipc.ts imports this file
+        break;
+      }
+      case "log_text": {
+        const d = env.data as unknown as { text: string; truncated: boolean };
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([d.text], { type: "text/plain" }));
+        a.download = "yoakeland.log";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        break;
+      }
+      case "problem_list":
+        this.problems = env.data as unknown as ProblemList;
+        break;
       case "notification_list": {
         const data = env.data as { notifications: ServerNotification[] };
         this.notifications = data.notifications ?? [];
@@ -2800,6 +2865,22 @@ export class ServerState {
         if (sessionId === this.currentSessionId) this.openPlanSessionId = sessionId;
         break;
       }
+      case "schedule_list": {
+        const data = env.data as unknown as ScheduleList;
+        const list = data.schedules ?? [];
+        this.schedules = data.sessionId ? [...this.schedules.filter((x) => x.sessionId !== data.sessionId), ...list] : list;
+        this.allPaused = !!data.allPaused;
+        this.limitHits = data.limitHits ?? [];
+        break;
+      }
+      case "limit_action":
+        this.limitAction = ((env.data as { action?: LimitAction }).action ?? "ask") as LimitAction;
+        break;
+      case "todo_list": {
+        const data = env.data as unknown as TodoList;
+        if (sessionId) this.todoBySession = { ...this.todoBySession, [sessionId]: { items: data.items ?? [], updatedAtMs: data.updatedAtMs ?? 0 } };
+        break;
+      }
       case "error": {
         const data = env.data as { message: string; fatal?: boolean; projectPath?: string };
         this.app.log(`error: ${data.message}`);
@@ -2866,13 +2947,15 @@ export class ServerState {
         const history = base64ToBytes(data.history ?? "");
         // A snapshot for an id we never registered has no session to attach to; drop it rather than guess.
         if (existing) {
-          // The history is the whole recent window, so its last C/D says whether a command is still running.
+          // Whether a command is running is the server's call (data.busy); the marks in the
+          // history only supply the command line, last exit, title and cwd.
           const ev = scanShellEvents(history, false);
+          this.markBusy.set(data.terminalId, !!ev?.busy);
           this.terminalById = {
             ...this.terminalById,
             [data.terminalId]: {
               ...existing,
-              busy: data.status === "running" && !!ev?.busy,
+              busy: data.status === "running" && !!data.busy,
               command: ev?.command ?? existing.command,
               lastExit: ev?.exitCode ?? existing.lastExit,
               title: ev?.title || existing.title,
@@ -2897,11 +2980,11 @@ export class ServerState {
         const bytes = base64ToBytes(data.data);
         if (tab) {
           // Written in place: this runs per chunk, and a new map each time would re-run everything reading it.
-          const ev = scanShellEvents(bytes, !!tab.busy);
+          const ev = scanShellEvents(bytes, !!this.markBusy.get(data.terminalId));
           tab.sequence = data.sequence;
           if (ev) {
             if (ev.busy !== undefined) {
-              tab.busy = ev.busy;
+              this.markBusy.set(data.terminalId, ev.busy);
               if (ev.busy) tab.command = ev.command;
               tab.lastExit = ev.busy ? undefined : ev.exitCode;
             }
@@ -2997,17 +3080,27 @@ class AppState {
   get fullPage() {
     return this.showUsage || this.showExtensions || this.showDiagnostics || this.onboarding;
   }
-  openDiagnostics() {
+  /** The server the diagnostics page should show (set when a status bar row opens it). */
+  diagnosticsServer = $state<ConnectionId | null>(null);
+  openDiagnostics(server: ConnectionId | null = null) {
     this.showUsage = this.showExtensions = false;
+    this.diagnosticsServer = server;
     this.showDiagnostics = true;
   }
   /** First run: the setup flow takes the whole window. */
   get onboarding() {
     return !this.settings.onboarded;
   }
-  openExtensions() {
+  /** An MCP server name the extensions page should select when it next shows (set by the diagnostics page). */
+  extensionsFocus = $state<string | null>(null);
+  openExtensions(focus: string | null = null) {
     this.showUsage = this.showDiagnostics = false;
+    this.extensionsFocus = focus;
     this.showExtensions = true;
+  }
+  openSettingsTab(tab: string) {
+    this.settingsTab = tab;
+    this.showSettings = true;
   }
   settingsTab = $state("appearance");
 
@@ -3094,6 +3187,8 @@ class AppState {
 
   // ModelPicker instances watch this to open on request; names which chat's picker.
   modelPickerRequest = $state<{ sessionId: string; at: number } | null>(null);
+  /** Quick open / close-file shortcuts for a chat's file panel, which may not be mounted yet. */
+  fileRequest = $state<{ sessionId: string; kind: "quickOpen" | "close"; at: number } | null>(null);
 
   notificationsOpen = $state(false);
   // Spend across every server today, tallied from turn_completed events. Resets at local
@@ -3137,11 +3232,11 @@ class AppState {
     this.toasts = this.toasts.filter((t) => this.toastKey(t) !== key);
   }
   /** A client-side toast with an action button (e.g. "Archived, Undo"). */
-  toastAction(connectionId: ConnectionId, title: string, action?: { label: string; run: () => void }) {
+  toastAction(connectionId: ConnectionId, title: string, action?: { label: string; run: () => void }, level: "info" | "error" = "info") {
     const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.toasts = [
       ...this.toasts.slice(-5),
-      { id, level: "info", kind: "local", title, createdAt: new Date().toISOString(), connectionId, action },
+      { id, level, kind: "local", title, createdAt: new Date().toISOString(), connectionId, action },
     ];
     this.armToast(id, 6_000);
   }

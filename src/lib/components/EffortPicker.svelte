@@ -119,14 +119,10 @@
 {#if levels}
   <Popover.Root bind:open>
     <Popover.Trigger
-      class={`picker-trigger${open ? " open" : ""}${restLevel === "ultracode" ? " ultra" : ""}`}
-      {@attach tip("How hard the model thinks: more effort is slower and costs more")}
+      class={`effort-trigger${open ? " open" : ""}${restLevel === "ultracode" ? " ultra" : ""}`}
+      {@attach tip(fastSupported && fast ? "Effort (fast mode on): how hard the model thinks" : "How hard the model thinks: more effort is slower and costs more")}
     >
-      <span class="trigger-icon">
-        <span class="crossfade a"><Icon name={fastSupported && fast ? "bolt" : "brain"} size={13} /></span>
-        <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
-      </span>
-      <span class="trigger-label"><SlideText text={restLevel ? effortLabel(restLevel) : ""} dir={restDir} /></span>
+      <SlideText text={restLevel ? effortLabel(restLevel) : ""} dir={restDir} />
     </Popover.Trigger>
 
     <Popover.Portal>
@@ -205,10 +201,28 @@
     opacity: 0.4;
     cursor: default;
   }
+  /* Bare text beside the model pill: no icon, no fill, it just lights up on hover. */
+  :global(.effort-trigger) {
+    display: inline-flex;
+    align-items: center;
+    height: 1.86rem;
+    padding: 0 0.5rem 0 0.14rem;
+    background: none;
+    border: none;
+    color: color-mix(in srgb, var(--text) 45%, transparent);
+    font-size: var(--text-label-size);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color calc(0.12s * var(--anim-speed, 1)) ease;
+  }
+  :global(.effort-trigger:hover),
+  :global(.effort-trigger.open) {
+    color: #fff;
+  }
   /* Ultracode is a workflow, not a deeper level of thinking: it gets the lamp colour. */
-  :global(.picker-trigger.ultra),
-  :global(.picker-trigger.ultra:hover),
-  :global(.picker-trigger.ultra.open) {
+  :global(.effort-trigger.ultra),
+  :global(.effort-trigger.ultra:hover),
+  :global(.effort-trigger.ultra.open) {
     color: rgb(var(--quiet-light, 255 196 140));
   }
   .line {

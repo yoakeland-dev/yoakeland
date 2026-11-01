@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { assetName, installedServer, installServer, managedBinPath, verifyChecksum } from "./serverInstall.js";
+import { assetName, compareVersions, ensureBundledServer, installedServer, installServer, managedBinPath, verifyChecksum } from "./serverInstall.js";
 
 const sha256 = (s) => createHash("sha256").update(s).digest("hex");
 
@@ -72,4 +72,27 @@ test("an install never replaces a newer server with an older release", async () 
   await writeFile(path.join(dir, "server", "version"), "1.3.0\n");
   await assert.rejects(installServer(dir, fakeGitHub("bin", undefined, "v1.2.3")), /refusing to replace server v1\.3\.0/);
   assert.equal(await readFile(managedBinPath(dir), "utf8"), "newer");
+});
+
+test("a nightly sorts above the release of its number and nightlies sort by date", () => {
+  assert.ok(compareVersions("0.1.8-early.20261102", "0.1.8") > 0);
+  assert.ok(compareVersions("0.1.8-early.20261103", "0.1.8-early.20261102") > 0);
+  assert.ok(compareVersions("0.1.9", "0.1.8-early.20261103") > 0);
+  assert.equal(compareVersions("v0.1.7", "0.1.7"), 0);
+});
+
+test("the bundled server is put in place when missing or older, and a newer installed one is kept", async () => {
+  const res = await mkdtemp(path.join(os.tmpdir(), "res-"));
+  const data = await mkdtemp(path.join(os.tmpdir(), "data-"));
+  await mkdir(path.join(res, "server"));
+  const bin = path.join(res, "server", process.platform === "win32" ? "yoakeland.exe" : "yoakeland");
+  await writeFile(bin, "bundled-binary");
+  await writeFile(path.join(res, "server", "version"), "0.1.8-early.20261102\n");
+  assert.equal(await ensureBundledServer(data, path.join(res, "nowhere")), null); // nothing bundled (a dev run)
+  assert.equal((await ensureBundledServer(data, res)).version, "0.1.8-early.20261102");
+  assert.equal(await readFile(managedBinPath(data), "utf8"), "bundled-binary");
+  await writeFile(path.join(data, "server", "version"), "0.1.9\n"); // a hotfix download, newer than the app's own
+  await writeFile(managedBinPath(data), "hotfix");
+  assert.equal((await ensureBundledServer(data, res)).version, "0.1.9");
+  assert.equal(await readFile(managedBinPath(data), "utf8"), "hotfix");
 });

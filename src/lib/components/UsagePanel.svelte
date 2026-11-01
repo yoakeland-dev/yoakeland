@@ -1,22 +1,11 @@
-<script module lang="ts">
-  import type { UsageReport } from "../usage";
-
-  // Kept across visits, so reopening the page shows the last numbers while they refresh.
-  interface Fetched {
-    report?: UsageReport;
-    error?: string;
-    loading: boolean;
-  }
-  const fetched = $state<Record<string, Fetched>>({});
-</script>
-
 <script lang="ts">
   // The usage page (SPEC.md §3.1 get_usage): every server's yoakeland chats plus what the CLI
   // agents recorded on that machine themselves, windowed and broken down in local time.
   // Provider things wear the provider's brand color; everything else the theme accent.
   // The overview stays short; clicking a provider or row drills in for the details.
   import { app, type ServerState } from "../state.svelte";
-  import { getUsage, openChatSession } from "../ipc";
+  import { openChatSession } from "../ipc";
+  import { fetched, loadUsage as load, usageKey as keyOf } from "../usageFetch.svelte";
   import { basename, sessionTitle } from "../format";
   import { CLI_AGENTS, MULTI_ACCOUNT, providerLabel as accountLabel, titleFor } from "../modelVendor";
   import type { CliKind } from "../types";
@@ -49,6 +38,7 @@
   } from "../usage";
   import Dropdown from "./Dropdown.svelte";
   import Icon from "./Icon.svelte";
+  import PageHeader from "./PageHeader.svelte";
   import LobeIcon from "./LobeIcon.svelte";
   import UsageChart, { type Series } from "./usage/UsageChart.svelte";
   import UsageHeatmap from "./usage/UsageHeatmap.svelte";
@@ -110,45 +100,10 @@
   let moreProviders = $state(false);
 
   // --- Fetching ---
-  const keyOf = (s: ServerState) => s.serverId ?? s.connectionId;
   const connected = $derived(Object.values(app.servers).filter((s) => s.connectionStatus === "connected"));
   const serverByKey = (k: string) => Object.values(app.servers).find((s) => keyOf(s) === k);
 
-  async function load(srv: ServerState) {
-    const k = keyOf(srv);
-    const cur = fetched[k];
-    if (cur?.loading) return;
-    fetched[k] = { ...cur, loading: true };
-    try {
-      const r = await getUsage(srv.connectionId);
-      fetched[k] = r.error ? { ...fetched[k], error: r.error, loading: false } : { report: r, loading: false };
-    } catch (e) {
-      const msg = String(e instanceof Error ? e.message : e);
-      fetched[k] = {
-        ...fetched[k],
-        loading: false,
-        error: msg.includes("no reply") ? "Not reporting usage yet. Update yoakeland there." : msg,
-      };
-    }
-  }
   const refreshAll = () => connected.forEach((s) => void load(s));
-
-  // Refetch a server when its status ping says a turn finished (activeTurns/spend moved),
-  // or when it (re)connects. The server caches parsed files, so a repeat scan is cheap.
-  const seen = new Map<string, string>();
-  const timers = new Map<string, ReturnType<typeof setTimeout>>();
-  $effect(() => {
-    for (const s of connected) {
-      const k = keyOf(s);
-      const sig = `${s.connectionId}|${s.serverStatus?.activeTurns ?? ""}|${s.serverStatus?.spend?.todayUsd ?? ""}`;
-      const prev = seen.get(k);
-      seen.set(k, sig);
-      if (prev === sig) continue;
-      clearTimeout(timers.get(k));
-      timers.set(k, setTimeout(() => void load(s), prev === undefined ? 0 : 1500));
-    }
-  });
-  $effect(() => () => timers.forEach(clearTimeout));
 
   // --- Records ---
   const allRecs = $derived.by(() => {
@@ -217,6 +172,7 @@
     return multiServer && srv ? `${srv.label}/${name}` : name;
   }
   const serverLabel = (k: string) => serverByKey(k)?.label ?? "Server";
+  const filterSrv = $derived(serverFilter ? serverByKey(serverFilter) : undefined);
   function labelFor(dim: Group, r: UsageRec): string {
     return dim === "model" ? modelLabel(r) : dim === "provider" ? providerLabel(r) : dim === "project" ? projectLabel(r) : serverLabel(r.server);
   }
@@ -478,18 +434,15 @@
 </script>
 
 <div class="panel" class:sidebar-collapsed={app.sidebarCollapsed}>
-  <header class="head">
-    <h1 class="chrome-surface island">
-      <Icon name="chart-bar" size={15} />
-      {#if drill}
-        <button type="button" class="crumb" onclick={() => (drill = null)} {@attach tip("Back to all usage")}>Usage</button>
-        <span class="sep">/</span>
-        <span class="here">{drill.label}</span>
-      {:else}
-        Usage
-      {/if}
-    </h1>
-    <div class="controls">
+  <PageHeader icon="chart-bar" items={multiServer ? [{ value: ALL_SERVERS, label: "All servers" }, ...serversWithData.map((k) => ({ value: k, label: serverLabel(k) }))] : []} value={serverFilter ?? ALL_SERVERS} onchange={(v) => ((serverFilter = v && v !== ALL_SERVERS ? v : null), (drill = null))} server={filterSrv} triggerTitle="Which server's usage to show">
+    {#if drill}
+      <button type="button" class="crumb" onclick={() => (drill = null)} {@attach tip("Back to all usage")}>Usage</button>
+      <span class="sep">/</span>
+      <span class="here">{drill.label}</span>
+    {:else}
+      Usage
+    {/if}
+    {#snippet controls()}
       {#if hasExternal}
         <Dropdown
           items={[
@@ -498,12 +451,6 @@
           ]}
           bind:value={() => (yoakeOnly ? "yoake" : "all"), (v) => (yoakeOnly = v === "yoake")}
           triggerTitle="Also counts what Claude Code and Codex recorded on the server's machine outside yoakeland"
-        />
-      {/if}
-      {#if multiServer}
-        <Dropdown
-          items={[{ value: ALL_SERVERS, label: "All servers" }, ...serversWithData.map((k) => ({ value: k, label: serverLabel(k) }))]}
-          bind:value={() => serverFilter ?? ALL_SERVERS, (v) => ((serverFilter = v && v !== ALL_SERVERS ? v : null), (drill = null))}
         />
       {/if}
       <Dropdown items={PERIODS} bind:value={() => period, (v) => (period = (v ?? period) as Period)} />
@@ -517,8 +464,8 @@
         {@attach tip("Refresh")}
         aria-label="Refresh usage"><Icon name="refresh" size={15} /></button
       >
-    </div>
-  </header>
+    {/snippet}
+  </PageHeader>
 
   <!-- Scrolls under the header rather than the header sticking inside it: Electron drops
        no-drag regions inside a scroller, which left the header's buttons unclickable. -->
@@ -755,7 +702,7 @@
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-xl);
-    margin: var(--chat-margin) var(--chat-margin) var(--chat-margin) 0;
+    margin: var(--chat-margin) var(--chat-margin) 0 0;
     transition: margin-left calc(0.2s * var(--anim-speed, 1)) ease;
     overflow: hidden;
     color: var(--text);
@@ -767,36 +714,10 @@
     border-radius: 0;
     border-width: 0 0 0 1px;
   }
+  :global(:root[data-main="flat"]) .panel.sidebar-collapsed {
+    border-width: 0;
+  }
 
-  .head {
-    display: flex;
-    align-items: center;
-    gap: 0.71rem;
-    flex-shrink: 0;
-    min-height: var(--header-line);
-    padding: var(--header-pad-y) calc(var(--header-pad-x) + var(--chrome-reserve)) var(--header-pad-y) var(--chrome-inset-in-panel);
-    background: var(--panel-bg);
-    transition: padding calc(0.2s * var(--anim-speed, 1)) ease;
-  }
-  .panel.sidebar-collapsed .head {
-    padding-left: var(--toggle-reserve-in-panel);
-  }
-  /* Same card as the chat title's island (ChatHeader.svelte). */
-  h1 {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-    margin: 0;
-    font-size: var(--text-body-size);
-    font-weight: 600;
-  }
-  .island {
-    box-sizing: border-box;
-    height: var(--chrome-h);
-    padding: 0 calc(var(--chrome-pad) + var(--space-1));
-    margin-block: calc((var(--header-line) - var(--chrome-h)) / 2);
-  }
   .scroll {
     flex: 1;
     min-height: 0;
@@ -822,15 +743,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  /* Held to the header line so the taller dropdowns don't push the island off the
-     sidebar toggle's line. */
-  .controls {
-    display: flex;
-    align-items: center;
-    height: var(--header-line);
-    gap: 0.2rem;
-    margin-left: auto;
   }
   .icon-btn {
     display: grid;

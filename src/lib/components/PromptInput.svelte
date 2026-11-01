@@ -34,6 +34,9 @@
   import { sessionModes } from "../modes";
   import Icon from "./Icon.svelte";
   import AskCard from "./AskCard.svelte";
+  import TodoPanel from "./TodoPanel.svelte";
+  import ScheduledPanel from "./ScheduledPanel.svelte";
+  import LimitCard from "./LimitCard.svelte";
   import { primaryAction } from "./SummaryCard.svelte";
   import BtwCard from "./BtwCard.svelte";
   import DotMatrix from "./DotMatrix.svelte";
@@ -979,6 +982,9 @@
     <BtwCard {sessionId} />
 
     <div class="dock">
+      <TodoPanel {sessionId} />
+      <LimitCard {sessionId} />
+      <ScheduledPanel {sessionId} />
       <ChatNotices {sessionId} />
       <!-- Only while scrolled up: what the running turn is doing, and a way back down. Tucks
            behind the box's top edge otherwise. -->
@@ -1068,6 +1074,7 @@
         {/if}
 
         <div class="input-area">
+          <div class="ctx-corner" inert={compact || rest}><ContextRing {sessionId} /></div>
           {#if composerRuns.length}
             <div class="mirror" aria-hidden="true" bind:this={mirror}>{#each composerRuns as r}{#if r.chat}<span class="m-chip"><span class="m-hash">#[</span>{r.text.slice(2, -1)}<span class="m-end">]</span></span>{:else if r.cmd}<span class="m-chip m-cmd">{r.text}</span>{:else if r.skill}<span class="m-chip m-skill">{r.text}</span>{:else if r.opt}<span class="m-chip m-opt">{r.text}</span>{:else if r.path}<span class="m-chip"><span class="m-at" style:background-image={`url("${fileIconUrl(r.path.split("/").pop() ?? r.path)}")`}>@</span>{r.text.slice(1)}</span>{:else}{r.text}{/if}{/each}{#if ghost}<span class="m-ghost">{ghost}</span>{/if}&#8203;</div>
           {/if}
@@ -1167,10 +1174,11 @@
               }}
             />
             <div class="pickers" inert={rest}>
-              <ModelPicker {sessionId} />
-              <EffortPicker {sessionId} />
-              <ModePicker {sessionId} />
-              <ContextRing {sessionId} />
+              <div class="model-effort">
+                <ModelPicker {sessionId} />
+                <EffortPicker {sessionId} />
+              </div>
+              <div class="mode-slot"><ModePicker {sessionId} /></div>
             </div>
           </div>
         </div>
@@ -1720,7 +1728,30 @@
     opacity: 0.75;
   }
   .input-area {
+    --ring-col: 2.1rem;
     position: relative;
+  }
+  /* Top right, level with the first line of text; the number lives in its tooltip. */
+  .ctx-corner {
+    position: absolute;
+    right: 0;
+    top: calc((1.38rem - 1.86rem) / 2);
+    z-index: 1;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .wrap.compact .ctx-corner,
+  .wrap.rest .ctx-corner {
+    opacity: 0;
+    visibility: hidden;
+  }
+  .wrap.compact .input-area,
+  .wrap.rest .input-area {
+    --ring-col: 0px;
+  }
+  /* Model and effort read as one control: the model's pill with the effort as bare text beside it. */
+  .model-effort {
+    display: flex;
+    align-items: center;
   }
   textarea {
     display: block;
@@ -1733,8 +1764,8 @@
     font-size: 0.92rem;
     line-height: 1.5;
     outline: none;
-    /* Lines the text's left edge up with the + button's glyph below it. */
-    padding: 0 0 0 calc((1.86rem - 14px) / 2);
+    /* Lines the text's left edge up with the + button's glyph below it; the right clears the ring. */
+    padding: 0 var(--ring-col) 0 calc((1.86rem - 14px) / 2);
     /* Matches MAX_TEXTAREA_HEIGHT in the script; scrolls internally past this instead of
        pushing the toolbar off the panel. */
     max-height: 240px;
@@ -1744,7 +1775,7 @@
   .mirror {
     position: absolute;
     inset: 0;
-    padding: 0 0 0 calc((1.86rem - 14px) / 2);
+    padding: 0 var(--ring-col) 0 calc((1.86rem - 14px) / 2);
     font-size: 0.92rem;
     line-height: 1.5;
     color: var(--text);
@@ -2011,9 +2042,14 @@
   }
   .pickers {
     display: flex;
+    flex: 1;
     align-items: center;
     gap: 0.43rem;
     min-width: 0;
+  }
+  /* Permission sits against the send button. */
+  .mode-slot {
+    margin-left: auto;
   }
   :global(.add-chip) {
     display: inline-flex;
@@ -2124,8 +2160,6 @@
     }
     .pickers {
       gap: 0;
-      border-radius: var(--radius-pill);
-      background: var(--wash-2);
     }
     .pickers :global(.picker-trigger) {
       padding: 0 0.5rem;
@@ -2210,6 +2244,10 @@
       min-width: 2.8rem;
       justify-content: center;
     }
+    .pickers :global(.effort-trigger),
+    .pickers :global(.model-trigger) {
+      min-height: 2.8rem;
+    }
     .hint {
       display: none;
     }
@@ -2262,11 +2300,19 @@
     textarea,
     .mirror {
       padding-block: calc((3rem - 1.38rem) / 2);
-      padding-inline: 0.6rem 0;
+      padding-inline: 0.6rem var(--ring-col);
       transition: none;
     }
     .input-area {
+      --ring-col: 2.8rem;
       margin-left: 0;
+    }
+    .ctx-corner {
+      top: 0;
+      width: 2.8rem;
+      height: 3rem;
+      display: grid;
+      place-items: center;
     }
     .toolbar-clip,
     .toolbar,

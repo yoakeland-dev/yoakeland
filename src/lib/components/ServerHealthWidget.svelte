@@ -64,6 +64,7 @@
     class="sb-trigger servers"
     {@attach tip(servers.length ? serversCard : "Servers")}
     aria-label="Servers"
+    ondblclick={() => ((open = false), app.openDiagnostics())}
   >
     {#if servers.length}
       <span class="stack">
@@ -92,7 +93,17 @@
           {#each servers as s (s.connectionId)}
             {@const h = health(s)}
             {@const st = s.connectionStatus === "connected" ? s.serverStatus : null}
-            <li class="sb-row srv-row" class:current={s === focused && servers.length > 1} class:offline={!st}>
+            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role, a11y_no_noninteractive_tabindex -->
+            <li
+              class="sb-row srv-row"
+              class:current={s === focused && servers.length > 1}
+              class:offline={!st}
+              class:clickable={s.connectionStatus === "connected"}
+              role={s.connectionStatus === "connected" ? "button" : undefined}
+              tabindex={s.connectionStatus === "connected" ? 0 : undefined}
+              onclick={() => s.connectionStatus === "connected" && ((open = false), app.openDiagnostics(s.connectionId))}
+              onkeydown={(e) => e.key === "Enter" && s.connectionStatus === "connected" && ((open = false), app.openDiagnostics(s.connectionId))}
+            >
               <span class="sb-row-main">
                 <ServerAvatar name={s.label} seed={s.serverId} size={24} />
                 <span class="sb-row-text">
@@ -219,6 +230,12 @@
     align-items: flex-start;
     padding-block: 0.3rem;
     gap: 0.6rem;
+  }
+  .srv-row.clickable {
+    cursor: pointer;
+  }
+  .srv-row.clickable:hover {
+    background: var(--hover-bg, color-mix(in srgb, currentColor 7%, transparent));
   }
   .srv-row .sb-row-text {
     gap: 0.14rem;

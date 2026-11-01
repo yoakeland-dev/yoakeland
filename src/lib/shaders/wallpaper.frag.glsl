@@ -5,7 +5,7 @@ uniform sampler2D u_tex;
 uniform vec2 u_canvasSize;
 uniform vec2 u_imgSize;
 uniform float u_levels;
-uniform float u_style; // 0=dither, 1=scanlines, 2=ascii, 3=dotmatrix, 4=gameboy
+uniform float u_style; // 0=dither, 1=scanlines, 2=mosaic, 4=gameboy, 5=none
 uniform vec3 u_accent;
 uniform vec3 u_panelBg;
 
@@ -27,84 +27,19 @@ vec3 gbColor(int idx) {
   return u_accent * shade;
 }
 
+float getLuma(vec3 c) {
+  return dot(c, vec3(0.299, 0.587, 0.114));
+}
+
 float hash21(vec2 p) {
   p = fract(p * vec2(234.34, 435.345));
   p += dot(p, p + 34.23);
   return fract(p.x * p.y);
 }
 
-float getLuma(vec3 c) {
-  return dot(c, vec3(0.299, 0.587, 0.114));
-}
-
-float sdfBox(vec2 p, vec2 b) {
-  vec2 d = abs(p) - b;
-  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
-}
-
-float sampleVectorAscii(int charIdx, vec2 uv) {
-  vec2 p = uv - 0.5;
-  float stroke = 0.06;
-  float d = 1.0;
-
-  if (charIdx == 0) return 0.0; // Space
-
-  if (charIdx == 1) {
-    d = length(p - vec2(0.0, -0.32)) - 0.08;
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  if (charIdx == 2) {
-    float topDot = length(p - vec2(0.0, 0.18)) - 0.07;
-    float botDot = length(p - vec2(0.0, -0.18)) - 0.07;
-    d = min(topDot, botDot);
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  if (charIdx == 3) {
-    d = sdfBox(p, vec2(0.26, stroke));
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  if (charIdx == 4) {
-    float h = sdfBox(p, vec2(0.26, stroke));
-    float v = sdfBox(p, vec2(stroke, 0.26));
-    d = min(h, v);
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  if (charIdx == 5) {
-    float topBar = sdfBox(p - vec2(0.0, 0.12), vec2(0.26, stroke));
-    float botBar = sdfBox(p + vec2(0.0, 0.12), vec2(0.26, stroke));
-    d = min(topBar, botBar);
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  if (charIdx == 6) {
-    float v1 = sdfBox(p - vec2(0.12, 0.0), vec2(0.04, 0.32));
-    float v2 = sdfBox(p + vec2(0.12, 0.0), vec2(0.04, 0.32));
-    float h1 = sdfBox(p - vec2(0.0, 0.12), vec2(0.32, 0.04));
-    float h2 = sdfBox(p + vec2(0.0, 0.12), vec2(0.32, 0.04));
-    d = min(min(v1, v2), min(h1, h2));
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  if (charIdx == 7) {
-    float slash = sdfBox(p, vec2(0.35, 0.04));
-    float c1 = abs(length(p - vec2(-0.16, 0.18)) - 0.08) - 0.03;
-    float c2 = abs(length(p - vec2(0.16, -0.18)) - 0.08) - 0.03;
-    d = min(slash, min(c1, c2));
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  if (charIdx == 8) {
-    float outerRing = abs(length(p) - 0.28) - 0.04;
-    float innerCore = length(p - vec2(-0.04, 0.0)) - 0.12;
-    d = min(outerRing, innerCore);
-    return smoothstep(0.03, 0.0, d);
-  }
-
-  return 0.0;
+float sdRoundBox(vec2 p, vec2 b, float r) {
+  vec2 q = abs(p) - b + r;
+  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
 void main() {
@@ -157,48 +92,22 @@ void main() {
     color = clamp(color * scanline + grain, 0.0, 1.0);
 
   } else if (mode == 2) {
-    vec2 cellSize = vec2(8.0, 16.0);
-    vec2 cellCoord = floor(gl_FragCoord.xy / cellSize);
-    vec2 cellCenterPx = (cellCoord + 0.5) * cellSize;
-
-    vec2 cellUV = cellCenterPx / u_canvasSize;
-    cellUV.y = 1.0 - cellUV.y;
-    vec2 sampleSt = (cellUV - 0.5) * scale + 0.5;
-
-    vec3 sampleCol = texture(u_tex, sampleSt).rgb;
-    float luma = getLuma(sampleCol);
-
-    int charIndex = int(clamp(floor(luma * 9.0), 0.0, 8.0));
-    vec2 localUV = mod(gl_FragCoord.xy, cellSize) / cellSize;
-
-    float mask = sampleVectorAscii(charIndex, localUV);
-    color = mix(u_panelBg, sampleCol, mask);
-
-  } else if (mode == 3) {
-    float dotSpacing = 8.0;
-    vec2 cellCoord = floor(gl_FragCoord.xy / dotSpacing);
-    vec2 cellCenterPx = (cellCoord + 0.5) * dotSpacing;
-
-    vec2 cellUV = cellCenterPx / u_canvasSize;
-    cellUV.y = 1.0 - cellUV.y;
-    vec2 sampleSt = (cellUV - 0.5) * scale + 0.5;
-
-    vec3 sampleCol = texture(u_tex, sampleSt).rgb;
-    float luma = getLuma(sampleCol);
-
-    vec2 cellLocal = mod(gl_FragCoord.xy, dotSpacing) / dotSpacing - 0.5;
-    float dist = length(cellLocal);
-
-    float maxRadius = 0.42;
-    float radius = clamp(luma * maxRadius, 0.05, maxRadius);
-    float dotMask = smoothstep(radius, radius - 0.08, dist);
-
-    color = mix(u_panelBg, sampleCol * 1.1, dotMask);
-
-    float fade = smoothstep(0.0, 1.0, 1.0 - uv.y);
-    color = mix(u_panelBg, color, fade);
-    outColor = vec4(clamp(color, 0.0, 1.0), 1.0);
-    return;
+    // Soft mosaic: big rounded tiles, each the average of its cell, flat and low in detail.
+    float tile = 24.0;
+    vec2 cellCoord = floor(gl_FragCoord.xy / tile);
+    vec2 centerPx = (cellCoord + 0.5) * tile;
+    vec3 avg = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+      vec2 off = (vec2(float(i & 1), float(i >> 1)) - 0.5) * tile * 0.6;
+      vec2 cuv = (centerPx + off) / u_canvasSize;
+      cuv.y = 1.0 - cuv.y;
+      avg += texture(u_tex, (cuv - 0.5) * scale + 0.5).rgb * 0.25;
+    }
+    avg *= 0.9 + 0.1 * hash21(cellCoord); // faint per-tile variation
+    vec2 local = gl_FragCoord.xy - centerPx;
+    float d = sdRoundBox(local, vec2(tile * 0.5 - 1.5), tile * 0.22);
+    float m = smoothstep(0.75, -0.75, d);
+    color = mix(u_panelBg, mix(u_panelBg, avg, 0.7), m);
 
   } else if (mode == 4) {
     float gbPixelSize = 8.0;
@@ -229,6 +138,9 @@ void main() {
     float edgeGap = smoothstep(1.0, 0.72, max(borderD.x, borderD.y));
 
     color = baseGbColor * (innerVignette * 0.35 + 0.65) * edgeGap;
+
+  } else {
+    color = texture(u_tex, st).rgb;
   }
 
   float fade = smoothstep(0.0, 1.0, 1.0 - uv.y);

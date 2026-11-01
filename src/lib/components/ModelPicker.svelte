@@ -301,17 +301,13 @@
 
 <Popover.Root bind:open>
   <Popover.Trigger
-    class={`picker-trigger${open ? " open" : ""}`}
+    class={`model-trigger${open ? " open" : ""}`}
     {@attach tip("Model / provider", "chat.model")}
   >
     <span class="trigger-icon">
       <span class="crossfade a">
         {#if currentEntry}
-          <LobeIcon
-            name={vendorMetaFor(currentEntry).icon}
-            fallback="openrouter"
-            size={13}
-          />
+          <LobeIcon name={vendorMetaFor(currentEntry).icon} fallback="openrouter" size={13} />
         {:else if currentProvider && isCli(currentProvider)}
           <LobeIcon name={cliMeta(currentProvider).icon} fallback="openrouter" size={13} />
         {:else}
@@ -561,6 +557,54 @@
 </Popover.Root>
 
 <style>
+  /* Inline text, no container: a touch brighter than the effort beside it, white on hover. */
+  :global(.model-trigger) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.43rem;
+    height: 1.86rem;
+    max-width: 12.86rem;
+    padding: 0 0.14rem 0 0.5rem;
+    background: none;
+    border: none;
+    color: color-mix(in srgb, var(--text) 78%, transparent);
+    font-size: var(--text-label-size);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color calc(0.12s * var(--anim-speed, 1)) ease;
+  }
+  /* The provider icon gives way to a chevron on hover and while open. */
+  :global(.model-trigger .trigger-icon) {
+    position: relative;
+    width: 0.93rem;
+    height: 0.93rem;
+    flex-shrink: 0;
+  }
+  :global(.model-trigger .crossfade) {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  :global(.model-trigger .crossfade.b),
+  :global(.model-trigger:hover .crossfade.a),
+  :global(.model-trigger.open .crossfade.a) {
+    opacity: 0;
+  }
+  :global(.model-trigger:hover .crossfade.b),
+  :global(.model-trigger.open .crossfade.b) {
+    opacity: 1;
+  }
+  :global(.model-trigger .trigger-label) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :global(.model-trigger:hover),
+  :global(.model-trigger.open) {
+    color: #fff;
+  }
   :global(.picker-panel) {
     width: 22rem;
     max-width: calc(100vw - 2rem);
@@ -787,6 +831,8 @@
     gap: 0.29rem;
     padding: 0.29rem 0;
     overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--panel-border) transparent;
     scrollbar-gutter: stable;
   }
   .hint {

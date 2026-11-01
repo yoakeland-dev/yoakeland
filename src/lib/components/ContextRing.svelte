@@ -102,7 +102,6 @@
         {/if}
       </svg>
     </span>
-    <span class="trigger-label">{#if ring.kind === "ok"}{ring.estimated ? "~" : ""}{ring.pct === null ? shortNum(ring.used) : `${ring.pct}%`}{:else}&ndash;{/if}</span>
   </Popover.Trigger>
 
   {#if !blank}
@@ -203,11 +202,12 @@
 </Popover.Root>
 
 <style>
-  /* Icon-sized, with the percentage beside it where there's room (the narrow composer hides the label). */
+  /* Just the ring; the percentage is in its tooltip and the panel. */
   :global(.ctx-trigger) {
-    gap: 0.36rem;
-    padding: 0 0.6rem;
-    font-variant-numeric: tabular-nums;
+    gap: 0;
+    width: 1.86rem;
+    padding: 0;
+    justify-content: center;
   }
   .ring-wrap {
     position: relative;

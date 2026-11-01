@@ -15,7 +15,8 @@ const katexWoff2Only = {
 
 export default defineConfig({
   plugins: [katexWoff2Only, sveltekit()],
-  define: { __APP_VERSION__: JSON.stringify(JSON.parse(readFileSync("package.json", "utf8")).version) },
+  // YOAKE_VERSION lets a nightly show its own version ("0.1.8-early.20261102"); electron-builder only sets that after this build.
+  define: { __APP_VERSION__: JSON.stringify(process.env.YOAKE_VERSION || JSON.parse(readFileSync("package.json", "utf8")).version) },
   // The ~1,250 file icons (fileIcons.ts) stay separate files rather than base64 inside the JS.
   build: { assetsInlineLimit: (file) => (file.includes("material-icon-theme") ? false : undefined) },
   // Fixed port: `npm run electron:dev` points the window at it.

@@ -22,6 +22,14 @@ export function usd(amount: number, unknown?: boolean): string {
   return unknown ? `${s}+` : s;
 }
 
+/** 850 -> "850 ms", 2400 -> "2.4 s", 75000 -> "1m 15s". */
+export function duration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
 /** 1536 -> "1.5 KB". */
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

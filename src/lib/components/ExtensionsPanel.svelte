@@ -12,6 +12,7 @@
   import { tip } from "../tooltip.svelte";
   import Dropdown from "./Dropdown.svelte";
   import Icon from "./Icon.svelte";
+  import PageHeader from "./PageHeader.svelte";
   import McpImport from "./McpImport.svelte";
   import SearchInput from "./SearchInput.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
@@ -65,6 +66,9 @@
     return srv ? [{ cid, srv, project: focus.slice(i + 2) }] : [];
   });
   const flat = $derived(ctxs.length === 1);
+  const focusCid = $derived(focus === ALL ? undefined : ctxs[0]?.cid);
+  // Projects of the one server in view (the server itself first, for its default project).
+  const projectItems = $derived(focusCid ? focusItems.filter((i) => i.value.startsWith(`${focusCid}::`) || i.value === `server::${focusCid}`).map((i) => (i.value.startsWith("server::") ? { ...i, label: "Default project", header: false, group: undefined } : { ...i, group: undefined })) : []);
   const focusServer = $derived(focus === ALL ? null : (ctxs[0]?.srv ?? null));
 
   // Ask each server in view about its project; the daemon starts the servers it is allowed to.
@@ -102,6 +106,15 @@
   // What the right side shows: a form or the import list, else the picked row.
   let selKey = $state<string | null>(null);
   let pane = $state<{ mode: "add" | "edit" | "import"; ctx: Ctx; name?: string } | null>(null);
+  // Asked for by name from the diagnostics page: select that server once its rows exist.
+  $effect(() => {
+    const name = app.extensionsFocus;
+    const r = name && mcpRows.find((r) => r.s.name === name);
+    if (r) {
+      selKey = r.key;
+      app.extensionsFocus = null;
+    }
+  });
   const selected = $derived([...mcpRows, ...skillRows].find((r) => r.key === selKey) ?? null);
   const editing = $derived(pane?.mode === "edit" && pane.ctx.project ? pane.ctx.srv.mcpByProject[pane.ctx.project]?.servers.find((s) => s.name === pane!.name && s.scope === "user") : undefined);
 
@@ -139,10 +152,6 @@
   {#if srv}<ServerAvatar name={srv.label} seed={srv.serverId} size={12} /> {srv.label}{/if}
 {/snippet}
 
-{#snippet lead()}
-  {#if focusServer && multi}<ServerAvatar name={focusServer.label} seed={focusServer.serverId} size={13} />{/if}
-{/snippet}
-
 {#snippet actions(ctx: Ctx)}
   <span class="acts">
     <button type="button" class="act" disabled={!ctx.project} {@attach tip("Add a server")} aria-label="Add a server" onclick={() => open("add", ctx)}><Icon name="plus" size={13} /></button>
@@ -171,26 +180,9 @@
 {/snippet}
 
 <div class="panel" class:sidebar-collapsed={app.sidebarCollapsed} class:detail={inDetail}>
-  <header class="head">
-    <h1 class="chrome-surface island">
-      <Icon name="plug-connected" size={15} />
-      Extensions
-    </h1>
-    <div class="controls">
-    {#if focusItems.length > 1}
-      <Dropdown
-        items={focusItems}
-        bind:value={() => focus, (v) => v && (picked = v)}
-        triggerIcon="folder"
-        triggerLead={focusServer && multi ? lead : undefined}
-        triggerTitle="Which server and project to show"
-        searchable={focusItems.length > 6}
-        searchPlaceholder="Search projects…"
-        groupHeader={serverLabel}
-      />
-    {/if}
-    </div>
-  </header>
+  <PageHeader icon="plug-connected" items={multi ? [{ value: ALL, label: "All servers" }, ...live.map(([cid, srv]) => ({ value: cid, label: srv.label }))] : []} value={focus === ALL ? ALL : (focusCid ?? ALL)} onchange={(v) => v && (picked = v === ALL ? ALL : `server::${v}`)} server={focusServer} triggerTitle="Which server to show" sub={{ items: projectItems, value: focus, onchange: (v) => v && (picked = v), title: "Which project to show", searchable: projectItems.length > 6 }}>
+    Extensions
+  </PageHeader>
 
   <div class="body">
     <nav class="list" aria-label="MCP servers and skills">
@@ -309,7 +301,7 @@
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-xl);
-    margin: var(--chat-margin) var(--chat-margin) var(--chat-margin) 0;
+    margin: var(--chat-margin) var(--chat-margin) 0 0;
     transition: margin-left calc(0.2s * var(--anim-speed, 1)) ease;
     overflow: hidden;
     color: var(--text);
@@ -321,42 +313,10 @@
     border-radius: 0;
     border-width: 0 0 0 1px;
   }
-  .head {
-    display: flex;
-    align-items: center;
-    gap: 0.71rem;
-    flex-shrink: 0;
-    min-height: var(--header-line);
-    padding: var(--header-pad-y) calc(var(--header-pad-x) + var(--chrome-reserve)) var(--header-pad-y) var(--chrome-inset-in-panel);
-    background: var(--panel-bg);
-    transition: padding calc(0.2s * var(--anim-speed, 1)) ease;
-  }
-  .panel.sidebar-collapsed .head {
-    padding-left: var(--toggle-reserve-in-panel);
-  }
-  h1 {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-    margin: 0;
-    font-size: var(--text-body-size);
-    font-weight: 600;
-  }
-  .island {
-    box-sizing: border-box;
-    height: var(--chrome-h);
-    padding: 0 calc(var(--chrome-pad) + var(--space-1));
-    margin-block: calc((var(--header-line) - var(--chrome-h)) / 2);
+  :global(:root[data-main="flat"]) .panel.sidebar-collapsed {
+    border-width: 0;
   }
 
-  .controls {
-    display: flex;
-    align-items: center;
-    height: var(--header-line);
-    gap: 0.2rem;
-    margin-left: auto;
-  }
   .body {
     flex: 1;
     min-height: 0;

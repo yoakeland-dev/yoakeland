@@ -31,8 +31,9 @@
     children: Snippet;
   } = $props();
 
-  // Closed once there's an answer to read; open when the work is all there is to see.
-  const open = $derived(workView.open[id] ?? (!live && !hasFinal));
+  // Open while the reply is still working, so progress is visible as it happens; once there's an
+  // answer to read it folds away. It stays open when the work is all there is to see.
+  const open = $derived(workView.open[id] ?? (live || !hasFinal));
   // The body mounts on first open and then stays, so closing still animates.
   let opened = $state(false);
   $effect(() => {
@@ -41,6 +42,24 @@
 
   let root: HTMLDivElement;
   let head: HTMLButtonElement;
+  let body: HTMLDivElement | undefined = $state();
+
+  // While live, the body follows its newest row; scrolling up to read stops it until you return to the end.
+  let follow = true;
+  $effect(() => {
+    if (!body || !live) return;
+    const el = body;
+    const onScroll = () => (follow = el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+    const mo = new MutationObserver(() => {
+      if (follow) el.scrollTop = el.scrollHeight;
+    });
+    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      mo.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
+  });
 
   /** Keeps the header where the pointer is while the body grows or shrinks under it, and stops
    * the list's stick-to-bottom from carrying it away. */
@@ -128,7 +147,7 @@
   </div>
   <div class="accordion" class:open>
     <div class="accordion-inner">
-      <div class="body">
+      <div class="body" bind:this={body}>
         {#if opened}{@render children()}{/if}
       </div>
     </div>

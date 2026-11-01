@@ -10,7 +10,37 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The server goes inside every installer (scripts/bundle-server.sh), so an app starts with the server it was
+  # built with. A tag build takes the server repo's tag of the same name (tag the server first); a manual run
+  # takes its main. Go cross-compiles, so one runner builds all of them.
+  server:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: yoakeland-dev/yoakeland-server
+          ref: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'main' }}
+          path: server-src
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: server-src/go.mod
+      - run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then V=${GITHUB_REF_NAME#v}; else V=$(node -p "require('./package.json').version")-dev; fi
+          scripts/bundle-server.sh server-src "$V" linux-x64 mac-arm64 mac-x64 win-x64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bundled-server
+          path: bundled-server
+          if-no-files-found: error
+
   build:
+    needs: server
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +67,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bundled-server
+          path: bundled-server
+      # Artifacts lose the execute bit; the app copies the file out and sets it, but keep the binary honest.
+      - run: chmod +x bundled-server/*/yoakeland* || true
       # The mock-server preview route is a dev tool; it doesn't ship.
       - run: rm -rf src/routes/__preview
       # The tests gate the release; once is enough, so only the Linux runner runs them.

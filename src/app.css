@@ -180,6 +180,9 @@
   /* Native Windows controls. env() only exists while they're on, so this is 0
      everywhere else. */
   --window-controls-w: calc(100vw - env(titlebar-area-width, 100vw));
+  /* What a full page's header (PageHeader.svelte) clears on the right, beyond its own padding: nothing
+     unless the window buttons are drawn by us, then their pill (three buttons) and the native controls. */
+  --page-reserve: 0px;
   /* ponytail: a guess, not measured on a Mac. Tune if the traffic lights look
      off-centre. */
   --traffic-lights-pad: 0.35rem;
@@ -341,6 +344,7 @@
 /* data-window-chrome is set by applyWindowChrome (state.svelte.ts). */
 :root[data-window-chrome="custom"] {
   --chrome-island-w: calc(5 * var(--chrome-btn-w) + 4 * var(--chrome-gap) + 2 * var(--chrome-pad) + 2px);
+  --page-reserve: calc(3 * var(--chrome-btn-w) + 2 * var(--chrome-gap) + 2 * var(--chrome-pad) + 2px + var(--window-controls-w) + var(--chrome-inset) - var(--chat-margin) - 1px + 0.6rem - var(--header-pad-x));
 }
 :root[data-window-chrome="traffic-lights"] {
   --toggle-w: calc(var(--chrome-h) + var(--traffic-lights-w) + 2 * var(--traffic-lights-pad) + var(--chrome-gap));

@@ -359,13 +359,6 @@
             }),
             EditorView.domEventHandlers({
               scroll: () => void (pill = null),
-              // Rebindable (Settings > Keyboard), so checked live rather than baked into a keymap.
-              keydown: (e, v) => {
-                if (matches(e, "files.save")) void save();
-                else if (!(matches(e, "files.gotoLine") && gotoLine(v))) return false;
-                e.preventDefault();
-                return true;
-              },
             }),
           ],
         }),
@@ -430,6 +423,16 @@
       void load();
     }
     // Otherwise the host renders now that media is gone, and its effect loads the text.
+  }
+
+  // Rebindable (Settings > Keyboard), so checked live rather than baked into a keymap; on the window
+  // so it works with focus anywhere (tree, tabs), not only inside the editor.
+  function onKey(e: KeyboardEvent) {
+    if (!visible || !view) return;
+    if (matches(e, "files.save")) void save();
+    else if (!(matches(e, "files.gotoLine") && gotoLine(view))) return;
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   async function save(force = false) {
@@ -553,6 +556,8 @@
     });
   }
 </script>
+
+<svelte:window onkeydowncapture={onKey} />
 
 <div class="editor">
   <div class="bar">

@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { pairWithPin } from "./pair.js";
-import { installedServer, installServer, latestRelease, managedBinPath } from "./serverInstall.js";
+import { ensureBundledServer, installedServer, installServer, latestRelease, managedBinPath } from "./serverInstall.js";
 
 const MAX_FRAME_BYTES = 10 * 1024 * 1024;
 const PROBE_TIMEOUT_MS = 400;
@@ -162,13 +162,14 @@ export function commands(emit, dataDir) {
     spawn_detached_unix_server: async ({ binPath, socketPath }) => {
       const wanted = expandTilde(socketPath);
       // The bare default means "whatever is installed": a downloaded copy wins over PATH.
-      if (binPath === "yoakeland" && (await installedServer(dataDir))) binPath = managedBinPath(dataDir);
+      if (binPath === "yoakeland" && (await ensureBundledServer(dataDir).catch(() => installedServer(dataDir)))) binPath = managedBinPath(dataDir);
       // Otherwise only a binary the user picked (ConnectForm, Onboarding); the page can't name another.
       else if (binPath !== "yoakeland" && !isGranted(binPath)) throw new Error(`not a server binary you picked: ${binPath}`);
       return spawnDetached(dataDir, binPath, wanted === defaultSocketPath() ? [] : ["-listen", `unix:${wanted}`]);
     },
 
-    server_installed: () => installedServer(dataDir),
+    // The server inside this app counts as installed: it is put in place here, so no download is offered.
+    server_installed: () => ensureBundledServer(dataDir).catch(() => installedServer(dataDir)),
     server_latest_release: () => latestRelease(),
     server_install: () => installServer(dataDir),
 

@@ -1,6 +1,6 @@
 import { askConfirm } from "./confirm.svelte";
 import { chooseMode, sessionModes } from "./modes";
-import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerIcon, ServerStatus, TreeEntry, ContextBreakdown } from "./types";
+import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerIcon, ServerStatus, TreeEntry, ContextBreakdown, Origin, ScheduleTrigger } from "./types";
 import {
   app,
   CHAT_PROJECT,
@@ -288,6 +288,9 @@ export function wireEvents() {
       projectsRefreshed.add(connectionId);
       listSessionsForProjects(connectionId, server.recentProjects);
     }
+
+    // Owner-only events: a paired-device (restricted) connection would just get an error.
+    if (env.type === "server_identity" && !server.tierRestricted) void listScheduled(connectionId);
 
     // provider_registered only carries {name}, not the full roster, so refetch it.
     if (env.type === "provider_registered") {
@@ -1710,6 +1713,13 @@ export function terminalAttach(
   });
 }
 
+/** This connection stopped watching a terminal (its drawer closed). The server forgets a shell
+ * nobody watches and nothing runs in, so there's nothing to clean up client-side. */
+export function terminalDetach(connectionId: ConnectionId, sessionId: string, terminalId: string) {
+  const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
+  void send(connectionId, { type: "terminal_detach", sessionId, data: { sessionId, projectPath, terminalId } });
+}
+
 /** Raw pty input: base64, not a plain JSON string, since terminal I/O isn't
  * guaranteed to be valid UTF-8 (§3.1). */
 export function terminalInput(connectionId: ConnectionId, sessionId: string, terminalId: string, bytes: Uint8Array) {
@@ -1742,7 +1752,7 @@ export function terminalClose(connectionId: ConnectionId, sessionId: string, ter
 
 /** Enumerates every open tab in one chat (§3.1); called whenever that chat opens, so the
  * tab strip/status icons are current even before the terminal drawer itself opens. */
-function listTerminals(connectionId: ConnectionId, sessionId: string) {
+export function listTerminals(connectionId: ConnectionId, sessionId: string) {
   void send(connectionId, { type: "list_terminals", sessionId, data: { sessionId } });
 }
 
@@ -1752,6 +1762,21 @@ export const getPairInfo = (cid: ConnectionId) => rpc<{ hosts: string[] }>(cid, 
 /** One sample of the server's process tree; the answer lands in ServerState.processes. */
 export function listProcesses(connectionId: ConnectionId) {
   void send(connectionId, { type: "list_processes", data: {} });
+}
+
+/** Sends a process a signal; the answer is process_signaled (state.svelte.ts). Local socket only. */
+export function signalProcess(connectionId: ConnectionId, pid: number, signal: "SIGINT" | "SIGKILL") {
+  void send(connectionId, { type: "signal_process", data: { pid, signal } });
+}
+
+/** Recent tool failures, slow calls and warnings; the answer is problem_list. Local socket only. */
+export function listProblems(connectionId: ConnectionId) {
+  void send(connectionId, { type: "list_problems", data: {} });
+}
+
+/** Asks for the server log tail; the answer is log_text, which state.svelte.ts saves as a file. Local socket only. */
+export function readLog(connectionId: ConnectionId) {
+  void send(connectionId, { type: "read_log", data: {} });
 }
 
 // ---- Notifications (§3.1 list_notifications/dismiss_notification) ----
@@ -1898,12 +1923,14 @@ export async function readMedia(
   cid: ConnectionId,
   projectPath: string,
   path: string,
+  /** With an absolute `path`: the chat it was attached to, which is what lets the server serve it. */
+  sessionId?: string,
 ): Promise<{ url: string; mime: string; size: number } | { error: string }> {
-  const info = await rpc<Reply<{ size: number; mime: string }>>(cid, "read_media", { projectPath, path });
+  const info = await rpc<Reply<{ size: number; mime: string }>>(cid, "read_media", { projectPath, path, sessionId });
   if (info.error) return { error: info.error };
   const chunks: Uint8Array[] = [];
   for (let offset = 0; ; ) {
-    const r = await rpc<Reply<{ data: string; offset: number; last: boolean }>>(cid, "read_media_chunk", { projectPath, path, offset });
+    const r = await rpc<Reply<{ data: string; offset: number; last: boolean }>>(cid, "read_media_chunk", { projectPath, path, offset, sessionId });
     if (r.error) return { error: r.error };
     const bytes = base64ToBytes(r.data);
     chunks.push(bytes);
@@ -1937,3 +1964,16 @@ export const listGitChanges = (cid: ConnectionId, projectPath: string) =>
 
 export const getFileDiff = (cid: ConnectionId, projectPath: string, path: string, opts: { snapshotId?: string; basePath?: string } = {}) =>
   rpc<Reply<{ diff?: FileDiff; binary?: boolean }>>(cid, "get_file_diff", { projectPath, path, ...opts });
+
+// --- Scheduled turns (SPEC.md §3.1 schedule_turn et al.); replies arrive as schedule_list events.
+export const scheduleTurn = (
+  cid: ConnectionId,
+  d: { sessionId: string; projectPath?: string; text: string; trigger: ScheduleTrigger; origin?: Origin },
+) => send(cid, { type: "schedule_turn", sessionId: d.sessionId, data: d });
+export const listScheduled = (cid: ConnectionId, sessionId?: string) => send(cid, { type: "list_scheduled", data: { sessionId } });
+export const cancelScheduled = (cid: ConnectionId, id: string) => send(cid, { type: "cancel_scheduled", data: { id } });
+export const pauseScheduled = (cid: ConnectionId, d: { id?: string; all?: boolean; paused: boolean }) =>
+  send(cid, { type: "pause_scheduled", data: d });
+export const limitContinue = (cid: ConnectionId, sessionId: string) => send(cid, { type: "limit_continue", sessionId, data: { sessionId } });
+export const limitDismiss = (cid: ConnectionId, sessionId: string) => send(cid, { type: "limit_dismiss", sessionId, data: { sessionId } });
+export const setLimitAction = (cid: ConnectionId, action: "ask" | "continue" | "stop") => send(cid, { type: "set_limit_action", data: { action } });

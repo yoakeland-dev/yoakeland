@@ -333,15 +333,16 @@
     }
   }
 
-  function onKeydown(e: KeyboardEvent) {
-    if (keyMatches(e, "files.quickOpen")) {
-      e.preventDefault();
-      focusQuickOpen();
-    } else if (keyMatches(e, "files.close") && active) {
-      e.preventDefault();
-      closeTab(active);
-    }
-  }
+  // Fired by the shortcuts from anywhere (keybinds.svelte.ts); this panel may have only just mounted.
+  let handledFileRequest = 0;
+  $effect(() => {
+    const req = app.fileRequest;
+    if (!req || req.at === handledFileRequest || req.sessionId !== sessionId) return;
+    handledFileRequest = req.at;
+    if (Date.now() - req.at > 3000) return;
+    if (req.kind === "quickOpen") focusQuickOpen();
+    else if (active) closeTab(active);
+  });
 </script>
 
 {#snippet nameRow(depth: number)}
@@ -399,7 +400,7 @@
 {/snippet}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="explorer" class:wide onkeydown={onKeydown}>
+<div class="explorer" class:wide>
   {#if wide || showing === "tree"}
     <div class="files" style:flex-basis={wide ? `${treeW}px` : null}>
       <div class="toolbar">

@@ -156,7 +156,8 @@
     transition: none;
   }
   .right-sidebar.collapsed {
-    transform: translateX(100%);
+    /* A little past 100% so the panel's own hairline can't land on the window edge. */
+    transform: translateX(calc(100% + 2px));
   }
   .resize-handle {
     position: absolute;

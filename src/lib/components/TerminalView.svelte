@@ -13,7 +13,7 @@
   import "@xterm/xterm/css/xterm.css";
   import { readClipboard, writeClipboard } from "../platform";
   import { app } from "../state.svelte";
-  import { terminalAttach, terminalInput, terminalOpen, terminalResize } from "../ipc";
+  import { terminalAttach, terminalDetach, terminalInput, terminalOpen, terminalResize } from "../ipc";
   import { subscribeTerminal } from "../terminalBus";
   import { TERMINAL_THEME_PRESETS, type TerminalColorTheme } from "../theme";
   import { attachShellIntegration, type ShellIntegration } from "../terminalShellIntegration";
@@ -36,6 +36,11 @@
   let lastSentRows = 0;
   // Last output sequence written (§3.2); -1 until the first snapshot.
   let lastSeq = -1;
+  let destroyed = false;
+  // True while a snapshot's history is being replayed into xterm. Replaying the old output re-asks
+  // every query the old shell made (colors, device attributes, cursor position); xterm answers
+  // through onData, and those answers would be typed into whatever shell is running now.
+  let replaying = false;
 
   const server = $derived(app.active);
   const tab = $derived(server?.terminalById[terminalId]);
@@ -249,6 +254,7 @@
     });
 
     term.onData((data) => {
+      if (replaying) return;
       // An exited shell takes no input; Enter respawns it (the banner writeExitBanner prints).
       if (server?.terminalById[terminalId]?.status === "exited") {
         if (data === "\r") attach(true);
@@ -267,7 +273,8 @@
       if (!term) return;
       if (msg.kind === "snapshot") {
         term.reset();
-        term.write(msg.bytes);
+        replaying = true;
+        term.write(msg.bytes, () => (replaying = false));
         lastSeq = msg.sequence;
         if (server?.terminalById[terminalId]?.status === "exited") writeExitBanner();
         return;
@@ -285,7 +292,7 @@
     // One frame so the container has a committed layout box before fit() measures it,
     // otherwise a tab created while its pane is still 0x0 opens the pty at the wrong size.
     requestAnimationFrame(() => {
-      if (!term || !fitAddon) return;
+      if (destroyed || !term || !fitAddon) return;
       fitAddon.fit();
       const cols = term.cols || 80;
       const rows = term.rows || 24;
@@ -307,6 +314,12 @@
   });
 
   onDestroy(() => {
+    // The drawer closed or the chat changed: stop watching, and the server forgets an idle shell.
+    // One closed before its first frame never reached the server, so there's nothing to detach.
+    destroyed = true;
+    const cid = app.activeConnectionId;
+    if (server?.freshTerminals.delete(terminalId)) server.forgetTerminalTab(terminalId);
+    else if (cid) terminalDetach(cid, sessionId, terminalId);
     unsubscribe?.();
     resizeObserver?.disconnect();
     if (resizeTimer) clearTimeout(resizeTimer);

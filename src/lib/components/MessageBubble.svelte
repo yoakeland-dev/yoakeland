@@ -5,13 +5,15 @@
   import { isPhotoAvatar } from "../avatar";
   import { viewport } from "../viewport.svelte";
   import { app } from "../state.svelte";
-  import { basename } from "../format";
   import { startEditingMessage, withdrawPrompt } from "../ipc";
   import type { ChatMessage } from "../types";
   import Markdown from "./Markdown.svelte";
   import Icon from "./Icon.svelte";
   import VersionCycle from "./VersionCycle.svelte";
   import CopyButton from "./CopyButton.svelte";
+  import Attachments from "./Attachments.svelte";
+  import AnswerReceipt from "./AnswerReceipt.svelte";
+  import { fmtDuration } from "../usage";
 
   // `queued`: sent mid-turn, waiting for that turn to end (§3.1 turn_started); undoable until then.
   // `steering`: sent into the running turn (§3.1 steer_turn), waiting for the agent to take it.
@@ -25,7 +27,32 @@
   // Only a message sent just now eases in; history loading in (session switch, scroll hydration) stays still.
   const enter = untrack(() => queued || steering || Date.now() - message.createdAt < 2000);
   const text = $derived(message.text);
-  const author = $derived(message.author);
+  // Not typed by a person: say where it came from in place of the author line.
+  const TRIGGERS: Record<string, string> = { now: "now", at: "timer", limit_reset: "limit reset", repeat: "repeat" };
+  const origin = $derived(message.origin);
+  const originLabel = $derived(
+    origin?.kind === "artifact"
+      ? origin.label || "You answered in the page"
+      : origin?.label === "limit-continue"
+        ? origin.waitedMs && origin.waitedMs >= 60_000
+          ? `Continued automatically · waited ${fmtDuration(origin.waitedMs)}`
+          : "Continued automatically"
+        : origin?.kind === "scheduled"
+        ? `Scheduled · ${TRIGGERS[origin.trigger ?? ""] ?? origin.trigger ?? "turn"}`
+        : "",
+  );
+  // The server wraps these for the model ("[The user acted in the artifact ...]"); the bubble shows what they mean.
+  const answer = $derived.by((): { data?: Record<string, unknown>; text: string } => {
+    if (origin?.kind !== "artifact") return { text };
+    const body = text.replace(/^\[[^\]]*\]\s*/, "");
+    try {
+      const v = JSON.parse(body);
+      if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length) return { data: v, text };
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return { text: String(v) };
+    } catch { /* not JSON: show what the page sent as it is */ }
+    return { text: body || text };
+  });
+  const author = $derived(originLabel ? undefined : message.author);
   const authorAvatar = $derived(message.authorAvatar);
 
   // SPEC.md §4d: editing archives everything generated after this message,
@@ -60,14 +87,16 @@
   // Before the first measurement this must be "none", not a stale px value,
   // else the bubble clips to 0 for a frame. The +1.42rem covers .clip's own
   // padding (0.71rem top+bottom), which fullHeight (measured on contentEl) doesn't include.
+  // A receipt runs edge to edge, so its clip has no vertical padding; the target must match the box
+  // exactly, or the height overshoots and settles back.
+  const padY = $derived(answer.data ? "0rem" : "0.71rem");
   const maxHeight = $derived(
-    capped ? `${COLLAPSED_MAX}px` : fullHeight ? `calc(${fullHeight}px + 1.42rem)` : "none",
+    capped ? `${COLLAPSED_MAX}px` : fullHeight ? `calc(${fullHeight}px + ${padY} * 2)` : "none",
   );
   // Stacked (avatar + name in a strip above the bubble) on a phone, or when the chat pane itself is
   // thin (e.g. docked to the side) -- the window-wide `viewport.narrow` alone misses that.
   let rowWidth = $state(0);
   const narrow = $derived(viewport.narrow || (rowWidth > 0 && rowWidth < 520));
-  const clipPadBottom = $derived(capped ? "3rem" : "0.71rem");
 </script>
 
 {#snippet avatarBody()}
@@ -78,7 +107,7 @@
   {/if}
 {/snippet}
 
-<div class="row" class:enter class:queued={queued || steering} class:stacked={narrow} bind:clientWidth={rowWidth}>
+<div class="row" class:enter class:queued={queued || steering} class:from-origin={!!originLabel} class:stacked={narrow} bind:clientWidth={rowWidth}>
   {#if narrow}
     <div class="strip">
       <span class="avatar">
@@ -90,15 +119,27 @@
     </div>
   {/if}
   <div class="column">
+    {#if originLabel}
+      <span class="origin"><Icon name={origin?.kind === "artifact" ? "app-window" : "clock"} size={12} /> {originLabel}</span>
+    {/if}
     {#if !narrow && author}
       <span class="author">{author}</span>
     {/if}
     <div class="bubble">
-      <div class="clip" style="max-height: {maxHeight}; padding-bottom: {clipPadBottom}">
+      <div class="clip" style="max-height: {maxHeight}; padding-block: {padY}">
         <div bind:this={contentEl}>
-          <Markdown {text} mentions />
+          {#if origin?.label === "limit-continue"}
+            <div class="reset">
+              <span class="ring"><Icon name="refresh" size={16} /></span>
+              <span class="reset-text"><b>Usage limit reset</b><span>Picking up where it left off</span></span>
+            </div>
+          {:else if answer.data}
+            <AnswerReceipt data={answer.data} />
+          {:else}
+            <Markdown text={answer.text} mentions />
+          {/if}
           {#if overflowing && expanded}
-            <button class="toggle inline" transition:fadeTransition={{ duration: 120 }} onclick={() => (expanded = false)}>
+            <button class="toggle inline" class:flush={!!answer.data} transition:fadeTransition={{ duration: 120 }} onclick={() => (expanded = false)}>
               Show less
               <span class="chevron open"><Icon name="chevron-down" size={12} /></span>
             </button>
@@ -115,11 +156,7 @@
       {/if}
     </div>
     {#if message.attachments?.length}
-      <ul class="attachments">
-        {#each message.attachments as path (path)}
-          <li {@attach tip(path)}><Icon name="file" size={12} /> {basename(path)}</li>
-        {/each}
-      </ul>
+      <Attachments paths={message.attachments} {sessionId} />
     {/if}
     <div class="footer">
       {#if steering}
@@ -159,25 +196,6 @@
 </div>
 
 <style>
-  .attachments {
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.29rem;
-    margin: 0.29rem 0 0;
-    padding: 0;
-  }
-  .attachments li {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.29rem;
-    padding: 0.14rem 0.5rem;
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-label-size);
-    color: var(--text-dim);
-  }
   .row {
     display: flex;
     justify-content: flex-end;
@@ -219,6 +237,34 @@
     font-size: 0.72rem;
     color: var(--text-dim);
     margin: 0 0.2rem 0.25rem;
+  }
+  .origin {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.21rem;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin: 0 0.2rem 0.25rem;
+  }
+  .reset { display: flex; align-items: center; gap: 0.7rem; }
+  .reset-text { display: flex; flex-direction: column; line-height: 1.25; }
+  .reset-text span { font-size: 0.78rem; color: var(--text-dim); }
+  /* A full meter: the limit is back to 100%. */
+  .ring {
+    position: relative;
+    flex: none;
+    width: 2.1rem;
+    height: 2.1rem;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: var(--success);
+    background: conic-gradient(var(--success) 100%, var(--wash-3) 0);
+  }
+  .ring::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--bubble-user-bg); }
+  .ring :global(svg) { position: relative; }
+  .row.from-origin .bubble {
+    opacity: 0.7;
   }
   .footer {
     display: flex;
@@ -301,9 +347,9 @@
     position: relative;
     overflow: hidden;
     padding: 0.71rem 1rem;
-    transition:
-      max-height calc(0.22s * var(--anim-speed, 1)) ease,
-      padding-bottom calc(0.22s * var(--anim-speed, 1)) ease;
+    /* Only the height animates. A padding that changed with it altered the box's natural height under the
+       max-height cap, so the bubble overshot at the end of opening and the start of closing. */
+    transition: max-height calc(0.22s * var(--anim-speed, 1)) ease;
   }
   .fade {
     position: absolute;
@@ -336,6 +382,11 @@
   }
   .toggle.inline {
     margin-top: 0.43rem;
+  }
+  /* A receipt's clip has no bottom padding, so the button carries its own (padding, not margin, which would
+     collapse out of the measured content and throw the height target off). */
+  .toggle.inline.flush {
+    padding-bottom: 0.9rem;
   }
   .chevron {
     display: inline-flex;

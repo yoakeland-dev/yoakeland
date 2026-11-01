@@ -155,7 +155,7 @@
   {#if limits?.email || limits?.plan}
     <div class="pcard">
       <div class="prow who">
-        <div class="l"><b>Signed in as</b>{#if limits.email}<span class="email">{limits.email}</span>{/if}</div>
+        <div class="l"><b>{limits.email ? "Signed in as" : "Plan"}</b>{#if limits.email}<span class="email">{limits.email}</span>{/if}</div>
         {#if limits.plan}<div class="c"><span class="plan">{limits.plan}</span></div>{/if}
       </div>
     </div>

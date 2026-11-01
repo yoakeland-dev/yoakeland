@@ -8,13 +8,13 @@
   // Resizable up to half the panel's height, same clamp(min, ratio%, 50%) trick as
   // RightSidebar.svelte but vertical and without slide-off/collapse-by-drag: this panel
   // already has an explicit open/close toggle (ChatHeader.svelte).
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { app, TERMINAL_MIN_HEIGHT } from "../state.svelte";
   import Icon from "./Icon.svelte";
   import TerminalView from "./TerminalView.svelte";
   import TerminalStatusIcon, { terminalState } from "./TerminalStatusIcon.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
-  import { terminalAttach, terminalClose } from "../ipc";
+  import { listTerminals, terminalAttach, terminalClose } from "../ipc";
   import { basename, terminalTitle } from "../format";
   import { swipe, commits } from "../gestures";
 
@@ -28,9 +28,6 @@
   const activeState = $derived(active && terminalState(active));
   const splitOn = $derived(server?.terminalSplitBySession[sessionId] ?? false);
   const splitId = $derived(server?.splitTerminalBySession[sessionId]);
-  // A brand-new chat's sessionId is minted locally and never told to the server until its
-  // first message goes out, so there's no session for a terminal to run in yet.
-  const isDraft = $derived(!(server?.messagesBySession[sessionId] ?? []).length);
   const home = $derived(server?.rootOf(sessionId) ?? server?.currentProjectPath);
 
   let views = $state<Record<string, TerminalView>>({});
@@ -56,11 +53,42 @@
     onCancel: () => slotEl && (slotEl.style.transform = ""),
   } as const;
 
+  // The contents outlive `open` by the height transition, so closing slides the terminal away
+  // instead of blanking it first. Unmounting them is also what detaches from the shells (the server
+  // forgets an idle one), so a quick reopen mid-slide keeps everything as it was.
+  // While the slot grows or shrinks, the contents keep the drawer's full height (`pin`), so the
+  // terminal is measured and drawn at its real size from the first frame and the slot just
+  // uncovers it; otherwise xterm fits into a 0px box and only catches up after the slide.
+  let shown = $state(false);
+  let pin = $state<number | null>(null);
+  $effect(() => {
+    const isOpen = open;
+    untrack(() => {
+      const parentH = slotEl?.parentElement?.clientHeight ?? 0;
+      const full = Math.max(TERMINAL_MIN_HEIGHT, Math.min(parentH * 0.5, parentH * app.terminalHeightRatio));
+      pin = isOpen ? (app.terminalMaximized ? null : full) : (slotEl?.offsetHeight ?? null);
+      if (isOpen) shown = true;
+    });
+    const ms = slotEl ? parseFloat(getComputedStyle(slotEl).transitionDuration) * 1000 || 0 : 0;
+    const id = setTimeout(() => {
+      pin = null;
+      if (!isOpen) shown = false;
+    }, ms + 50);
+    return () => clearTimeout(id);
+  });
+
+  // The chat on screen when the app starts is never listed by anything else, so the drawer asks
+  // for its terminals itself the first time it opens; without the answer it can't tell "none yet".
+  $effect(() => {
+    const cid = app.activeConnectionId;
+    if (open && cid && server?.connectionStatus === "connected" && !server.terminalsListedBySession[sessionId]) listTerminals(cid, sessionId);
+  });
+
   // Spins up a first terminal when the drawer opens with nothing running, rather than showing an
   // empty pane with no way back in. Gated on `terminalsListedBySession` so it can't fire
   // before terminal_list confirms nothing's already running, or it'd race a redundant one.
   $effect(() => {
-    if (open && !isDraft && server?.terminalsListedBySession[sessionId] && tabIds.length === 0 && !activeId) newTerminal();
+    if (open && server?.terminalsListedBySession[sessionId] && tabIds.length === 0 && !activeId) newTerminal();
   });
 
   // Opening the drawer hands the keyboard to the terminal, like VS Code's Ctrl+`.
@@ -100,14 +128,20 @@
   }
 
   function newTerminal() {
-    if (server && !isDraft) server.newTerminal(sessionId);
+    server?.newTerminal(sessionId);
   }
 
-  /** Alt/Cmd-click while split is on loads the terminal into the split pane instead. */
-  function select(id: string, e?: MouseEvent | KeyboardEvent) {
+  // Which pane has the keyboard. Picking a tab that isn't on screen loads it into that pane; one
+  // that is just moves focus there.
+  let focusedId = $state<string | undefined>();
+  const focused = $derived(focusedId && (focusedId === activeId || (splitOn && focusedId === splitId)) ? focusedId : activeId);
+  function select(id: string) {
     if (!server) return;
-    if (splitOn && e && (e.altKey || e.metaKey)) server.setSplitTerminalTab(sessionId, id);
-    else server.setActiveTerminalTab(sessionId, id);
+    if (id !== activeId && !(splitOn && id === splitId)) {
+      if (splitOn && focused === splitId) server.setSplitTerminalTab(sessionId, id);
+      else server.setActiveTerminalTab(sessionId, id);
+    }
+    focusedId = id;
     requestAnimationFrame(() => views[id]?.focus());
   }
 
@@ -179,13 +213,8 @@
   style:height={open && !app.terminalMaximized ? height : null}
   bind:this={slotEl}
 >
-  {#if open && isDraft}
-    <div class="empty-state">
-      <Icon name="terminal-2" size={20} />
-      <p>Terminal isn't available yet</p>
-      <span>This chat hasn't started. Send a message first, then open a terminal.</span>
-    </div>
-  {:else if open}
+  {#if shown}
+    <div class="inner" class:pinned={pin !== null} style:height={pin !== null ? `${pin}px` : null}>
     <div class="bar" {@attach swipe(() => pull)}>
       <div class="status" {@attach tip(active?.cwd)}>
         {#if active && activeState}
@@ -205,7 +234,6 @@
           class:on={splitOn}
           {@attach tip(splitOn ? "Unsplit" : "Split", "terminal.split")}
           aria-label="Split"
-          disabled={tabIds.length < 2 && !splitOn}
           onclick={() => server?.toggleTerminalSplit(sessionId)}
         >
           <Icon name="layout-columns" size={14} />
@@ -248,8 +276,22 @@
                reparent, so its TerminalView (and live xterm) never remounts. Every terminal in
                the chat mounts as soon as the drawer is open, so switching is instant and a
                background one keeps receiving output. -->
-          <div class="pane-slot" class:right={isSplit} style:display={id === activeId || isSplit ? "block" : "none"}>
-            <TerminalView bind:this={views[id]} {sessionId} terminalId={id} visible={id === activeId || isSplit} />
+          {@const pane = server?.terminalById[id]}
+          <div
+            class="pane-slot"
+            class:right={isSplit}
+            style:display={id === activeId || isSplit ? "flex" : "none"}
+            onfocusin={() => (focusedId = id)}
+          >
+            {#if splitOn && pane}
+              <div class="pane-head" class:focused={focused === id}>
+                <TerminalStatusIcon tab={pane} size={12} />
+                <span class="pane-title">{terminalTitle(pane)}</span>
+              </div>
+            {/if}
+            <div class="pane-body">
+              <TerminalView bind:this={views[id]} {sessionId} terminalId={id} visible={id === activeId || isSplit} />
+            </div>
           </div>
         {/each}
       </div>
@@ -290,7 +332,7 @@
                       <dt>Status</dt><dd>{terminalState(tab).text}</dd>
                       {#if tab.cwd}<dt>Folder</dt><dd>{tab.cwd}</dd>{/if}
                     </dl>
-                    {#if splitOn}<div class="tip-dim tip-foot">Alt+click to show it in the split pane</div>{/if}
+                    {#if splitOn}<div class="tip-dim tip-foot">Opens in the pane you last clicked</div>{/if}
                   {/snippet}
                   <ContextMenu items={() => menuFor(id)}>
                     <button
@@ -299,7 +341,7 @@
                       role="tab"
                       aria-selected={id === activeId}
                       {@attach tip(termCard, { side: "bottom" })}
-                      onclick={(e) => select(id, e)}
+                      onclick={() => select(id)}
                       ondblclick={() => void startRename(id)}
                       onkeydown={(e) => {
                         if (e.key === "F2") void startRename(id);
@@ -320,6 +362,7 @@
           {/each}
         </ul>
       {/if}
+    </div>
     </div>
   {/if}
   {#if open}
@@ -355,6 +398,15 @@
     border-top-color: var(--panel-border);
   }
   /* Everything below the chat header, which overlays the panel. */
+  .inner {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .inner.pinned {
+    flex: none;
+  }
   .terminal-slot.max {
     height: calc(100% - var(--header-height));
   }
@@ -486,6 +538,38 @@
     grid-column: 2;
     border-left: 1px solid var(--panel-border);
   }
+  .pane-slot {
+    flex-direction: column;
+  }
+  .pane-body {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+  /* Only while split: says which shell is which, and the accent line marks the pane with the keyboard. */
+  .pane-head {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.36rem;
+    height: 1.5rem;
+    padding: 0 0.57rem;
+    border-bottom: 1px solid var(--panel-border);
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+    box-shadow: inset 0 2px 0 transparent;
+    transition: box-shadow 0.12s ease, color 0.12s ease;
+  }
+  .pane-head.focused {
+    color: var(--text);
+    box-shadow: inset 0 2px 0 var(--accent);
+  }
+  .pane-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   /* VS Code's terminal tabs list: only there with two or more. */
   .term-list {
@@ -585,27 +669,6 @@
   .term-close:hover {
     opacity: 1;
     color: var(--danger);
-  }
-
-  .empty-state {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.36rem;
-    padding: 1rem;
-    text-align: center;
-    color: var(--text-dim);
-  }
-  .empty-state p {
-    margin: 0.29rem 0 0;
-    font-size: var(--text-body-size);
-    color: var(--text);
-  }
-  .empty-state span {
-    max-width: 22rem;
-    font-size: var(--text-label-size);
   }
 
   .resize-handle {

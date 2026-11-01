@@ -47,6 +47,7 @@
       class="sb-trigger"
       {@attach tip(`${focused.title} usage${focused.peak ? `: ${focused.peak.label} ${focused.peak.pct}%` : ""}`)}
       aria-label="Subscription usage"
+      ondblclick={() => ((open = false), (app.showUsage = true))}
     >
       {#if focused.icon}<LobeIcon name={focused.icon} size={12} />{/if}
       {#if focused.peak}

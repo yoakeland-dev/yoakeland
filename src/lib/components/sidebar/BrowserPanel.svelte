@@ -422,6 +422,12 @@
           note = `${tabList()}\n\n`;
           break;
         }
+        case "resize":
+        case "emulate":
+        case "drag":
+        case "upload":
+        case "network":
+          throw new Error(`${action} isn't available in the desktop panel; it works in the server's browser`);
         case "screenshot":
           return screenshot(tab, w);
         default:

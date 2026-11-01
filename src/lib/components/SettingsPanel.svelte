@@ -40,12 +40,13 @@
     loadCustomThemes,
     themesRevealPath,
     listTokens,
+    setLimitAction,
   } from "../ipc";
   import { extractAccentFromImage, hexToHue, hslToHex, tokensFor, TERMINAL_THEME_PRESETS } from "../theme";
   import { APP_THEME_PRESETS } from "../themePresets";
   import { encodePairingCode } from "../pairing";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
-  import type { CliKind, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
+  import type { CliKind, LimitAction, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
   let webAlerts = $state<string>(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
   /** Each tab's page title, and whether it applies to one server (shown as [server] / page). */
@@ -77,6 +78,7 @@
   import LobeIcon from "./LobeIcon.svelte";
   import ProvidersPage from "./providers/ProvidersPage.svelte";
   import Dropdown from "./Dropdown.svelte";
+  import ScopeTitle from "./ScopeTitle.svelte";
   import AuditPanel from "./AuditPanel.svelte";
   import SearchInput from "./SearchInput.svelte";
   import TerminalPreview from "./TerminalPreview.svelte";
@@ -735,6 +737,14 @@
   const actionGroups = $derived(
     [...new Set(ACTIONS.map((a) => a.group))].map((g) => [g, ACTIONS.filter((a) => a.group === g)] as const),
   );
+  const GROUP_ICONS: Record<string, ComponentProps<typeof Icon>["name"]> = {
+    General: "settings",
+    View: "layout-columns",
+    Chat: "message-circle",
+    "Chat list": "clipboard-list",
+    Terminal: "terminal-2",
+    Files: "file-text",
+  };
   const anyCustomized = $derived(ACTIONS.some((a) => isCustomized(a.id)));
   // The slot being recorded; `combo` + `taken` once a pressed combo turned out to be in use.
   let rec = $state<{ id: string; slot: number; combo?: string; taken?: KeyAction[] } | null>(null);
@@ -767,6 +777,18 @@
     if (!app.showSettings || app.settingsTab !== "keyboard") stopRecording();
   });
 
+  // "/" jumps to the search box, unless the user is already typing somewhere.
+  function focusSearchOnSlash(e: KeyboardEvent) {
+    if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || rec || !app.showSettings) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t?.tagName ?? "")) return;
+    const input = document.querySelector<HTMLInputElement>(".settings-search input");
+    if (!input) return;
+    e.preventDefault();
+    input.focus();
+    input.select();
+  }
+
   const noMatches = $derived(!!settingsSearch.trim() && TAB_ORDER.every((t) => tabHasMatch[t] === false));
 
   // Re-runs when the matches change (i.e. per query), not when the user
@@ -794,26 +816,16 @@
     <div class="head-main">
       <small class="crumb">{nav.crumb("tab")}</small>
       <div class="head-row">
-        {#if h.scoped && server}
-          {#if serverItems.length > 1}
-            <Dropdown
-              items={serverItems}
-              bind:value={() => cid ?? undefined, (v) => (selectedConnectionId = v ?? null)}
-              triggerTitle="Which server these settings apply to"
-              triggerClass="scope-pick"
-              contentClass="above-modal"
-            >
-              {#snippet triggerLead()}
-                <ServerAvatar name={server.label} seed={server.serverId} size={22} />
-              {/snippet}
-            </Dropdown>
-          {:else}
-            <ServerAvatar name={server.label} seed={server.serverId} size={22} />
-            <span class="scope">{server.label}</span>
-          {/if}
-          <span class="crumb-sep">/</span>
-        {/if}
-        <h2>{h.title}</h2>
+        <ScopeTitle
+          variant="page"
+          items={h.scoped && server ? serverItems : []}
+          value={cid ?? undefined}
+          onchange={(v) => (selectedConnectionId = v ?? null)}
+          server={h.scoped ? server : null}
+          triggerTitle="Which server these settings apply to"
+        >
+          <h2>{h.title}</h2>
+        </ScopeTitle>
       </div>
     </div>
   </header>
@@ -972,7 +984,7 @@
   </Tabs.Trigger>
 {/snippet}
 
-<svelte:window onkeydowncapture={onRecordKey} />
+<svelte:window onkeydowncapture={(e) => (onRecordKey(e), focusSearchOnSlash(e))} />
 
 {#snippet discordCard(kind: "chat" | "editor", title: string)}
   {@const p = discordPreviews[kind]}
@@ -1067,7 +1079,7 @@
             <Dialog.Close class="settings-exit" aria-label="Close settings"><Icon name="chevron-left" size={16} /></Dialog.Close>
             <Dialog.Title class="settings-title">Settings</Dialog.Title>
           </div>
-          <div class="settings-search"><SearchInput bind:value={settingsSearch} placeholder="Search settings…" /></div>
+          <div class="settings-search"><SearchInput bind:value={settingsSearch} placeholder="Search settings…" hint="/" /></div>
           {#if noMatches}<div class="no-matches">No settings match “{settingsSearch.trim()}”</div>{/if}
 
           <button type="button" class="profile-tile" onclick={() => void nav.push("profile")}>
@@ -1125,7 +1137,7 @@
                   <small>This device</small>
                 </div>
                 <section class="settings-section">
-                  <h3 class="section-heading">Display name</h3>
+                  <h3 class="section-heading"><Icon name="id" size={15} />Display name</h3>
                   <div class="card">
                     <div class="field">
                       <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
@@ -1134,7 +1146,7 @@
                   </div>
                 </section>
                 <section class="settings-section">
-                  <h3 class="section-heading">Picture</h3>
+                  <h3 class="section-heading"><Icon name="media-image" size={15} />Picture</h3>
                   <div class="card">
                     <button type="button" class="go-row" onclick={onAvatarTap}>
                       <span class="go-text"><span>Edit picture</span><small>Presets, upload, crop</small></span>
@@ -1144,7 +1156,7 @@
                   <p class="hint">Pictures are cropped square and scaled to 96×96 before they leave this device.</p>
                 </section>
                 <section class="settings-section">
-                  <h3 class="section-heading">How others see you</h3>
+                  <h3 class="section-heading"><Icon name="eye" size={15} />How others see you</h3>
                   <div class="card">
                     <div class="setting-row seen">
                       {@render face(36)}
@@ -1156,7 +1168,7 @@
                   </div>
                 </section>
                 <section class="settings-section">
-                  <h3 class="section-heading">Shared with</h3>
+                  <h3 class="section-heading"><Icon name="share-2" size={15} />Shared with</h3>
                   <div class="card">
                     {#each serverList as r (r.key)}
                       <div class="setting-row">
@@ -1189,7 +1201,7 @@
               </SubPage>
             {:else}
             <section class="settings-section">
-              <h3 class="section-heading">Profile</h3>
+              <h3 class="section-heading"><Icon name="user" size={15} />Profile</h3>
               <div class="card">
               <div class="field profile-card">
                 <button
@@ -1242,7 +1254,7 @@
             </section>
             {/if}
             <section class="settings-section">
-              <h3 class="section-heading">Chats</h3>
+              <h3 class="section-heading"><Icon name="message-circle" size={15} />Chats</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText("Tool calls and thinking", "Simple folds them into one dropdown above the answer.")}
@@ -1275,10 +1287,24 @@
                   <span>days</span>
                 </div>
               </div>
+              {#if app.active && !app.active.limited}
+                <div class="setting-row">
+                  {@render rowText("When a usage limit is hit", "Continuing waits for the limit to reset, then picks the chat back up.")}
+                  {@render segmented(
+                    [
+                      { value: "ask", label: "Ask me" },
+                      { value: "continue", label: "Continue automatically" },
+                      { value: "stop", label: "Stop" },
+                    ],
+                    app.active.limitAction,
+                    (v) => app.activeConnectionId && setLimitAction(app.activeConnectionId, v as LimitAction),
+                  )}
+                </div>
+              {/if}
               </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Alerts</h3>
+              <h3 class="section-heading"><Icon name="bell" size={15} />Alerts</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText(
@@ -1303,7 +1329,7 @@
             </section>
             {#if localServerSupported}
               <section class="settings-section">
-                <h3 class="section-heading">Closing</h3>
+                <h3 class="section-heading"><Icon name="power" size={15} />Closing</h3>
                 <div class="card">
                 <div class="setting-row">
                   {@render rowText(
@@ -1331,7 +1357,7 @@
           <div class="tab-body" use:searchable={{ tab: "appearance", query: settingsSearch }}>
             {@render pageHead("Appearance", false)}
             <section class="settings-section">
-              <h3 class="section-heading">Theme</h3>
+              <h3 class="section-heading"><Icon name="palette" size={15} />Theme</h3>
               <div class="card">
               <div class="field">
                 <span class="row-label">Mode</span>
@@ -1415,7 +1441,7 @@
             </section>
             <SubPage id="wallpaper" title="Wallpaper" link={{ value: app.settings.wallpaper ? "Image set" : "None", hint: "Shown behind an empty thread's composer." }}>
             <section class="settings-section">
-              <h3 class="section-heading">Wallpaper</h3>
+              <h3 class="section-heading"><Icon name="wallpaper" size={15} />Wallpaper</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText("New-chat wallpaper", "Shown behind an empty thread's composer.")}
@@ -1449,13 +1475,13 @@
                     items={[
                       { value: "dither", label: "Dithered" },
                       { value: "scanlines", label: "Scanlines" },
-                      { value: "ascii", label: "ASCII art" },
-                      { value: "dotmatrix", label: "Dot matrix" },
+                      { value: "mosaic", label: "Soft mosaic" },
                       { value: "gameboy", label: "GameBoy" },
+                      { value: "none", label: "None" },
                     ]}
                     bind:value={
                       () => app.settings.wallpaperStyle,
-                      (v) => ((app.settings.wallpaperStyle = v as "dither" | "scanlines" | "ascii" | "dotmatrix" | "gameboy"), apply())
+                      (v) => ((app.settings.wallpaperStyle = v as "dither" | "scanlines" | "mosaic" | "gameboy" | "none"), apply())
                     }
                     contentClass="above-modal"
                   />
@@ -1465,7 +1491,7 @@
             </section>
             </SubPage>
             <section class="settings-section">
-              <h3 class="section-heading">Window</h3>
+              <h3 class="section-heading"><Icon name="app-window" size={15} />Window</h3>
               <div class="card">
               <div class="pair">
               {#if !viewport.narrow}
@@ -1509,7 +1535,7 @@
               </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Motion</h3>
+              <h3 class="section-heading"><Icon name="wind" size={15} />Motion</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText("Animation speed", "0 turns them off.")}
@@ -1527,7 +1553,7 @@
           <div class="tab-body" use:searchable={{ tab: "text", query: settingsSearch }}>
             {@render pageHead("Text & code", false)}
             <section class="settings-section">
-              <h3 class="section-heading">Interface</h3>
+              <h3 class="section-heading"><Icon name="layout-dashboard" size={15} />Interface</h3>
               <div class="card">
               <div class="type-preview" style:font-family={app.settings.uiFontFamily} style:font-size="{scalePct}%">
                 <strong>The quick brown fox</strong>
@@ -1549,7 +1575,7 @@
             <div class="sub-group">
             <SubPage id="code" title="Code blocks" inCard link={{ value: app.settings.codeWrapLines ? "Wrapped" : "Scrolls", hint: "Font, wrapping, line numbers, colors" }}>
             <section class="settings-section">
-              <h3 class="section-heading">Code blocks</h3>
+              <h3 class="section-heading"><Icon name="code" size={15} />Code blocks</h3>
               <div class="card">
               <div class="code-preview"><Markdown text={CODE_PREVIEW} /></div>
               <div class="setting-row">
@@ -1587,7 +1613,7 @@
             </SubPage>
             <SubPage id="diffs" title="Diffs" inCard link={{ value: app.settings.diffColors === "colorblind" ? "Colorblind" : "Green / red", hint: "Colors" }}>
             <section class="settings-section">
-              <h3 class="section-heading">Diffs</h3>
+              <h3 class="section-heading"><Icon name="file-diff" size={15} />Diffs</h3>
               <div class="card">
               <div class="diff-sample" aria-hidden="true">
                 <div><i>1</i><span><b class="k">export function</b> <b class="f">formatUser</b>(user: <b class="t">User</b>) {"{"}</span></div>
@@ -1611,7 +1637,7 @@
             </SubPage>
             <SubPage id="term" title="Terminal" inCard link={{ hint: "Colors, padding, scrolling" }}>
             <section class="settings-section">
-              <h3 class="section-heading">Terminal</h3>
+              <h3 class="section-heading"><Icon name="terminal-2" size={15} />Terminal</h3>
               <div class="card">
               <TerminalPreview colors={termColors} />
               <div class="setting-row">
@@ -1681,7 +1707,7 @@
               </section>
 
               <section class="settings-section">
-                <h3 class="section-heading">Both cards</h3>
+                <h3 class="section-heading"><Icon name="cards" size={15} />Both cards</h3>
                 <div class="card">
                 <div class="setting-row">
                   {@render rowText("Show", "Auto switches between the chat and editor card.")}
@@ -1731,7 +1757,7 @@
               </section>
 
               <section class="settings-section">
-                <h3 class="section-heading">Editing: {discordPreviewKind === "chat" ? "In a chat" : "In the editor"}</h3>
+                <h3 class="section-heading"><Icon name="pencil" size={15} />Editing: {discordPreviewKind === "chat" ? "In a chat" : "In the editor"}</h3>
                 <p class="hint">Text and images differ per card. Only this card changes.</p>
                 <div class="card">
                   <div class="setting-row">
@@ -1795,7 +1821,7 @@
               </section>
 
               <section class="settings-section">
-                <h3 class="section-heading">Advanced</h3>
+                <h3 class="section-heading"><Icon name="adjustments-horizontal" size={15} />Advanced</h3>
                 <div class="card">
                 <details class="disclosure" open={!!settingsSearch.trim()}>
                   <summary>
@@ -1837,7 +1863,7 @@
             {/if}
             {#each actionGroups as [group, actions] (group)}
               <section class="settings-section">
-                <h3 class="section-heading">{group}</h3>
+                <h3 class="section-heading"><Icon name={GROUP_ICONS[group] ?? "keyboard"} size={15} />{group}</h3>
                 <div class="card">
                 {#each actions as a (a.id)}
                   {@const binds = bindsFor(a.id)}
@@ -1898,6 +1924,7 @@
                     </div>
                     <span class="row-actions">{@render serverActions(r)}</span>
                     <span class="row-chev"><Icon name="chevron-right" size={16} /></span>
+                    {#if viewport.narrow}
                     <SubPage id={`server-${r.key}`} title={r.label} link={false}>
                       <section class="settings-section">
                         <div class="card">
@@ -1911,6 +1938,7 @@
                         </div>
                       </section>
                     </SubPage>
+                    {/if}
                   </li>
                 {:else}
                   <li class="empty">No servers yet.</li>
@@ -1952,7 +1980,7 @@
           <div class="tab-body" use:searchable={{ tab: "general", query: settingsSearch }}>
             {@render pageHead("Server", true)}
             <section class="settings-section">
-              <h3 class="section-heading">Server</h3>
+              <h3 class="section-heading"><Icon name="server" size={15} />Server</h3>
               <div class="card">
               <form class="identity-row" onsubmit={submitServerIdentity}>
                 {#if server && connected}<ServerIconEditor connectionId={server.connectionId} size={44} />{/if}
@@ -1981,7 +2009,7 @@
               </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Chats</h3>
+              <h3 class="section-heading"><Icon name="message-circle" size={15} />Chats</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText("Auto-generate titles", "Names new threads from their first message.")}
@@ -1990,7 +2018,7 @@
               </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Context</h3>
+              <h3 class="section-heading"><Icon name="stack-2" size={15} />Context</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText(
@@ -2028,7 +2056,7 @@
               </div>
             </section>
             <section class="settings-section">
-              <h3 class="section-heading">Limits</h3>
+              <h3 class="section-heading"><Icon name="gauge" size={15} />Limits</h3>
               <div class="card">
               <div class="num-grid">
                 {#each RESOURCE_SETTINGS.filter((r) => !r.key.startsWith("pool")) as r (r.key)}
@@ -2057,7 +2085,7 @@
           <div class="tab-body" use:searchable={{ tab: "safety", query: settingsSearch }}>
             {@render pageHead("Safety", true)}
             <section class="settings-section">
-              <h3 class="section-heading">Limits</h3>
+              <h3 class="section-heading"><Icon name="gauge" size={15} />Limits</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText(
@@ -2118,7 +2146,7 @@
             </section>
             <SubPage id="rules" title="Permission rules" link={{ hint: "What the agent may run without asking" }}>
             <section class="settings-section">
-              <h3 class="section-heading">Permissions</h3>
+              <h3 class="section-heading"><Icon name="shield-check" size={15} />Permissions</h3>
               <div class="card">
               <div class="card-pad"><PermissionRules {cid} projectPath={server?.currentProjectPath ?? undefined} /></div>
               </div>
@@ -2162,7 +2190,7 @@
             </section>
             <SubPage id="kinds" title="Kinds" link={{ value: `${NOTIFY_KINDS.length - notifyPrefs.muted.length} of ${NOTIFY_KINDS.length} on`, hint: "Mute or allow each kind of alert" }}>
             <section class="settings-section">
-              <h3 class="section-heading">Kinds</h3>
+              <h3 class="section-heading"><Icon name="tag" size={15} />Kinds</h3>
               <div class="card">
               {#each NOTIFY_KINDS as k (k.kind)}
                 <div class="setting-row">
@@ -2181,7 +2209,7 @@
             {@render pageHead("Providers", true)}
             <ProvidersPage {cid} {server} {connected} />
             <section class="settings-section">
-              <h3 class="section-heading">Coding agent processes</h3>
+              <h3 class="section-heading"><Icon name="robot" size={15} />Coding agent processes</h3>
               <div class="card">
               <div class="num-grid">
                 {#each RESOURCE_SETTINGS.filter((r) => r.key.startsWith("pool")) as r (r.key)}
@@ -2210,7 +2238,7 @@
           <div class="tab-body" use:searchable={{ tab: "models", query: settingsSearch }}>
             {@render pageHead("Models", true)}
             <section class="settings-section">
-              <h3 class="section-heading">Model roles</h3>
+              <h3 class="section-heading"><Icon name="brain" size={15} />Model roles</h3>
               <p class="hint">Send parts of the work to other models. Unset roles use the chat's model; coding agents skip these.</p>
               {#each ROLE_ROWS as r (r.key)}
                 {@const efforts = roleEfforts(r.key)}
@@ -2294,7 +2322,7 @@
             {/if}
 
             <section class="settings-section">
-              <h3 class="section-heading">Remote access</h3>
+              <h3 class="section-heading"><Icon name="world" size={15} />Remote access</h3>
               <div class="card">
               <div class="setting-row">
                 {@render rowText("Allow remote (TCP) connections", "Exposes this server to the network. Anyone with a token or the password can connect.")}
@@ -2323,7 +2351,7 @@
             <SubPage id="people" title="People" inCard link={{ hint: "Who can connect, and with what access" }}>
             <section class="settings-section">
               <div class="section-head">
-                <h3 class="section-heading">People</h3>
+                <h3 class="section-heading"><Icon name="users" size={15} />People</h3>
                 {#if !addingPerson}
                   <Button type="button" size="sm" disabled={!canManagePeople} onclick={() => (addingPerson = true)}>
                     <Icon name="plus" size={13} /> Add person
@@ -2408,7 +2436,7 @@
             {#if server?.connectionStatus === "connected"}
               <SubPage id="peers" title="Connected now" inCard link={{ value: String((server?.peers ?? []).filter((p) => p.peerId !== server?.selfPeerId).length), hint: "Devices on this server" }}>
               <section class="settings-section">
-                <h3 class="section-heading">Connected now</h3>
+                <h3 class="section-heading"><Icon name="plug-connected" size={15} />Connected now</h3>
                 <div class="card">
                 <ul class="list">
                   {#each (server?.peers ?? []).filter((p) => p.peerId !== server?.selfPeerId) as peer (peer.peerId)}
@@ -2443,7 +2471,7 @@
             {/if}
             <SubPage id="audit" title="Audit log" inCard link={{ hint: "Kept on the server" }}>
             <section class="settings-section">
-              <h3 class="section-heading">Audit log</h3>
+              <h3 class="section-heading"><Icon name="clipboard-list" size={15} />Audit log</h3>
               <p class="hint">Kept on the server (newest 15 MB). Never holds a password, token or key.</p>
               <div class="card">
               <AuditPanel cid={cid ?? null} connected={!!connected} />
@@ -2667,39 +2695,6 @@
     font-size: 1.07rem;
     font-weight: var(--text-title-weight);
   }
-  .crumb-sep {
-    color: var(--text-dim);
-    font-size: 1.07rem;
-  }
-  /* Same size and weight as the page title it leads into, dimmed so the title stays the focus. */
-  .page-head :global(.dropdown-trigger.scope-pick) {
-    font-size: 1.07rem;
-    font-weight: var(--text-title-weight);
-    color: var(--text-dim);
-    /* Equal inset on every side of the avatar (the hover pill hugs it), and the pill
-       hangs left by that inset so the avatar itself lines up with the single-server one. */
-    height: auto;
-    padding: 4px 8px 4px 4px;
-    margin-left: -5px; /* 4px padding + 1px border */
-    gap: 0.75rem;
-  }
-  /* The dropdown's icon slot is 0.86rem; the avatar is bigger, so grow the slot to fit it. */
-  .page-head :global(.dropdown-trigger.scope-pick .dropdown-trigger-icon) {
-    width: 22px;
-    height: 22px;
-  }
-  .page-head :global(.dropdown-trigger.scope-pick:hover),
-  .page-head :global(.dropdown-trigger.scope-pick[data-state="open"]) {
-    color: var(--text);
-  }
-  .scope {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.36rem;
-    font-size: 1.07rem;
-    font-weight: var(--text-title-weight);
-    color: var(--text-dim);
-  }
   .notice {
     display: flex;
     align-items: flex-start;
@@ -2788,10 +2783,25 @@
     background: var(--danger-dim);
   }
   .section-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
     margin: 0 0 0 var(--card-pad-x);
     font-size: 1.07rem;
     font-weight: 600;
+    line-height: 1;
     color: var(--text);
+  }
+  .section-heading :global(.icon) {
+    color: var(--text-dim);
+    opacity: 0.7;
+    /* Optical centring against the capital initial: cap-height centre sits above the line-box centre. */
+    position: relative;
+    top: -0.04rem;
+  }
+  /* Icons are 15px on a 24 grid: 2.4 user units renders a 1.5px stroke, matching the 600-weight text. */
+  .section-heading :global(.icon svg) {
+    stroke-width: 2.4;
   }
   .settings-section[hidden] {
     display: none;
@@ -3952,6 +3962,7 @@
       letter-spacing: 0.06em;
       text-transform: uppercase;
       color: var(--text-dim);
+      gap: 0.35rem;
     }
     .card {
       background: var(--wash-2);

@@ -21,3 +21,6 @@ vite.config.ts.timestamp-*
 /.cache/
 /.claude/
 /design/
+
+# server binaries bundled into an app build (scripts/bundle-server.sh)
+/bundled-server

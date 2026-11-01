@@ -109,8 +109,20 @@ export const ACTIONS: KeyAction[] = [
   { id: "terminal.nextCommand", label: "Next command", group: "Terminal", scope: "terminal", defaults: ["Alt+ArrowDown"] },
 
   // Files (while the file panel has focus)
-  { id: "files.quickOpen", label: "Go to file", group: "Files", scope: "files", defaults: ["Mod+P"] },
-  { id: "files.close", label: "Close file", group: "Files", scope: "files", defaults: ["Mod+W"] },
+  { id: "files.quickOpen", label: "Go to file", group: "Files", scope: "files", defaults: ["Mod+P"],
+    run: withChat((s) => {
+      app.active!.openSidebarPanel(s, "explorer");
+      app.fileRequest = { sessionId: s, kind: "quickOpen", at: Date.now() };
+    }) },
+  // Only while the file panel is the open one, so Mod+W keeps its usual meaning elsewhere.
+  { id: "files.close", label: "Close file", group: "Files", scope: "files", defaults: ["Mod+W"],
+    run: () => {
+      const s = sid();
+      const a = app.active;
+      if (!s || !a || !a.chatSidebarOpenBySession[s] || a.chatSidebarPanelBySession[s] !== "explorer") return false;
+      app.fileRequest = { sessionId: s, kind: "close", at: Date.now() };
+    } },
+  // Handled by FileEditor's window listener, whenever its file is on screen.
   { id: "files.save", label: "Save file", group: "Files", scope: "files", defaults: ["Mod+S"] },
   { id: "files.gotoLine", label: "Go to line", group: "Files", scope: "files", defaults: ["Mod+G"] },
 ];

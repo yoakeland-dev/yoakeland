@@ -4,7 +4,7 @@
 // catch a corrupt or swapped download, not a release that was published with the wrong files.
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -47,8 +47,9 @@ export function verifyChecksum(bytes, sumsText, name) {
   if (!want.has(got)) throw new Error(`${name} does not match its ${SUMS_NAME} entry; the download is corrupt or tampered with`);
 }
 
-// Dotted numbers, the same comparison as src/lib/serverVersion.ts: a pre-release suffix is ignored.
-function compareVersions(a, b) {
+// Dotted numbers, as src/lib/serverVersion.ts. Among builds with the same numbers a nightly ("0.1.8-early.20261102")
+// is newer than the release of that number (it is built after it) and nightlies sort by date.
+export function compareVersions(a, b) {
   const parse = (v) => String(v).replace(/^v/, "").split(/[-+]/)[0].split(".").map(Number);
   const x = parse(a);
   const y = parse(b);
@@ -56,7 +57,11 @@ function compareVersions(a, b) {
     const d = (x[i] ?? 0) - (y[i] ?? 0);
     if (d) return d;
   }
-  return 0;
+  const early = (v) => {
+    const m = /-early(?:\.(\d+))?/.exec(String(v));
+    return m ? Number(m[1] ?? 0) + 1 : 0;
+  };
+  return early(a) - early(b);
 }
 
 /** The newest release that has a binary for this platform and checksums to verify it with. */
@@ -113,4 +118,39 @@ export async function installServer(dir, fetchFn = fetch) {
   }
   await writeFile(versionFile(dir), rel.version + "\n");
   return { path: bin, version: rel.version };
+}
+
+/** The server shipped inside this app (extraResources: <resources>/server/yoakeland and its version file), or null. */
+export async function bundledServer(resources = process.resourcesPath) {
+  if (!resources) return null;
+  const dir = path.join(resources, "server");
+  const bin = path.join(dir, process.platform === "win32" ? "yoakeland.exe" : "yoakeland");
+  try {
+    const version = (await readFile(path.join(dir, "version"), "utf8")).trim();
+    await stat(bin);
+    return { path: bin, version };
+  } catch {
+    return null;
+  }
+}
+
+/** Puts the bundled server in place when none is installed or the installed one is older, so an app update
+ * brings the matching server with it. A newer downloaded server (a hotfix) is kept. Returns what is installed. */
+export async function ensureBundledServer(dir, resources) {
+  const bundled = await bundledServer(resources);
+  const have = await installedServer(dir);
+  if (!bundled || (have && compareVersions(bundled.version, have.version) <= 0)) return have;
+  const bin = managedBinPath(dir);
+  await mkdir(path.dirname(bin), { recursive: true });
+  const tmp = bin + ".part";
+  try {
+    await copyFile(bundled.path, tmp);
+    await chmod(tmp, 0o755);
+    await rename(tmp, bin);
+  } catch (e) {
+    await rm(tmp, { force: true });
+    throw e;
+  }
+  await writeFile(versionFile(dir), bundled.version + "\n");
+  return { path: bin, version: bundled.version };
 }

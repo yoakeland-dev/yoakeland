@@ -163,6 +163,7 @@
     class="panel"
     data-session-id={sessionId}
     class:sidebar-collapsed={!sidePanel && app.sidebarCollapsed}
+    class:edgeless={app.settings.mainArea === "flat" && !sidePanel && app.sidebarCollapsed && (app.rightSidebarCollapsed || !app.active?.sidebarSessionId)}
     class:sb-open={sbOpen}
     class:sb-swapped={swapped}
     class:sb-resizing={app.chatSidebarResizing}
@@ -275,7 +276,7 @@
     border: 1px solid var(--panel-border);
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-xl);
-    margin: var(--chat-margin) var(--chat-margin) var(--chat-margin) 0;
+    margin: var(--chat-margin) var(--chat-margin) 0 0;
     overflow: hidden;
     /* Matches Sidebar.svelte's .sidebar-slot flex-basis transition, else the
        panel jumps ahead of the sidebar's own animating margin. */
@@ -284,9 +285,24 @@
   .panel.sidebar-collapsed {
     margin-left: var(--chat-margin);
   }
+  /* Both sidebars closed: the card fills the window edge to edge, like the flat main area.
+     The header paddings are measured against a panel that sits --chat-margin in from the
+     window, so they're restated here without that gap or the hairline. */
+  .panel.edgeless {
+    --chrome-inset-in-panel: var(--chrome-inset);
+    --toggle-reserve-in-panel: var(--toggle-reserve);
+    --chrome-reserve: calc(var(--chrome-island-w) + var(--window-controls-w) + var(--chrome-inset) + 0.6rem);
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
   :global(:root[data-main="flat"]) .panel {
     border-radius: 0;
     border-width: 0 0 0 1px;
+  }
+  /* After the flat rule (same specificity once :root is counted) so it wins there too. */
+  :global(:root[data-main]) .panel.edgeless {
+    border-width: 0;
   }
   .row {
     flex: 1;

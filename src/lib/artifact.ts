@@ -63,41 +63,62 @@ svg{max-width:100%}
 
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'";
 
-/** Tells the app how tall the page is, and keeps links from taking the frame anywhere. */
-const reporter = (id: string) =>
-  `<script>(()=>{const p=()=>parent.postMessage({yoakeArtifact:${JSON.stringify(id)},h:document.documentElement.scrollHeight},"*");` +
-  `new ResizeObserver(p).observe(document.documentElement);addEventListener("load",p);p();` +
-  `addEventListener("click",e=>{if(e.target.closest&&e.target.closest("a"))e.preventDefault()})})()</script>`;
 
-/** The page for one frame's `srcdoc`. The agent's source comes after the base styles, so it overrides them. */
+/** What the page can do besides draw: tell the app how tall it is, keep links from taking the frame
+ * anywhere, and talk back. `yoake.submit(obj)` (only inside a click/keypress, so a page can't submit on
+ * its own) sends the user's choice to the assistant; `yoake.log(...)`, console output and uncaught errors
+ * are kept for the assistant's artifact_logs tool. The app relays these as artifact_event. */
+const reporter = (id: string) =>
+  `<script>(()=>{const id=${JSON.stringify(id)},post=m=>parent.postMessage({yoakeArtifact:id,...m},"*");` +
+  `const p=()=>post({h:document.documentElement.scrollHeight});` +
+  `new ResizeObserver(p).observe(document.documentElement);addEventListener("load",p);p();` +
+  `addEventListener("click",e=>{if(e.target.closest&&e.target.closest("a"))e.preventDefault()});` +
+  `const str=a=>{try{return typeof a==="string"?a:a instanceof Error?a.stack||a.message:JSON.stringify(a)}catch{return String(a)}};` +
+  `let n=0;const log=(kind,args)=>{if(n++<200)post({kind,data:args.map(str).join(" ").slice(0,4000)})};` +
+  `for(const k of["log","info","warn","error"]){const o=console[k];console[k]=(...a)=>{log(k==="error"?"error":"log",a);o.apply(console,a)}}` +
+  `addEventListener("error",e=>log("error",[e.message+(e.lineno?" (line "+e.lineno+")":"")]));` +
+  `addEventListener("unhandledrejection",e=>log("error",["Unhandled rejection: ",e.reason]));` +
+  `window.yoake={log:(...a)=>log("log",a),submit:o=>{if(!navigator.userActivation||!navigator.userActivation.isActive)return false;post({kind:"submit",data:o});return true}};` +
+  `})()</script>`;
+
+/** The page for one frame. The agent's source comes after the base styles, so it overrides them. */
 export function artifactSrcdoc(source: string, id: string): string {
   return (
     `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}">` +
-    `<style>${tokenCss()}${BASE_CSS}</style></head><body>${source}${reporter(id)}</body></html>`
+    `<style>${tokenCss()}${BASE_CSS}</style></head><body>${reporter(id)}${source}</body></html>`
   );
 }
 
-const frames = new Map<string, HTMLIFrameElement>();
+/** What the app does with an event from a page: send it on as artifact_event. */
+export type ArtifactSink = (kind: "submit" | "log" | "error", data: unknown) => void;
+
+const frames = new Map<string, { frame: HTMLIFrameElement; sink?: ArtifactSink }>();
 let listening = false;
 
-/** Puts the artifact in `host`, replacing whatever was there. The frame grows to its page's height. */
-export function showArtifact(host: HTMLElement, source: string) {
+/** Puts the artifact in `host`, replacing whatever was there. The frame grows to its page's height.
+ * `sink` receives what the page submits and logs. */
+export function showArtifact(host: HTMLElement, source: string, sink?: ArtifactSink) {
   if (!listening) {
     listening = true;
     addEventListener("message", (e) => {
-      const d = e.data as { yoakeArtifact?: string; h?: number } | null;
-      const f = d && typeof d.yoakeArtifact === "string" ? frames.get(d.yoakeArtifact) : undefined;
-      if (!f || e.source !== f.contentWindow || typeof d?.h !== "number") return;
-      f.style.height = Math.min(Math.max(d.h, 24), 1200) + "px";
+      const d = e.data as { yoakeArtifact?: string; h?: number; kind?: string; data?: unknown } | null;
+      const entry = d && typeof d.yoakeArtifact === "string" ? frames.get(d.yoakeArtifact) : undefined;
+      if (!entry || e.source !== entry.frame.contentWindow) return;
+      if (typeof d?.h === "number") entry.frame.style.height = Math.min(Math.max(d.h, 24), 1200) + "px";
+      else if (d?.kind === "submit" || d?.kind === "log" || d?.kind === "error") entry.sink?.(d.kind, d.data);
     });
   }
-  for (const [id, f] of frames) if (!f.isConnected) frames.delete(id);
+  for (const [id, f] of frames) if (!f.frame.isConnected) frames.delete(id);
   const id = crypto.randomUUID();
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts"); // no allow-same-origin: it can't reach the app's storage or DOM
   frame.setAttribute("referrerpolicy", "no-referrer");
   frame.title = "Artifact";
-  frame.srcdoc = artifactSrcdoc(source, id);
-  frames.set(id, frame);
+  // A real URL with a CSP of its own: srcdoc, data: and blob: frames all inherit the app's (script-src
+  // 'self'), which blocks the page's inline scripts. The page's HTML is posted in once it has loaded.
+  frame.src = "/artifact-frame.html";
+  const doc = artifactSrcdoc(source, id);
+  frame.addEventListener("load", () => frame.contentWindow?.postMessage({ yoakeDoc: doc }, "*"), { once: true });
+  frames.set(id, { frame, sink });
   host.replaceChildren(frame);
 }

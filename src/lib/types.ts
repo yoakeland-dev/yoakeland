@@ -175,6 +175,7 @@ export interface HistoryMessage {
   content: string;
   author?: string;
   authorAvatar?: string;
+  origin?: Origin;
   attachments?: string[];
   reasoning?: string;
   toolCalls?: HistoryToolCall[];
@@ -277,8 +278,9 @@ export interface TerminalSnapshotData {
   history: string;
   sequence: number;
   label: string;
-  sandboxTier?: SandboxTier;
+  sandboxTier?: SandboxTier | "host"; // "host": a person's own terminal, unconfined
   exitCode?: number;
+  busy?: boolean;
 }
 
 /** One slice of the context (§3.2 `context_breakdown`). `exact`: counted by the provider, not apportioned. */
@@ -608,6 +610,8 @@ export interface TerminalSummary {
   name?: string;
   /** Started by the agent rather than a person. */
   agent?: boolean;
+  /** A command is running in the shell, as the server reads the pty (not inferred from output). */
+  busy?: boolean;
   /** terminal_index only. */
   sessionId?: string;
   projectPath?: string;
@@ -637,7 +641,7 @@ export interface TerminalTab {
   lastExit?: number;
   exitCode?: number;
   pid?: number;
-  sandboxTier?: SandboxTier;
+  sandboxTier?: SandboxTier | "host";
   /** Last terminal_output sequence number applied (§3.2 gap-detection). */
   sequence: number;
 }
@@ -730,6 +734,8 @@ export interface ChatMessage {
   author?: string;
   /** That sender's picture (§3.2 `authorAvatar`): an emoji glyph or a data URL. */
   authorAvatar?: string;
+  /** Set when a person didn't type it: an artifact or a scheduled turn. */
+  origin?: Origin;
   /** Server-side paths a `user` message attached (§3.1 user_prompt). */
   attachments?: string[];
   /** Stamped client-side at send time, then overwritten with the server's persisted value
@@ -948,3 +954,93 @@ export interface ProcessList {
   processes: ProcessInfo[];
 }
 export type ProcessRow = ProcessInfo & { depth: number; key: string; hasChildren: boolean };
+
+/** `process_signaled` (SPEC.md §3.1 signal_process): the answer to sending a process a signal. */
+export interface ProcessSignaled {
+  pid: number;
+  signal: "SIGINT" | "SIGKILL";
+  signaled: boolean;
+  message?: string;
+}
+
+/** `problem_list` (SPEC.md §3.1 list_problems): recent tool failures, slow calls and warnings. */
+export interface ProblemList {
+  readAtMs: number;
+  toolCalls: number;
+  failedCount: number;
+  slowThresholdMs: number;
+  slowCount: number;
+  warnCount: number;
+  latestFailures: { tool: string; cause: string; durationMs: number; atMs: number }[];
+  slowest: { tool: string; durationMs: number; atMs: number }[];
+  warnings: { atMs: number; level: "WARN" | "ERROR"; message: string }[];
+}
+
+/** `todo_list` (SPEC.md §3.2): the model's todo list, replaced whole on each change. */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: TodoStatus;
+  activeForm?: string;
+}
+export interface TodoList {
+  items: TodoItem[];
+  updatedAtMs: number;
+}
+
+/** Who started a turn when a person didn't type it (SPEC.md "origin on messages"). Absent = typed. */
+export interface Origin {
+  kind: "artifact" | "scheduled" | "user";
+  artifactId?: string;
+  label?: string;
+  scheduleId?: string;
+  /** A scheduled turn's trigger kind. */
+  trigger?: ScheduleTriggerKind;
+  /** How long a limit-continue waited, from the limit hit to the reset. */
+  waitedMs?: number;
+}
+export type ScheduleTriggerKind = "now" | "at" | "limit_reset" | "repeat";
+export interface ScheduleTrigger {
+  kind: ScheduleTriggerKind;
+  atMs?: number;
+  provider?: string;
+  everyMs?: number;
+  maxRuns?: number;
+}
+export interface ScheduledTurn {
+  id: string;
+  sessionId: string;
+  projectPath?: string;
+  text: string;
+  origin: Origin;
+  trigger: ScheduleTrigger;
+  status: "pending" | "running" | "done" | "cancelled" | "paused";
+  createdAtMs: number;
+  nextRunAtMs?: number;
+  runs: number;
+  error?: string;
+  /** Limit hits behind a limit-continue entry. */
+  attempt?: number;
+}
+export type LimitAction = "ask" | "continue" | "stop";
+/** A chat stopped at a usage limit (yoakeland protocol/limit.go). */
+export interface LimitHit {
+  sessionId: string;
+  projectPath?: string;
+  provider?: string;
+  atMs: number;
+  resetsAtMs: number;
+  estimated?: boolean;
+  attempt?: number;
+  gaveUp?: boolean;
+  tooFar?: boolean;
+  message?: string;
+}
+/** `schedule_list` (SPEC.md §3.2). */
+export interface ScheduleList {
+  sessionId?: string;
+  schedules: ScheduledTurn[];
+  allPaused?: boolean;
+  limitHits?: LimitHit[];
+}

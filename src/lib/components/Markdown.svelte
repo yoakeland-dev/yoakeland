@@ -13,7 +13,9 @@
   import type { Token, Links } from "marked";
   import { sanitizeMarkdown, loadRemoteImage } from "../sanitize";
   import { hasOpenFence } from "../fences";
-  import { showArtifact } from "../artifact";
+  import { getContext } from "svelte";
+  import { showArtifact, type ArtifactSink } from "../artifact";
+  import { send } from "../ipc";
   import { loadKatex } from "../mathRender";
   import { cachedMermaid, renderMermaid, downloadSvg, mermaidThemeFromCss } from "../mermaidRender";
   import DiagramViewer from "./DiagramViewer.svelte";
@@ -118,6 +120,31 @@
   // An ```artifact fence becomes its sandboxed page once it has closed; `shown` remembers the theme and
   // source each block was last built for, so a re-render of the message leaves a running page alone.
   const shown = new WeakMap<Element, string>();
+  // The assistant message this text belongs to (AssistantMessage sets it), so a page can answer it.
+  const host = getContext<{ sessionId: string; messageId: string } | undefined>("artifactHost");
+  const hash = (s: string) => {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  };
+  /** Relays what an artifact page submits or logs to the server (artifact_event). The id is the message plus
+   * a hash of the page, so it survives a reload and tells two pages in one message apart. */
+  // A page answers once: later submits (a double click, a reload of the page) send nothing. The server
+  // drops them too, for a client that was reloaded since.
+  const answered = new Set<string>();
+  function sinkFor(src: string): ArtifactSink | undefined {
+    const cid = app.activeConnectionId;
+    if (!host || !cid) return undefined;
+    const artifactId = `${host.messageId}#${hash(src)}`;
+    return (kind, data) => {
+      if (kind === "submit") {
+        if (answered.has(artifactId)) return;
+        answered.add(artifactId);
+      }
+      const projectPath = app.servers[cid]?.projectBySession[host.sessionId];
+      void send(cid, { type: "artifact_event", sessionId: host.sessionId, data: { sessionId: host.sessionId, projectPath, artifactId, kind, data, messageId: host.messageId } });
+    };
+  }
   function drawArtifacts() {
     const themeKey = app.resolvedTheme + app.settings.accent;
     for (const block of root.querySelectorAll<HTMLElement>(".artifact-block:not([data-streaming])")) {
@@ -127,7 +154,7 @@
       if (!out || !src.trim() || shown.get(block) === key) continue;
       if (!shown.has(block)) block.setAttribute("data-collapsed", ""); // the page first, its source on request
       shown.set(block, key);
-      showArtifact(out, src);
+      showArtifact(out, src, sinkFor(src));
     }
   }
 

@@ -140,6 +140,25 @@
   import deviceFloppy from "@tabler/icons/outline/device-floppy.svg?raw";
   import gitCommit from "@tabler/icons/outline/git-commit.svg?raw";
   import fileDiff from "@tabler/icons/outline/file-diff.svg?raw";
+  import heartRateMonitor from "@tabler/icons/outline/heart-rate-monitor.svg?raw";
+  import stack2 from "@tabler/icons/outline/stack-2.svg?raw";
+  import gauge from "@tabler/icons/outline/gauge.svg?raw";
+  import stopwatch from "@tabler/icons/outline/stopwatch.svg?raw";
+  import tag from "@tabler/icons/outline/tag.svg?raw";
+  import alertTriangle from "@tabler/icons/outline/alert-triangle.svg?raw";
+  import bug from "@tabler/icons/outline/bug.svg?raw";
+  import database from "@tabler/icons/outline/database.svg?raw";
+  import deviceDesktop from "@tabler/icons/outline/device-desktop.svg?raw";
+  import id from "@tabler/icons/outline/id.svg?raw";
+  import share2 from "@tabler/icons/outline/share-2.svg?raw";
+  import users from "@tabler/icons/outline/users.svg?raw";
+  import power from "@tabler/icons/outline/power.svg?raw";
+  import wallpaper from "@tabler/icons/outline/wallpaper.svg?raw";
+  import appWindow from "@tabler/icons/outline/app-window.svg?raw";
+  import wind from "@tabler/icons/outline/wind.svg?raw";
+  import layoutDashboard from "@tabler/icons/outline/layout-dashboard.svg?raw";
+  import cards from "@tabler/icons/outline/cards.svg?raw";
+  import adjustmentsHorizontal from "@tabler/icons/outline/adjustments-horizontal.svg?raw";
 
   const icons = {
     plus,
@@ -281,6 +300,25 @@
     "book-2": book2,
     key,
     lock,
+    "heart-rate-monitor": heartRateMonitor,
+    "stack-2": stack2,
+    "gauge": gauge,
+    "stopwatch": stopwatch,
+    "tag": tag,
+    "alert-triangle": alertTriangle,
+    "bug": bug,
+    "database": database,
+    "device-desktop": deviceDesktop,
+    "id": id,
+    "share-2": share2,
+    "users": users,
+    "power": power,
+    "wallpaper": wallpaper,
+    "app-window": appWindow,
+    "wind": wind,
+    "layout-dashboard": layoutDashboard,
+    "cards": cards,
+    "adjustments-horizontal": adjustmentsHorizontal,
   };
 
   let { name, size = 16 }: { name: keyof typeof icons; size?: number } = $props();
