@@ -94,6 +94,8 @@ function createWindow() {
       ],
     },
   });
+  // Keep the product name ("Yoakeland" / "Yoakeland Early") as the window title instead of the page's.
+  win.on("page-title-updated", (e) => e.preventDefault());
   if (process.platform === "darwin" && !chrome) win.setWindowButtonVisibility(false);
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:|^mailto:/.test(url)) void shell.openExternal(url);

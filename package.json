@@ -1,7 +1,7 @@
 {
   "name": "yoake-gui",
   "productName": "Yoakeland",
-  "desktopName": "yoakeland.desktop",
+  "desktopName": "Yoakeland.desktop",
   "version": "0.1.7",
   "description": "Agents that run on your machine",
   "type": "module",
@@ -83,6 +83,7 @@
       "target": [
         "AppImage"
       ],
+      "executableName": "Yoakeland",
       "category": "Development"
     },
     "win": {

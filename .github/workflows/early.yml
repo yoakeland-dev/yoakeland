@@ -56,7 +56,7 @@ jobs:
       - run: |
           npx electron-builder --linux --publish never \
             -c.productName="Yoakeland Early" -c.appId=com.aveline.yoake-gui.early -c.artifactName='Yoakeland-Early-${version}.${ext}' \
-            -c.extraMetadata.version="$V" -c.extraMetadata.productName="Yoakeland Early" -c.extraMetadata.desktopName=yoakeland-early.desktop
+            -c.extraMetadata.version="$V" -c.extraMetadata.productName="Yoakeland Early" -c.extraMetadata.desktopName=Yoakeland-Early.desktop -c.linux.executableName=Yoakeland-Early
       - run: (cd dist && sha256sum *.AppImage > SHA256SUMS)
       - run: |
           gh release create "$TAG" dist/*.AppImage dist/SHA256SUMS \
