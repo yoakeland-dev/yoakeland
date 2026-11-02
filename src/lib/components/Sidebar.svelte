@@ -226,6 +226,10 @@
   let search = $state("");
   type Chip = "waiting" | "running" | "unread" | "archived";
   let chip = $state<Chip | null>(null);
+  // The filter button and its chips belong to the classic sidebar; the new look folds them away
+  // (its archived chats live in the Archived shelf instead).
+  const newLook = $derived(app.settings.sidebarCards);
+  const filterOn = $derived(newLook ? null : chip);
   const CHIPS: { id: Chip; label: string; icon: string }[] = [
     { id: "waiting", label: "Waiting on you", icon: "alert-circle" },
     { id: "running", label: "Running", icon: "loader-2" },
@@ -365,8 +369,13 @@
     return s.messageCount > 0 || (srv.messagesBySession[s.sessionId] ?? []).length > 0;
   }
 
-  const autoArchiveMs = $derived(app.settings.autoArchiveDays * 86400000);
-  const isArchived = (s: SessionSummary) => !!s.archived || app.now - new Date(s.updatedAt).getTime() > autoArchiveMs;
+  // Archived is the only "out of the list" state: the flag you set, or age past autoArchiveDays
+  // (0 = never age out). There is no separate "closed".
+  const isArchived = (s: SessionSummary) => {
+    if (s.archived) return true;
+    const days = app.settings.autoArchiveDays;
+    return !!days && app.now - new Date(s.updatedAt).getTime() > days * 86400000;
+  };
   const byRecent = (a: SessionSummary, b: SessionSummary) =>
     new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
 
@@ -426,10 +435,9 @@
   const running = $derived<Row[]>(
     allRows.filter((r) => r.srv.activeTurnBySession[r.s.sessionId] && !needsYouKeys.has(key(r))).sort((a, b) => byRecent(a.s, b.s)),
   );
-  // A finished turn nobody has looked at yet (a stopped one included), until the chat is opened.
-  const ready = $derived<Row[]>(
-    allRows.filter((r) => r.srv.sessionStatus(r.s.sessionId) === "finished" && !isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)),
-  );
+  // Archived is the only "out of the list" state: the flag you set, or age past autoArchiveDays.
+  // Not "the turn finished" — a chat often needs several more prompts to finish the real work, so
+  // the row keeps a finished-unread dot rather than moving.
   // In pinned order; Ctrl+1-9 jumps to them.
   const pinned = $derived<Row[]>(
     serverEntries.flatMap(([gcid, srv]) =>
@@ -441,15 +449,15 @@
   );
   const pinnedKeys = $derived(new Set(pinned.map(key)));
 
-  // Projects tab: what wants you, runs, or just finished lifts above the project groups so it's
-  // one place to look. A pinned chat keeps its slot and takes its tier's row shape instead.
+  // Projects tab: what wants you and what's running lift above the project groups so it's one place
+  // to look. Everything else stays put in its project. A pinned chat keeps its slot and takes its
+  // tier's row shape instead.
   const unpinned = (rows: Row[]) => rows.filter((r) => !pinnedKeys.has(key(r)));
-  const tiers = $derived(
-    tab === "chats" ? null : { needs: unpinned(needsYou), running: unpinned(running), ready: unpinned(ready) },
-  );
-  const liftedKeys = $derived(new Set(tiers ? [...tiers.needs, ...tiers.running, ...tiers.ready].map(key) : []));
-  const READY_CAP = 3;
-  let showAllReady = $state(false);
+  const tiers = $derived.by(() => {
+    if (tab === "chats") return null;
+    return { needs: unpinned(needsYou), running: unpinned(running) };
+  });
+  const liftedKeys = $derived(new Set(tiers ? [...tiers.needs, ...tiers.running].map(key) : []));
   function tierVariant(r: Row): "default" | "running" | "attention" | "ready" {
     const st = r.srv.sessionStatus(r.s.sessionId);
     return st === "action" ? "attention" : st === "working" ? "running" : st === "finished" ? "ready" : "default";
@@ -488,6 +496,18 @@
       })),
   );
 
+  // Every live chat of the open tab, flat and newest first: the classic look's "no grouping" list,
+  // and the new look's inbox. Each expanded card carries its own project on the origin line.
+  const activeRows = $derived<Row[]>(
+    serverSections
+      .flatMap((sec) => sec.groups.flatMap((g) => g.sessions.map((s) => ({ cid: sec.cid, srv: sec.srv, s }))))
+      .sort((a, b) => byRecent(a.s, b.s)),
+  );
+
+  // The same chats as project groups, for the classic look's grouping modes (and the new look's
+  // archived shelf).
+  const activeGroups = $derived(serverSections.flatMap((sec) => sec.groups.map((g) => ({ cid: sec.cid, ...g }))));
+
   const archiveGroups = $derived(
     serverEntries.flatMap(([gcid, srv]) =>
       orderedProjects(srv)
@@ -503,6 +523,47 @@
     ),
   );
 
+  // Archived: out of the active list. `sidebarGrouping` splits the Archived shelf, and only there —
+  // the inbox above it is always one flat list in the new look, and server → project in the classic one.
+  const grouping = $derived(app.settings.sidebarGrouping);
+  const archivedRows = $derived(archiveGroups.flatMap((g) => g.sessions.map((s) => ({ cid: g.cid, srv: app.servers[g.cid], s }))).sort((a, b) => byRecent(a.s, b.s)));
+  /** The same archived chats with the server level put back, for the "Remote" grouping. */
+  const archivedSections = $derived(
+    serverEntries
+      .map(([gcid, srv]) => ({
+        cid: gcid,
+        srv,
+        groups: archiveGroups
+          .filter((g) => g.cid === gcid)
+          .map((g) => ({ project: g.project, sessions: g.sessions })),
+      }))
+      .filter((sec) => sec.groups.length > 0),
+  );
+  const archivedCount = $derived(tab === "chats" ? archivedChatRows.length : archivedRows.length);
+  /** A filed row's leading slot: with no grouping there's no header naming the server, so the row
+   * carries it there — the spot the chat glyph would otherwise take. One server means one answer
+   * everywhere, so nothing is repeated: just the chat glyph. */
+  const archivedLead = $derived(multiServer && grouping === "none" ? "server" : "chat");
+
+  // Which docks at the sidebar's bottom are open (this device). Archived starts shut: it's a shelf,
+  // not the list.
+  const DOCK_KEY = "yoake.sidebar.docks";
+  let dockOpen = $state<Record<string, boolean>>(
+    (() => {
+      try {
+        return { archived: false, ...JSON.parse(localStorage.getItem(DOCK_KEY) ?? "{}") };
+      } catch {
+        return { archived: false };
+      }
+    })(),
+  );
+  function toggleDock(id: string) {
+    dockOpen[id] = !dockOpen[id];
+    try {
+      localStorage.setItem(DOCK_KEY, JSON.stringify(dockOpen));
+    } catch {}
+  }
+
   const unread = $derived(allRows.filter((r) => !isArchived(r.s) && r.srv.isUnread(r.s)).sort((a, b) => byRecent(a.s, b.s)));
 
   // Spans every server/project, titles and cached message text, narrowed by the active chip.
@@ -510,8 +571,8 @@
     const q = search.trim().toLowerCase();
     if (!q) return [];
     const pool =
-      chip === "waiting" ? needsYou : chip === "running" ? running : chip === "unread" ? unread
-        : chip === "archived" ? searchRows.filter((r) => isArchived(r.s))
+      filterOn === "waiting" ? needsYou : filterOn === "running" ? running : filterOn === "unread" ? unread
+        : filterOn === "archived" ? searchRows.filter((r) => isArchived(r.s))
         : searchRows;
     const out: (Row & { snippet?: string })[] = [];
     for (const r of pool) {
@@ -551,7 +612,7 @@
     return list.filter((s) => s.rows.length);
   });
 
-  const chipRows = $derived(chip === "waiting" ? needsYou : chip === "running" ? running : chip === "unread" ? unread : []);
+  const chipRows = $derived(filterOn === "waiting" ? needsYou : filterOn === "running" ? running : filterOn === "unread" ? unread : []);
   const chipCount = (c: Chip) =>
     c === "waiting" ? needsYou.length : c === "running" ? running.length : c === "unread" ? unread.length : 0;
 
@@ -611,224 +672,29 @@
   {#if paired}
     <SplitEntry primary={r.s} secondary={paired} connectionId={r.cid} {variant} />
   {:else}
-    <ChatRow connectionId={r.cid} session={r.s} {variant} {showServer} />
+    <ChatRow connectionId={r.cid} session={r.s} {variant} {showServer} expanded={newLook && variant === "default"} />
   {/if}
 {/snippet}
 
-<div class="sidebar-slot" class:resizing class:collapse-anim={collapsedByDrag} class:snap={app.sidebarSnap} style={slotWidth === null ? "flex: 1" : `flex-basis: ${slotWidth}px`}>
-  <aside
-    class="sidebar"
-    bind:this={sidebarEl}
-    class:collapsed
-    class:phone
-    class:peek={app.sidebarPeek && collapsed}
-    class:leaving
-    onpointerenter={() => app.sidebarPeek && app.peekSidebar(true)}
-    onpointerleave={() => app.peekSidebar(false)}
-    style:width={paneWidth}
-  >
-    <div class="brand-row">
-      <span class="brand-logo" aria-hidden="true" use:dangle={logoBounds}><span style="mask-image: url(mark.svg)"></span><span class="dot" style="mask-image: url(mark-dot.svg)"></span></span>
-      <div class="tabs" role="tablist" aria-label="Sidebar">
-        <button
-          role="tab"
-          class="tab"
-          class:on={tab === "projects"}
-          aria-selected={tab === "projects"}
-          aria-label="Projects"
-          {@attach tip("Projects")}
-          onclick={() => pickTab("projects")}
-        >
-          <Icon name="code" size={14} />
-        </button>
-        <button
-          role="tab"
-          class="tab"
-          class:on={tab === "chats"}
-          aria-selected={tab === "chats"}
-          aria-label="Chats"
-          {@attach tip("Chats")}
-          onclick={() => pickTab("chats")}
-        >
-          <Icon name="message-circle" size={14} />
-        </button>
-      </div>
+{#snippet dock(id: "archived", label: string, icon: string, count: number, body: import("svelte").Snippet)}
+  {@const open = !!dockOpen[id]}
+  <div class="dock" class:open>
+    <div class="dock-head-wrap">
+    <button class="dock-head" aria-expanded={open} onclick={() => toggleDock(id)}>
+      <Icon name={icon as any} size={12} />
+      <span class="dock-label">{label}</span>
+      <span class="dock-count">{count}</span>
+      <span class="dock-chevron" class:open><Icon name="chevron-up" size={12} /></span>
+    </button>
     </div>
-    <div class="quick-row">
-      <SearchInput bind:value={search} placeholder="Search chats…" />
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger
-          class="filter-btn{chip ? ' on' : ''}"
-          {@attach tip(chip ? `Showing: ${CHIPS.find((c) => c.id === chip)?.label}` : "Filter chats")}
-          aria-label="Filter chats"
-        >
-          <Icon name="filter" size={15} />
-          {#if !chip && needsYou.length}<span class="filter-dot"></span>{/if}
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <MenuContent class="context-menu" align="end" sideOffset={4}>
-            {#each CHIPS as c (c.id)}
-              <DropdownMenu.Item class="context-menu-item filter-item" onSelect={() => (chip = chip === c.id ? null : c.id)}>
-                <Icon name={c.icon as any} size={13} />
-                <span class="filter-label">{c.label}</span>
-                {#if chipCount(c.id)}<span class="filter-count" class:warn={c.id === "waiting"}>{chipCount(c.id)}</span>{/if}
-                {#if chip === c.id}<Icon name="check" size={12} />{/if}
-              </DropdownMenu.Item>
-            {/each}
-          </MenuContent>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-      <button
-        class="new-chat"
-        onclick={() => (tab === "chats" ? void newChatIn(cid ?? connectedServers[0]?.[0] ?? "", CHAT_PROJECT) : newChat())}
-        {@attach tip(tab === "chats" ? "New chat" : pickerCid && projectFilter ? `New chat in ${pickedServer?.projectName(projectFilter)}` : "New chat…", "chat.new")}
-        aria-label="New chat"
-      >
-        <Icon name="message-circle-plus" size={16} />
-      </button>
-    </div>
+    {#if open}
+      <div class="dock-body" transition:slide={{ duration: Math.round(180 * app.settings.animationSpeed) }}>{@render body()}</div>
+    {/if}
+  </div>
+{/snippet}
 
-    <div class="project-slot" class:shut={tab !== "projects"} inert={tab !== "projects"} style:--ms="{tabMs}ms">
-    <div class="project-row">
-      {#if hasAnyProject}
-        <Dropdown
-          items={remoteProjectItems}
-          bind:value={() => pickerValue, pickFocus}
-          placeholder="Select a project…"
-          triggerIcon="folder"
-          triggerLead={pickedServer && multiServer ? pickedLead : undefined}
-          searchable={remoteProjectItems.length > 6}
-          searchPlaceholder="Search projects…"
-          triggerClass="project-trigger"
-          groupHeader={serverGroupHeader}
-        >
-          {#snippet item({ value, label, selected })}
-            {@const path = value.includes("::") && !value.startsWith("server::") ? value.slice(value.indexOf("::") + 2) : undefined}
-            {#if value.startsWith("server::")}
-              {@const srv = app.servers[value.slice(8)]}
-              {#if srv}<ServerAvatar name={srv.label} seed={srv.serverId} size={12} />{/if}
-            {/if}
-            <span class="dropdown-item-label" {@attach tip(path)}>{label}</span>
-            {#if selected}<Icon name="check" size={11} />{/if}
-          {/snippet}
-        </Dropdown>
-      {:else}
-        <button class="project-trigger empty-cta" onclick={() => addProject(cid)}>
-          <Icon name="folder-plus" size={13} />
-          <span>Add your first project</span>
-        </button>
-      {/if}
-      <button
-        class="manage-projects"
-        {@attach tip("Add project")}
-        aria-label="Add project"
-        onclick={() => addProject(pickerCid ?? cid)}
-      >
-        <Icon name="folder-plus" size={14} />
-      </button>
-    </div>
-    </div>
-
-    <nav class="chat-list">
-     {#key tab}
-      <div
-        class="pane"
-        in:fly={{ x: tabDir * 28, duration: tabMs, delay: tabMs / 4 }}
-        out:fly={{ x: tabDir * -28, duration: tabMs * 0.75 }}
-      >
-      {#if chip}
-        <div class="section-label filter-head">
-          {CHIPS.find((c) => c.id === chip)?.label}
-          <button class="clear-filter" {@attach tip("Clear filter")} aria-label="Clear filter" onclick={() => (chip = null)}>
-            <Icon name="xmark" size={11} />
-          </button>
-        </div>
-      {/if}
-      {#if search.trim()}
-        {#each sections as sec, i (sec.id)}
-          <div class="section-label search-head" class:sep={i > 0}>
-            <Icon name={sec.icon as any} size={11} />{sec.label}<span class="count">{sec.rows.length}</span>
-          </div>
-          {#each showAll[sec.id] ? sec.rows : sec.rows.slice(0, SEARCH_CAP) as r (key(r))}
-            <ChatRow
-              connectionId={r.cid}
-              session={r.s}
-              variant={isArchived(r.s) ? "archived" : r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default"}
-              showServer={multiServer}
-              snippet={r.snippet}
-              query={search.trim()}
-            />
-          {/each}
-          {#if sec.rows.length > SEARCH_CAP && !showAll[sec.id]}
-            <button class="more" onclick={() => (showAll[sec.id] = true)}>Show {sec.rows.length - SEARCH_CAP} more</button>
-          {/if}
-        {:else}
-          <p class="empty">No chats match “{search.trim()}”</p>
-        {/each}
-      {:else if chip === "archived" && tab === "chats"}
-        {#each archivedChatRows as r (key(r))}
-          <ChatRow connectionId={r.cid} session={r.s} variant="archived" showServer={multiServer} />
-        {:else}
-          <p class="empty">Nothing archived</p>
-        {/each}
-      {:else if chip === "archived"}
-        {#each archiveGroups as g (g.cid + "::" + g.project)}
-          <ProjectGroup connectionId={g.cid} projectPath={g.project} sessions={g.sessions} archived={true} />
-        {:else}
-          <p class="empty">Nothing archived</p>
-        {/each}
-      {:else if chip}
-        {#each chipRows as r (key(r))}
-          {@render rowFor(r, chip === "waiting" ? "attention" : chip === "running" ? "running" : "default")}
-        {:else}
-          <p class="empty">
-            {chip === "waiting" ? "Nothing is waiting on you" : chip === "running" ? "Nothing is running" : "You're all caught up"}
-          </p>
-        {/each}
-      {:else}
-        {#if tiers?.needs.length}
-          <div class="section-label">Needs you <span class="count">{tiers.needs.length}</span></div>
-          {#each tiers.needs as r (key(r))}{@render rowFor(r, "attention")}{/each}
-        {/if}
-        {#if tiers?.running.length}
-          <div class="section-label">Working</div>
-          {#each tiers.running as r (key(r))}{@render rowFor(r, "running")}{/each}
-        {/if}
-        {#if tiers?.ready.length}
-          <div class="section-label">Ready</div>
-          {#each showAllReady ? tiers.ready : tiers.ready.slice(0, READY_CAP) as r (key(r))}{@render rowFor(r, "ready")}{/each}
-          {#if tiers.ready.length > READY_CAP}
-            <button class="more" onclick={() => (showAllReady = !showAllReady)}>
-              <Icon name={showAllReady ? "chevron-up" : "chevron-down"} size={13} />
-              <span>{showAllReady ? "Show less" : `Show ${tiers.ready.length - READY_CAP} more`}</span>
-            </button>
-          {/if}
-        {/if}
-
-        {#if pinned.length}
-          <div class="section-label">Pinned</div>
-          {#each pinned as r (key(r))}{@render rowFor(r, tierVariant(r))}{/each}
-        {/if}
-
-        {#if tab === "chats"}
-          {#each chatRows as r (key(r))}{@render rowFor(r, r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default")}{:else}
-            <div class="empty-state sidebar-empty">
-              <Icon name="message-circle" size={20} />
-              <p>No chats yet</p>
-              {#if connectedServers.length}
-                <div class="starters">
-                  {#each CHAT_STARTERS.slice(0, 3) as st (st.title)}
-                    <button class="starter" {@attach tip(st.prompt)} onclick={() => void startChatWith(cid ?? connectedServers[0][0], CHAT_PROJECT, st.prompt)}>
-                      <Icon name={st.icon as any} size={13} /><span>{st.title}</span>
-                    </button>
-                  {/each}
-                </div>
-                <button class="empty-action" onclick={() => void newChatIn(cid ?? connectedServers[0][0], CHAT_PROJECT)}>Start a chat</button>
-              {/if}
-            </div>
-          {/each}
-        {:else}
-        {#each serverSections as sec (sec.cid)}
+{#snippet serverSectionsBody(expanded: boolean, sections = serverSections, archived = false)}
+          {#each sections as sec (sec.cid)}
           {@const open = !sec.srv.collapsedProjects[SERVER_SECTION]}
           {@const connected = sec.srv.connectionStatus === "connected"}
           {#if !flat}
@@ -893,8 +759,9 @@
                     connectionId={sec.cid}
                     projectPath={g.project}
                     sessions={g.sessions}
-                    archived={false}
-                    onNewChat={() => void newChatIn(sec.cid, g.project)}
+                    archived={archived}
+                    expanded={expanded}
+                    onNewChat={archived ? undefined : () => void newChatIn(sec.cid, g.project)}
                   />
                 </div>
               {:else}
@@ -914,9 +781,266 @@
               {/each}
             </div>
           {/if}
+        {/each}
+{/snippet}
+
+{#snippet archivedBody()}
+  {#if tab === "chats" || grouping === "none"}
+    {#each tab === "chats" ? archivedChatRows : archivedRows as r (key(r))}
+      <ChatRow connectionId={r.cid} session={r.s} variant="archived" lead={archivedLead} showServer={multiServer && archivedLead === "chat"} />
+    {/each}
+  {:else if grouping === "remote"}
+    {@render serverSectionsBody(false, archivedSections, true)}
+  {:else}
+    {#each archiveGroups as g (g.cid + "::" + g.project)}
+      <!-- Grouped by project only: this header names the server, so the rows just say "chat". -->
+      <ProjectGroup
+        connectionId={g.cid}
+        projectPath={g.project}
+        sessions={g.sessions}
+        archived={true}
+        showServer={multiServer}
+      />
+    {/each}
+  {/if}
+  {#if archivedCount === 0}<p class="empty">Nothing archived</p>{/if}
+{/snippet}
+
+<div class="sidebar-slot" class:resizing class:collapse-anim={collapsedByDrag} class:snap={app.sidebarSnap} style={slotWidth === null ? "flex: 1" : `flex-basis: ${slotWidth}px`}>
+  <aside
+    class="sidebar"
+    bind:this={sidebarEl}
+    class:collapsed
+    class:phone
+    class:peek={app.sidebarPeek && collapsed}
+    class:leaving
+    onpointerenter={() => app.sidebarPeek && app.peekSidebar(true)}
+    onpointerleave={() => app.peekSidebar(false)}
+    style:width={paneWidth}
+  >
+    <div class="brand-row">
+      <span class="brand-logo" aria-hidden="true" use:dangle={logoBounds}><span style="mask-image: url(mark.svg)"></span><span class="dot" style="mask-image: url(mark-dot.svg)"></span></span>
+      <div class="tabs" role="tablist" aria-label="Sidebar">
+        <button
+          role="tab"
+          class="tab"
+          class:on={tab === "projects"}
+          aria-selected={tab === "projects"}
+          aria-label="Projects"
+          {@attach tip("Projects")}
+          onclick={() => pickTab("projects")}
+        >
+          <Icon name="code" size={14} />
+        </button>
+        <button
+          role="tab"
+          class="tab"
+          class:on={tab === "chats"}
+          aria-selected={tab === "chats"}
+          aria-label="Chats"
+          {@attach tip("Chats")}
+          onclick={() => pickTab("chats")}
+        >
+          <Icon name="message-circle" size={14} />
+        </button>
+      </div>
+    </div>
+    <div class="quick-row">
+      <SearchInput bind:value={search} placeholder="Search chats…" />
+      {#if !newLook}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger
+          class="filter-btn{chip ? ' on' : ''}"
+          {@attach tip(chip ? `Showing: ${CHIPS.find((c) => c.id === chip)?.label}` : "Filter chats")}
+          aria-label="Filter chats"
+        >
+          <Icon name="filter" size={15} />
+          {#if !chip && needsYou.length}<span class="filter-dot"></span>{/if}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <MenuContent class="context-menu" align="end" sideOffset={4}>
+            {#each CHIPS as c (c.id)}
+              <DropdownMenu.Item class="context-menu-item filter-item" onSelect={() => (chip = chip === c.id ? null : c.id)}>
+                <Icon name={c.icon as any} size={13} />
+                <span class="filter-label">{c.label}</span>
+                {#if chipCount(c.id)}<span class="filter-count" class:warn={c.id === "waiting"}>{chipCount(c.id)}</span>{/if}
+                {#if chip === c.id}<Icon name="check" size={12} />{/if}
+              </DropdownMenu.Item>
+            {/each}
+          </MenuContent>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      {/if}
+      <button
+        class="new-chat"
+        onclick={() => (tab === "chats" ? void newChatIn(cid ?? connectedServers[0]?.[0] ?? "", CHAT_PROJECT) : newChat())}
+        {@attach tip(tab === "chats" ? "New chat" : pickerCid && projectFilter ? `New chat in ${pickedServer?.projectName(projectFilter)}` : "New chat…", "chat.new")}
+        aria-label="New chat"
+      >
+        <Icon name="message-circle-plus" size={16} />
+      </button>
+    </div>
+
+    <div class="project-slot" class:shut={tab !== "projects"} inert={tab !== "projects"} style:--ms="{tabMs}ms">
+    <div class="project-row">
+      {#if hasAnyProject}
+        <Dropdown
+          items={remoteProjectItems}
+          bind:value={() => pickerValue, pickFocus}
+          placeholder="Select a project…"
+          triggerIcon="folder"
+          triggerLead={pickedServer && multiServer ? pickedLead : undefined}
+          searchable={remoteProjectItems.length > 6}
+          searchPlaceholder="Search projects…"
+          triggerClass="project-trigger"
+          groupHeader={serverGroupHeader}
+        >
+          {#snippet item({ value, label, selected })}
+            {@const path = value.includes("::") && !value.startsWith("server::") ? value.slice(value.indexOf("::") + 2) : undefined}
+            {#if value.startsWith("server::")}
+              {@const srv = app.servers[value.slice(8)]}
+              {#if srv}<ServerAvatar name={srv.label} seed={srv.serverId} size={12} />{/if}
+            {/if}
+            <span class="dropdown-item-label" {@attach tip(path)}>{label}</span>
+            {#if selected}<Icon name="check" size={11} />{/if}
+          {/snippet}
+        </Dropdown>
+      {:else}
+        <button class="project-trigger empty-cta" onclick={() => addProject(cid)}>
+          <Icon name="folder-plus" size={13} />
+          <span>Add your first project</span>
+        </button>
+      {/if}
+      <button
+        class="manage-projects"
+        {@attach tip("Add project")}
+        aria-label="Add project"
+        onclick={() => addProject(pickerCid ?? cid)}
+      >
+        <Icon name="folder-plus" size={14} />
+      </button>
+    </div>
+    </div>
+
+    <nav class="chat-list">
+     {#key tab}
+      <div
+        class="pane"
+        in:fly={{ x: tabDir * 28, duration: tabMs, delay: tabMs / 4 }}
+        out:fly={{ x: tabDir * -28, duration: tabMs * 0.75 }}
+      >
+      {#if filterOn}
+        <div class="section-label filter-head">
+          {CHIPS.find((c) => c.id === filterOn)?.label}
+          <button class="clear-filter" {@attach tip("Clear filter")} aria-label="Clear filter" onclick={() => (chip = null)}>
+            <Icon name="xmark" size={11} />
+          </button>
+        </div>
+      {/if}
+      {#if search.trim()}
+        {#each sections as sec, i (sec.id)}
+          <div class="section-label search-head" class:sep={i > 0}>
+            <Icon name={sec.icon as any} size={11} />{sec.label}<span class="count">{sec.rows.length}</span>
+          </div>
+          {#each showAll[sec.id] ? sec.rows : sec.rows.slice(0, SEARCH_CAP) as r (key(r))}
+            <ChatRow
+              connectionId={r.cid}
+              session={r.s}
+              variant={isArchived(r.s) ? "archived" : r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default"}
+              showServer={multiServer}
+              snippet={r.snippet}
+              query={search.trim()}
+            />
+          {/each}
+          {#if sec.rows.length > SEARCH_CAP && !showAll[sec.id]}
+            <button class="more" onclick={() => (showAll[sec.id] = true)}>Show {sec.rows.length - SEARCH_CAP} more</button>
+          {/if}
+        {:else}
+          <p class="empty">No chats match “{search.trim()}”</p>
+        {/each}
+      {:else if filterOn === "archived" && tab === "chats"}
+        {#each archivedChatRows as r (key(r))}
+          <ChatRow connectionId={r.cid} session={r.s} variant="archived" lead="chat" showServer={multiServer} />
+        {:else}
+          <p class="empty">Nothing archived</p>
+        {/each}
+      {:else if filterOn === "archived"}
+        {#each archiveGroups as g (g.cid + "::" + g.project)}
+          <ProjectGroup connectionId={g.cid} projectPath={g.project} sessions={g.sessions} archived={true} showServer={multiServer} />
+        {:else}
+          <p class="empty">Nothing archived</p>
+        {/each}
+      {:else if filterOn}
+        {#each chipRows as r (key(r))}
+          {@render rowFor(r, filterOn === "waiting" ? "attention" : filterOn === "running" ? "running" : "default")}
+        {:else}
+          <p class="empty">
+            {filterOn === "waiting" ? "Nothing is waiting on you" : filterOn === "running" ? "Nothing is running" : "You're all caught up"}
+          </p>
+        {/each}
+      {:else}
+        {#if tiers?.needs.length}
+          <div class="section-label">Needs you <span class="count">{tiers.needs.length}</span></div>
+          {#each tiers.needs as r (key(r))}{@render rowFor(r, "attention")}{/each}
+        {/if}
+        {#if tiers?.running.length}
+          <div class="section-label">Working</div>
+          {#each tiers.running as r (key(r))}{@render rowFor(r, "running")}{/each}
+        {/if}
+
+        {#if pinned.length}
+          <div class="section-label">Pinned</div>
+          {#each pinned as r (key(r))}{@render rowFor(r, tierVariant(r))}{/each}
+        {/if}
+
+        {#if tab === "chats"}
+          {#each chatRows as r (key(r))}{@render rowFor(r, r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default")}{:else}
+            <div class="empty-state sidebar-empty">
+              <Icon name="message-circle" size={20} />
+              <p>No chats yet</p>
+              {#if connectedServers.length}
+                <div class="starters">
+                  {#each CHAT_STARTERS.slice(0, 3) as st (st.title)}
+                    <button class="starter" {@attach tip(st.prompt)} onclick={() => void startChatWith(cid ?? connectedServers[0][0], CHAT_PROJECT, st.prompt)}>
+                      <Icon name={st.icon as any} size={13} /><span>{st.title}</span>
+                    </button>
+                  {/each}
+                </div>
+                <button class="empty-action" onclick={() => void newChatIn(cid ?? connectedServers[0][0], CHAT_PROJECT)}>Start a chat</button>
+              {/if}
+            </div>
+          {/each}
+        {:else if serverEntries.length && newLook}
+          <!-- New look: the inbox is one flat list; each card names its project. -->
+          {#each activeRows as r (key(r))}{@render rowFor(r, "default")}{:else}
+            <p class="empty">No chats yet. Start one from a project, or with the button above.</p>
+          {/each}
+        {:else if serverEntries.length && grouping === "remote"}
+          <!-- Classic look: the server head then project groups are the list itself. -->
+          {@render serverSectionsBody(false)}
+        {:else if serverEntries.length && grouping === "project"}
+          <!-- Grouped by project only, so each header names its server. -->
+          {#each activeGroups as g (g.cid + "::" + g.project)}
+            <ProjectGroup
+              connectionId={g.cid}
+              projectPath={g.project}
+              sessions={g.sessions}
+              archived={false}
+              showServer={multiServer}
+              onNewChat={() => void newChatIn(g.cid, g.project)}
+            />
+          {/each}
+        {:else if serverEntries.length}
+          {#each activeRows as r (key(r))}
+            <ChatRow connectionId={r.cid} session={r.s} variant="default" showServer={multiServer} />
+          {/each}
         {:else}
           <p class="empty">No servers yet. Connect one from the command palette.</p>
-        {/each}
+        {/if}
+        {#if serverEntries.length && newLook}
+          <div class="docks">
+            {@render dock("archived", "Archived", "archive", archivedCount, archivedBody)}
+          </div>
         {/if}
       {/if}
       </div>
@@ -1269,10 +1393,75 @@
     /* The outgoing and incoming tab's lists share the one cell while they swipe. */
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    /* At least the scrollport's height, so a short list still lets the bottom docks
+       sit at the edge (margin-top: auto on .docks) instead of floating under the rows. */
+    grid-template-rows: minmax(100%, auto);
     align-content: start;
     scrollbar-width: none;
   }
+  /* Closed and Archived sit at the sidebar's bottom edge, so collapsing one drops its header
+     down; a long list scrolls inside its own capped body. */
+  .docks {
+    position: sticky;
+    bottom: 0;
+    margin-top: auto;
+    padding-top: 0.4rem;
+    background: var(--bg);
+  }
+  .dock {
+    position: relative;
+  }
+  .dock-head {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem var(--space-1);
+    border: 0;
+    background: none;
+    color: var(--sidebar-fg-dim);
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: var(--text-heading-weight);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+  }
+  .dock-head:hover {
+    color: var(--sidebar-fg);
+  }
+  .dock-count {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    opacity: 0.7;
+  }
+  .dock-chevron {
+    margin-left: auto;
+    display: flex;
+    transition: transform calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .dock-chevron.open {
+    transform: rotate(180deg);
+  }
+  .dock-body {
+    max-height: min(22rem, 42vh);
+    overflow-y: auto;
+    /* Reserve the scrollbar's width whether or not it's needed, so rows don't shift sideways
+       (and the count doesn't jump) as the shelf grows past the cap. */
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    display: flex;
+    flex-direction: column;
+  }
+  /* margin-auto rather than justify-content:end, which would make the top of a long list unreachable. */
+  .dock-body > :global(:first-child) {
+    margin-top: auto;
+  }
+  .dock-head-wrap {
+    position: relative;
+  }
   .pane {
+    min-height: 100%;
     grid-area: 1 / 1;
     display: flex;
     flex-direction: column;

@@ -415,6 +415,8 @@ export interface RuntimeSettings {
   poolMaxLive: number;
   pricingRefreshHours: number;
   browserBlockCrossOrigin: boolean;
+  /** Days an unread, unreferenced upload is kept before pruning (0 = forever). */
+  uploadRetentionDays: number;
   /** Context size at which chats compact themselves (0 = the built-in 64,000). */
   autoCompactTokens: number;
   /** Added to every summary compaction's prompt; it narrows what the summary stresses, it can't replace the base prompt. */

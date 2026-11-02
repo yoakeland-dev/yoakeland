@@ -1,0 +1,19 @@
+{
+  "appId": "com.aveline.yoake-gui.early",
+  "productName": "Yoakeland Early",
+  "files": ["build/**", "electron/**"],
+  "asarUnpack": ["build/**"],
+  "extraResources": [{ "from": "bundled-server/${os}-${arch}", "to": "server" }],
+  "electronFuses": {
+    "runAsNode": false,
+    "enableNodeOptionsEnvironmentVariable": false,
+    "enableNodeCliInspectArguments": false,
+    "grantFileProtocolExtraPrivileges": false,
+    "onlyLoadAppFromAsar": true
+  },
+  "icon": "electron/icon.png",
+  "linux": { "target": ["AppImage"], "executableName": "Yoakeland-Early", "category": "Development" },
+  "win": { "target": "nsis" },
+  "mac": { "target": "dmg" },
+  "artifactName": "Yoakeland-Early-${version}.${ext}"
+}

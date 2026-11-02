@@ -416,11 +416,16 @@
     margin: 0.29rem 0;
     font-size: 0.92rem;
   }
-  /* Narration between tool calls reads as part of the log, not as the answer. */
+  /* Narration between tool calls reads as part of the log, not as the answer. Inside the work
+     dropdown it keeps the vertical rail the body used to draw (SimpleWork's .body no longer
+     indents), so the line sits beside the text like a thought block, and rows stay flush. */
   .text.narration {
     color: var(--text-dim);
     font-size: 0.86rem;
     margin: 0;
+    margin-left: 0.5rem;
+    padding-left: 0.7rem;
+    border-left: 2px solid var(--panel-border);
   }
   .fold {
     background: none;

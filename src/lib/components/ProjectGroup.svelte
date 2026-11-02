@@ -9,6 +9,7 @@
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ChatRow from "./ChatRow.svelte";
+  import ServerAvatar from "./ServerAvatar.svelte";
   import SplitEntry from "./SplitEntry.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
 
@@ -17,12 +18,19 @@
     projectPath,
     sessions,
     archived,
+    showServer = false,
+    expanded = false,
     onNewChat,
   }: {
     connectionId: ConnectionId;
     projectPath: string;
     sessions: SessionSummary[];
     archived: boolean;
+    /** Grouped by project alone: the server head above is gone, so this header carries it
+     * ("server / project") instead. Only ever set when there is more than one server. */
+    showServer?: boolean;
+    /** The new look: every chat as an expanded card. */
+    expanded?: boolean;
     onNewChat?: () => void;
   } = $props();
 
@@ -67,11 +75,14 @@
     renaming = false;
   }
 
-  async function archiveOlder() {
-    const cutoff = Date.now() - app.settings.autoArchiveDays * 86400000;
-    const old = sessions.filter((s) => new Date(s.updatedAt).getTime() < cutoff);
-    if (!old.length || !(await askConfirm(`Archive ${old.length} chat${old.length === 1 ? "" : "s"} in ${projectName}?`))) return;
-    for (const s of old) setSessionArchived(connectionId, s.sessionId, true);
+  /** Archive every chat in this group that isn't working or waiting on you. One click for the
+   * "eight chats open, work's done" case — several chats can finish one task. */
+  async function archiveIdle() {
+    const idle = sessions.filter((s) => !server?.activeTurnBySession[s.sessionId] && !server?.pendingAsks.some((a) => a.sessionId === s.sessionId));
+    const running = sessions.length - idle.length;
+    const tail = running ? ` ${running} still running ${running === 1 ? "stays" : "stay"} open.` : "";
+    if (!idle.length || !(await askConfirm(`Archive ${idle.length} chat${idle.length === 1 ? "" : "s"} in ${projectName}?${tail}`))) return;
+    for (const s of idle) setSessionArchived(connectionId, s.sessionId, true);
   }
 
   const menuItems = $derived<ContextMenuItem[]>([
@@ -85,11 +96,11 @@
       ? []
       : [
           {
-            label: `Archive chats older than ${app.settings.autoArchiveDays}d`,
+            label: "Archive idle chats",
             icon: "archive",
-            disabled: !connected,
-            onSelect: archiveOlder,
-          },
+            disabled: !connected || !sessions.length,
+            onSelect: archiveIdle,
+          } satisfies ContextMenuItem,
         ]),
     {
       label: "Remove from list",
@@ -127,7 +138,13 @@
           <span class="face icon-face"><Icon name="folder" size={13} /></span>
           <span class="face chevron-face" class:open><Icon name="chevron-right" size={12} /></span>
         </span>
-        <span class="name">{projectName}</span>
+        {#if showServer && server}
+          <!-- Grouped by project only: no server head above, so this header names it. -->
+          <span class="server-face"><ServerAvatar name={server.label} seed={server.serverId} size={13} /></span>
+          <span class="name remote">{server.label}<span class="slash">/</span><span class="proj">{projectName}</span></span>
+        {:else}
+          <span class="name">{projectName}</span>
+        {/if}
         <span class="divider"></span>
         {#if server?.refreshingProjects[projectPath]}
           <span class="spin" {@attach tip("Refreshing chats…")}><Icon name="loader-2" size={11} /></span>
@@ -174,7 +191,8 @@
         {#if paired}
           <SplitEntry primary={s} secondary={paired} {connectionId} />
         {:else}
-          <ChatRow {connectionId} session={s} variant={archived ? "archived" : "default"} />
+          <!-- A project group's header already says where these live, so a filed row just says "chat". -->
+          <ChatRow {connectionId} session={s} variant={archived ? "archived" : "default"} lead={archived ? "chat" : "status"} {expanded} />
         {/if}
       {/each}
       {#if sessions.length > LIMIT}
@@ -254,6 +272,25 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* "server / project": the server half recedes so the project still reads as the name. */
+  .name.remote {
+    display: flex;
+    align-items: baseline;
+    gap: 0.16rem;
+  }
+  .name.remote .proj {
+    color: var(--sidebar-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .name.remote .slash {
+    opacity: 0.45;
+  }
+  .server-face {
+    display: inline-flex;
+    flex-shrink: 0;
+    margin-right: -0.1rem;
   }
   .rename-input {
     flex: 1;

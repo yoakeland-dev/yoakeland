@@ -231,7 +231,7 @@
   local.runtime = {
     maxRoundsPerTurn: 0, maxSessionCostUsd: 0, disableBashWhenUnsandboxed: false, execTimeoutSec: 60, execOutputMaxBytes: 1048576,
     terminalMemoryMaxMB: 2048, terminalPidsMax: 512, terminalReadMaxChars: 12000, terminalHistoryKB: 256, poolIdleMinutes: 30,
-    poolMaxLive: 0, pricingRefreshHours: 24, browserBlockCrossOrigin: true, autoCompactTokens: 400000, compactInstructions: "",
+    poolMaxLive: 0, pricingRefreshHours: 24, browserBlockCrossOrigin: true, uploadRetentionDays: 30, autoCompactTokens: 400000, compactInstructions: "",
   };
   local.selfPeerId = "p1";
   remote.selfPeerId = "p3";

@@ -280,15 +280,14 @@
   .accordion-inner {
     overflow: hidden;
   }
-  /* The one scroller: a long reply's work stays a bounded box, and nothing inside scrolls on its own. */
+  /* The one scroller: a long reply's work stays a bounded box, and nothing inside scrolls on its own.
+     No indent rail: this is the only level, so its rows line up with the dropdown's own row. */
   .body {
     max-height: min(60vh, 34rem);
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: var(--panel-border) transparent;
-    margin-left: 0.5rem;
-    padding: 0.14rem 0 0.14rem 0.7rem;
-    border-left: 2px solid var(--panel-border);
+    padding: 0.14rem 0;
     display: flex;
     flex-direction: column;
     gap: 0.43rem;

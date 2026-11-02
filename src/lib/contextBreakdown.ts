@@ -36,6 +36,20 @@ export function ringState(ctx: ContextData | undefined | null): RingState {
   };
 }
 
+/** A fetched breakdown read as the ring's own report, for a chat no push has reported one for
+ * (a cold open whose session_history hasn't landed, a lost reply): the ring must not sit dashed
+ * next to a panel full of numbers. The limit is the window when it's known, else the point the
+ * chat compacts at — the same denominator the panel draws its bar against. */
+export function contextFromBreakdown(b: ContextBreakdown): ContextData {
+  return {
+    estimatedTokens: b.totalTokens,
+    maxTokens: b.windowTokens || b.autoCompactAt || 0,
+    windowTokens: b.windowTokens,
+    budgetTokens: b.autoCompactAt,
+    source: b.source,
+  };
+}
+
 /** One line for the ring's tooltip and screen-reader label; `fmt` prints token counts. */
 export function ringSummary(s: RingState, fmt: (n: number) => string): string {
   if (s.kind === "empty") return "Context: nothing reported yet";

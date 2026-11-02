@@ -1893,7 +1893,7 @@
   .hint {
     position: absolute;
     top: 0;
-    right: 0;
+    right: var(--ring-col);
     line-height: 1.38rem;
     color: var(--text-dim);
     font-size: var(--text-label-size);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from "../state.svelte";
   import Icon from "./Icon.svelte";
+  import SlideText from "./SlideText.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -8,6 +9,19 @@
   const done = $derived(items.filter((i) => i.status === "completed").length);
   const allDone = $derived(items.length > 0 && done === items.length);
   const current = $derived(items.find((i) => i.status === "in_progress"));
+
+  const nowLabel = $derived(
+    allDone ? "All done" : current ? current.activeForm || current.content : "Todo",
+  );
+  // Which way the label rolls: down the list as work advances, back up if it regresses.
+  const currentIndex = $derived(allDone ? items.length : Math.max(0, items.findIndex((i) => i.status === "in_progress")));
+  let dir = $state(1);
+  let lastIndex = -1;
+  $effect.pre(() => {
+    const at = currentIndex;
+    dir = at >= lastIndex ? 1 : -1;
+    lastIndex = at;
+  });
 
   // null = follow the list (open until everything is done); a click pins the choice until the list changes state.
   let pinned = $state<{ open: boolean; forDone: boolean } | null>(null);
@@ -21,21 +35,23 @@
   <div class="todos">
     <button type="button" class="head" aria-expanded={open} onclick={toggle}>
       <span class="count">{done}/{items.length}</span>
-      <span class="now">{allDone ? "All done" : current ? (current.activeForm || current.content) : "Todo"}</span>
+      <span class="now"><SlideText text={nowLabel} {dir} /></span>
       <Icon name={open ? "chevron-down" : "chevron-up"} size={14} />
     </button>
-    {#if open}
-      <ul>
-        {#each items as it (it.id)}
-          <li class={it.status}>
-            <span class="mark" aria-hidden="true">
-              {#if it.status === "completed"}<Icon name="circle-check" size={14} />{:else if it.status === "in_progress"}<Icon name="loader-2" size={14} />{:else}<span class="ring"></span>{/if}
-            </span>
-            <span class="text">{it.status === "in_progress" && it.activeForm ? it.activeForm : it.content}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <div class="accordion" class:open inert={!open} aria-hidden={!open}>
+      <div class="accordion-inner">
+        <ul>
+          {#each items as it (it.id)}
+            <li class={it.status}>
+              <span class="mark" aria-hidden="true">
+                {#if it.status === "completed"}<Icon name="circle-check" size={14} />{:else if it.status === "in_progress"}<Icon name="loader-2" size={14} />{:else}<span class="ring"></span>{/if}
+              </span>
+              <span class="text">{it.status === "in_progress" && it.activeForm ? it.activeForm : it.content}</span>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -73,8 +89,25 @@
     flex: 1;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Zero-JS accordion: 0fr/1fr tracks the list's real height, so collapsing to the header
+     and expanding back both glide instead of snapping. */
+  .accordion {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows calc(0.22s * var(--anim-speed, 1)) ease,
+      opacity calc(0.18s * var(--anim-speed, 1)) ease;
+  }
+  .accordion.open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  .accordion-inner {
+    min-height: 0;
+    overflow: hidden;
   }
   ul {
     list-style: none;
@@ -113,18 +146,33 @@
   .completed .mark {
     color: var(--success);
   }
+  .completed .mark :global(svg) {
+    animation: todo-check calc(0.24s * var(--anim-speed, 1)) ease-out;
+  }
   .completed .text {
     text-decoration: line-through;
     opacity: 0.7;
+    transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
   }
   @keyframes todo-spin {
     to {
       transform: rotate(360deg);
     }
   }
+  @keyframes todo-check {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .in_progress .mark :global(svg) {
+    .in_progress .mark :global(svg),
+    .completed .mark :global(svg) {
       animation: none;
+    }
+    .accordion,
+    .completed .text {
+      transition: none;
     }
   }
 </style>

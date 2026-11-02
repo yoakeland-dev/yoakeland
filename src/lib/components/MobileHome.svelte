@@ -48,8 +48,10 @@
 
   // A chat created but never sent doesn't exist on the server yet.
   const started = (s: SessionSummary, srv: ServerState) => s.messageCount > 0 || (srv.messagesBySession[s.sessionId] ?? []).length > 0;
+  // Archived chats (by flag or age) are off the phone's recent list.
   const autoArchiveMs = $derived(app.settings.autoArchiveDays * 86400000);
-  const isArchived = (s: SessionSummary) => !!s.archived || app.now - new Date(s.updatedAt).getTime() > autoArchiveMs;
+  const isArchived = (s: SessionSummary) =>
+    !!s.archived || (autoArchiveMs > 0 && app.now - new Date(s.updatedAt).getTime() > autoArchiveMs);
   const byRecent = (a: Row, b: Row) => new Date(b.s.updatedAt).getTime() - new Date(a.s.updatedAt).getTime();
 
   const rows = $derived.by<Row[]>(() => {

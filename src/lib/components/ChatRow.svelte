@@ -29,6 +29,8 @@ import { haptic } from "../haptics";
     kindBadge = false,
     snippet,
     query,
+    expanded = false,
+    lead = "status",
     compact = false,
     actions,
   }: {
@@ -42,6 +44,13 @@ import { haptic } from "../haptics";
     snippet?: string;
     /** Search query, highlighted in the title and snippet. */
     query?: string;
+    /** The expanded card look (title, activity, where it lives) on an otherwise quiet row. */
+    expanded?: boolean;
+    /** What the leading slot says. "status" is the live row's ring/icon (the dashed ring means
+     * "idle, but you're still using it"). A filed row has no live status to show, so it carries
+     * the most useful thing its surrounding grouping dropped: the server when the project groups
+     * span servers, or just a chat glyph when the headers already say where it lives. */
+    lead?: "status" | "chat" | "server";
     /** No side-panel/archive hover actions (e.g. inside a split pair). */
     compact?: boolean;
     /** Extra hover actions, rendered before the built-in ones. */
@@ -63,7 +72,8 @@ import { haptic } from "../haptics";
   const activity = $derived(chatActivity(server, s.sessionId));
   // The lifted tiers (Needs you, Working, Ready) leave their project group, so they carry
   // where they live on a last line, with the server avatar under the status icon.
-  const lifted = $derived(variant === "running" || variant === "attention" || variant === "ready");
+  // `expanded` gives an inactive project chat the same three-line card in its place.
+  const lifted = $derived(expanded || variant === "running" || variant === "attention" || variant === "ready");
   const turnId = $derived(server?.activeTurnBySession[s.sessionId]);
   const canStop = $derived(variant === "running" && !!turnId && connected);
   const stopped = $derived(
@@ -76,7 +86,11 @@ import { haptic } from "../haptics";
   const askedAt = $derived(variant === "attention" ? server?.pendingAsks.find((a) => a.sessionId === s.sessionId)?.createdAt : undefined);
 
   // A running chat folds its current call into the origin line; the others get a line of their own.
-  const metaLine = $derived(snippet ?? (variant === "attention" ? activity : variant === "ready" ? (stopped ? "Stopped" : activity) : undefined));
+  // Expanded inactive rows show the latest activity too, with "Stopped" reserved for the Ready tier.
+  const metaLine = $derived(
+    snippet ??
+      (variant === "attention" || (expanded && variant === "default") ? activity || undefined : variant === "ready" ? (stopped ? "Stopped" : activity) : undefined),
+  );
   const trailing = $derived(
     askedAt
       ? relTime(askedAt, app.now)
@@ -255,8 +269,12 @@ import { haptic } from "../haptics";
         onclick={() => !syncing && openChatSession(connectionId, s.sessionId)}
         onkeydown={onKeydown}
       >
-        <span class="status-icon status-{syncing ? 'syncing' : stopped ? 'stopped' : archived ? 'idle' : status}" class:under-stop={canStop} aria-hidden="true">
-          {#if syncing}
+        <span class="status-icon status-{lead === 'status' ? (syncing ? 'syncing' : stopped ? 'stopped' : archived ? 'idle' : status) : 'filed'}" class:under-stop={canStop} aria-hidden="true">
+          {#if lead === "server" && server}
+            <ServerAvatar name={server.label} seed={server.serverId} size={13} />
+          {:else if lead === "chat"}
+            <Icon name="message-circle" size={13} />
+          {:else if syncing}
             <span class="spin"><Icon name="loader-2" size={13} /></span>
           {:else if stopped}
             <ChatRing state="stopped" />
@@ -536,6 +554,7 @@ import { haptic } from "../haptics";
     display: inline-flex;
   }
   .status-icon.status-idle,
+  .status-icon.status-filed,
   .status-icon.status-syncing {
     color: var(--sidebar-fg-dim);
   }

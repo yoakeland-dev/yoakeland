@@ -433,6 +433,7 @@
     { key: "poolIdleMinutes", label: "Keep idle coding agents for", hint: "Unused Claude/Codex/… processes close after this.", unit: "min", min: 1 },
     { key: "poolMaxLive", label: "Most coding agents alive at once", hint: "0 means no cap. Closes the least recently used idle one to make room. Running turns are never stopped.", unit: "", min: 0 },
     { key: "pricingRefreshHours", label: "Refresh model prices every", hint: "A model with no price also triggers a refresh, at most hourly.", unit: "h", min: 1 },
+    { key: "uploadRetentionDays", label: "Keep unused uploads for", hint: "Attachments no chat references and nobody has read for this long are deleted. 0 keeps them forever.", unit: "days", min: 0 },
   ] as const;
   let compactInstructionsInput = $state("");
   $effect(() => {
@@ -1305,11 +1306,33 @@
                 {@render toggle(app.settings.autoSummary, (v) => ((app.settings.autoSummary = v), apply()))}
               </div>
               <div class="setting-row">
-                {@render rowText("Auto-archive threads", "Idle threads move to the archive after this long.")}
+                {@render rowText(
+                  "Auto-archive idle chats",
+                  "Untouched chats drop into Archived after this long. 0 keeps them until you archive them.",
+                )}
                 <div class="with-unit">
-                  <NumberField class="ctrl-num" min={1} max={365} bind:value={app.settings.autoArchiveDays} onchange={apply} />
+                  <NumberField class="ctrl-num" min={0} max={365} bind:value={app.settings.autoArchiveDays} onchange={apply} />
                   <span>days</span>
                 </div>
+              </div>
+              <div class="setting-row" data-setting="sidebar-cards">
+                {@render rowText("New sidebar style", "Card chats and a slimmer projects tab. Off keeps the classic sidebar.")}
+                {@render toggle(app.settings.sidebarCards, (v) => ((app.settings.sidebarCards = v), apply()))}
+              </div>
+              <div class="setting-row">
+                {@render rowText(
+                  "Group chats",
+                  "How the list and the Archived shelf split: by server then project, by project only, or flat.",
+                )}
+                {@render segmented(
+                  [
+                    { value: "remote", label: "Remote" },
+                    { value: "project", label: "Project" },
+                    { value: "none", label: "None" },
+                  ],
+                  app.settings.sidebarGrouping,
+                  (v) => ((app.settings.sidebarGrouping = v as "remote" | "project" | "none"), apply()),
+                )}
               </div>
               {#if app.active && !app.active.limited}
                 <div class="setting-row">

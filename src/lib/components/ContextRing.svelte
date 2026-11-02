@@ -2,22 +2,37 @@
   import PopoverContent from "./PopoverContent.svelte";
   // The composer's context ring: how full this chat's context is, and, opened, what it is made of
   // (SPEC.md §3.2 turn_completed.context, get_context_breakdown). The ring reads what the server
-  // already sent with each turn; the panel asks for the breakdown when it opens.
+  // already sent with each turn, and counts once itself when it has nothing to read (below); the
+  // panel asks for the breakdown when it opens.
   import { untrack } from "svelte";
-  import { tip } from "../tooltip.svelte";
+  import { tip, tooltip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app } from "../state.svelte";
   import { getContextBreakdown } from "../ipc";
   import { shortNum, usd } from "../format";
-  import { bar, cacheHitPct, categoryHue, ringState, ringSummary } from "../contextBreakdown";
-  import type { ContextBreakdown } from "../types";
+  import { bar, cacheHitPct, categoryHue, contextFromBreakdown, ringState, ringSummary } from "../contextBreakdown";
+  import type { ContextBreakdown, ContextData } from "../types";
   import Icon from "./Icon.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
 
+  let open = $state(false);
+  let data = $state<ContextBreakdown | null>(null);
+  let error = $state("");
+  let loading = $state(false);
+  let seq = 0;
+  // Readings this ring counted itself, kept per chat so switching back doesn't go dashed until the
+  // next fetch lands.
+  const counts = $state<Record<string, ContextData>>({});
+
   const server = $derived(app.active);
   const cid = $derived(app.activeConnectionId);
-  const ctx = $derived(server?.contextBySession[sessionId]);
+  const messages = $derived(server?.messagesBySession[sessionId] ?? []);
+  const reported = $derived(server?.contextBySession[sessionId]);
+  // The ring draws from the server's push, falling back to its own count: a chat that has messages
+  // but was never reported (nothing pushed yet, or the server said "unknown") would otherwise stay
+  // dashed while the panel — and the chat itself — has plenty to show.
+  const ctx = $derived(reported && reported.source !== "unknown" ? reported : (counts[sessionId] ?? reported));
   const ring = $derived(ringState(ctx));
   const summary = $derived(ringSummary(ring, shortNum));
 
@@ -32,13 +47,7 @@
   const dash = $derived(ring.kind === "ok" && ring.pct !== null ? (ring.pct / 100) * CIRC : 0);
 
   // A chat with nothing in it has no turn to count, and the server may not answer for it.
-  const blank = $derived(ring.kind === "empty" && !server?.messagesBySession[sessionId]?.length);
-
-  let open = $state(false);
-  let data = $state<ContextBreakdown | null>(null);
-  let error = $state("");
-  let loading = $state(false);
-  let seq = 0;
+  const blank = $derived(ring.kind === "empty" && !messages.length);
 
   // Stale data stays up while a fresh answer is on its way: a CLI agent can take a few seconds to count.
   async function load() {
@@ -50,7 +59,10 @@
       const r = await getContextBreakdown(cid, sessionId, server?.projectBySession[sessionId]);
       if (mine !== seq) return;
       if (r.error) error = r.error;
-      else data = r;
+      else {
+        data = r;
+        counts[sessionId] = contextFromBreakdown(r);
+      }
     } catch (e) {
       if (mine === seq) error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -59,6 +71,7 @@
   }
 
   $effect(() => {
+    if (blank) open = false;
     if (!open || blank) {
       seq++;
       loading = false;
@@ -73,6 +86,17 @@
     void sessionId;
     data = null;
     error = "";
+  });
+  // A chat can have messages and no reading at all: a cold open whose session_history hasn't
+  // landed (or never did), or one the server answered "unknown" for. The ring would stay dashed
+  // until a turn ended, so ask once per chat for a count — cheap when nothing is live behind it.
+  const askedFor = new Set<string>();
+  $effect(() => {
+    if (blank || !messages.length || !cid || ring.kind === "ok") return;
+    const key = `${cid}\n${sessionId}`;
+    if (askedFor.has(key)) return;
+    askedFor.add(key);
+    untrack(() => void load());
   });
 
   const view = $derived(data ? bar(data) : null);
@@ -93,6 +117,10 @@
     class={`picker-trigger ctx-trigger${open && !blank ? " open" : ""}${nearCap ? " cap" : ""} ${ring.kind === "ok" ? ring.level : ring.kind}`}
     aria-label={summary + capNote}
     {@attach tip(open && !blank ? undefined : summary + capNote)}
+    onclick={(e) => {
+      // Nothing to open: the tooltip is the answer, so skip its delay.
+      if (blank) tooltip.current = { el: e.currentTarget, content: summary + capNote, instant: true };
+    }}
   >
     <span class="ring-wrap">
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
@@ -106,7 +134,7 @@
 
   {#if !blank}
     <Popover.Portal>
-      <PopoverContent class="ctx-panel" side="top" align="start" sideOffset={8} collisionPadding={8}>
+      <PopoverContent class="ctx-panel" side="top" align="end" sideOffset={8} collisionPadding={8}>
         <div class="head">
           <span class="heading">Context</span>
           {#if loading}<span class="spin dim"><Icon name="loader-2" size={12} /></span>{/if}

@@ -472,8 +472,15 @@ export interface AppSettings {
   stopServerOnClose: boolean;
   /** Keep the accent in sync with the wallpaper, re-derived whenever it changes. */
   accentFromWallpaper: boolean;
-  /** Sessions untouched this many days show as archived in the sidebar without the server-side flag set. */
+  /** Sessions untouched this many days count as archived in the sidebar, without the flag being
+   * set. 0 = never: a chat only leaves the list when you archive it. */
   autoArchiveDays: number;
+  /** How the new sidebar's Archived shelf splits: by server then project, by project only, or one
+   * list by recency. The list itself is always server → project; the classic sidebar ignores this. */
+  sidebarGrouping: "remote" | "project" | "none";
+  /** The projects tab's new sidebar look: every chat as an expanded card, the filter button folded
+   * away. Off keeps the classic compact sidebar. Normal chats keep their tab either way. */
+  sidebarCards: boolean;
   /** Trusted CA cert (PEM) per "host:port", keyed by address since it must be looked up before a
    * connection succeeds (no serverId yet). See trustedCaByServer for the identity-keyed counterpart. */
   trustedCaByHostPort: Record<string, string>;
@@ -529,7 +536,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   windowChrome: true,
   stopServerOnClose: false,
   accentFromWallpaper: false,
-  autoArchiveDays: 14,
+  autoArchiveDays: 30,
+  sidebarGrouping: "remote",
+  sidebarCards: true,
   trustedCaByHostPort: {},
   trustedCaByServer: {},
   terminalUseAppTheme: true,
@@ -891,6 +900,8 @@ export class ServerState {
   lastViewedBySession = $state<Record<string, string>>({});
   // Unsent composer text per chat (memory only): PromptInput saves/restores it across chat switches.
   composerDraftBySession = $state<Record<string, string>>({});
+  /** Chats opened this run, most recent first (memory only): the sidebar's Open section. */
+  openedOrder = $state<string[]>([]);
 
   private saveSidebarPrefs() {
     if (!this.serverId) return;
@@ -967,6 +978,16 @@ export class ServerState {
     return !!seen && Date.parse(s.updatedAt) > Date.parse(seen);
   }
 
+  /** Archived: the flag, or untouched past `autoArchiveDays` (0 = never). One state, one word —
+   * there is no separate "closed". A finished turn is not it: a chat often needs more prompts, so
+   * only you (or age) takes it out of the list. */
+  isArchived(s: Pick<SessionSummary, "archived" | "updatedAt">): boolean {
+    if (s.archived) return true;
+    const days = this.app.settings.autoArchiveDays;
+    if (!days) return false;
+    return this.app.now - new Date(s.updatedAt).getTime() > days * 86400000;
+  }
+
   /** What waits on the user as a card. A plan approval isn't one: it lives in the plan panel. */
   asksFor(sessionId: string): PendingAsk[] {
     return this.pendingAsks.filter((a) => a.sessionId === sessionId && !(a.kind === "permission" && a.plan));
@@ -1034,14 +1055,13 @@ export class ServerState {
   }
 
   /** Whether the current main chat can anchor a split: not an unstarted
-   * draft (nothing to persist the pairing on) and not archived, same
-   * archived rule as the sidebar's (explicit flag or auto-archive age). */
+   * draft (nothing to persist the pairing on) and not archived. */
   get canSplitCurrent(): boolean {
     const id = this.currentSessionId;
     if (!id || !(this.messagesBySession[id] ?? []).length) return false;
     const s = this.sessionById.get(id);
     if (!s) return false;
-    return !s.archived && this.app.now - new Date(s.updatedAt).getTime() <= this.app.settings.autoArchiveDays * 86400000;
+    return !this.isArchived(s);
   }
 
   get canGoBack(): boolean {
@@ -1236,6 +1256,11 @@ export class ServerState {
     }
     if (latestId) {
       this.openSession(latestId);
+      // Nothing has asked the server for this chat's transcript yet: the saved chat list (and so
+      // this restore) only arrives with server_identity, after ipc.ts's afterConnect has already
+      // fetched history for the session it knew about — the blank placeholder. Left alone, the chat
+      // reopens on the local cache, which is capped and can be stale or missing turns.
+      if (this.connectionStatus === "connected") this.app.refreshChatHistory?.(this.connectionId, latestId);
     } else {
       this.bindPlaceholderToFirstProject();
     }
@@ -1302,6 +1327,7 @@ export class ServerState {
     const project = this.projectBySession[sessionId];
     if (project) this.currentProjectPath = project;
     this.markViewed(sessionId, this.sessionById.get(sessionId)?.updatedAt);
+    this.openedOrder = [sessionId, ...this.openedOrder.filter((id) => id !== sessionId)].slice(0, 12);
   }
 
   /** Shows `sessionId` in the right sidebar; pure UI state. Persisting the pairing itself is
@@ -3045,6 +3071,8 @@ class AppState {
   restartServer: ((connectionId: ConnectionId, force?: boolean) => void) | null = null;
   /** Set by ipc.ts: answers a pairing request (kept out of this file's imports, like updateServer). */
   answerPairing: ((connectionId: ConnectionId, credential: string, allow: boolean) => void) | null = null;
+  /** Set by ipc.ts: refetches one chat's server-persisted transcript (get_session_history). */
+  refreshChatHistory: ((connectionId: ConnectionId, sessionId: string) => void) | null = null;
 
   get active(): ServerState | null {
     return this.activeConnectionId ? (this.servers[this.activeConnectionId] ?? null) : null;

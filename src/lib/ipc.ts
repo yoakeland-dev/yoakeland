@@ -432,6 +432,7 @@ async function closeApp() {
 if (isDesktop) app.updateServer = (id) => void updateServer(id);
 app.answerPairing = (id, credential, allow) => answerPairing(id, credential, allow);
 app.restartServer = (id, force) => restartServer(id, force);
+app.refreshChatHistory = (id, sessionId) => getSessionHistory(id, sessionId);
 
 function afterConnect(connectionId: ConnectionId) {
   const server = app.servers[connectionId];
@@ -1047,8 +1048,7 @@ export function setSessionArchived(connectionId: ConnectionId, sessionId: string
   void send(connectionId, { type: "set_session_archived", data: { sessionId, archived, projectPath: project } });
 }
 
-/** Pairs (or, with `null`, unpairs) `sessionId`'s split/sidebar layout (§3.1), server-persisted
- * so it survives a reload or shows on another device. Optimistic, like setSessionArchived. */
+/** Pairs (or, with `null`, unpairs) `sessionId`'s split/sidebar layout (§3.1), server-persisted * so it survives a reload or shows on another device. Optimistic, like setSessionArchived. */
 export function setSessionLayout(connectionId: ConnectionId, sessionId: string, linkedSessionId: string | null) {
   const server = app.servers[connectionId];
   const project = server?.projectBySession[sessionId];
@@ -1932,12 +1932,14 @@ export async function readMedia(
   path: string,
   /** With an absolute `path`: the chat it was attached to, which is what lets the server serve it. */
   sessionId?: string,
+  /** Ask for a generated preview of a stored image (falls back to the original). */
+  thumb = false,
 ): Promise<{ url: string; mime: string; size: number } | { error: string }> {
-  const info = await rpc<Reply<{ size: number; mime: string }>>(cid, "read_media", { projectPath, path, sessionId });
+  const info = await rpc<Reply<{ size: number; mime: string }>>(cid, "read_media", { projectPath, path, sessionId, thumb });
   if (info.error) return { error: info.error };
   const chunks: Uint8Array[] = [];
   for (let offset = 0; ; ) {
-    const r = await rpc<Reply<{ data: string; offset: number; last: boolean }>>(cid, "read_media_chunk", { projectPath, path, offset, sessionId });
+    const r = await rpc<Reply<{ data: string; offset: number; last: boolean }>>(cid, "read_media_chunk", { projectPath, path, offset, sessionId, thumb });
     if (r.error) return { error: r.error };
     const bytes = base64ToBytes(r.data);
     chunks.push(bytes);

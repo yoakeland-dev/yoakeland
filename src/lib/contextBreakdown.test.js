@@ -2,7 +2,7 @@
 // Run with: node --test src/lib/
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bar, cacheHitPct, categoryHue, ringState, ringSummary } from "./contextBreakdown.ts";
+import { bar, cacheHitPct, categoryHue, contextFromBreakdown, ringState, ringSummary } from "./contextBreakdown.ts";
 import { usd } from "./format.ts";
 
 const cat = (key, tokens, exact = false) => ({ key, label: key, tokens, exact });
@@ -36,6 +36,27 @@ test("no limit at all leaves the percentage out rather than dividing by zero", (
   assert.equal(s.kind, "ok");
   assert.equal(s.pct, null);
   assert.equal(s.level, "ok");
+});
+
+test("a fetched breakdown reads as a ring report, so the ring can't stay dashed beside numbers", () => {
+  const measured = contextFromBreakdown({
+    sessionId: "s",
+    totalTokens: 50_000,
+    windowTokens: 200_000,
+    autoCompactAt: 150_000,
+    source: "provider",
+    categories: [],
+  });
+  const s = ringState(measured);
+  assert.equal(s.kind, "ok");
+  assert.equal(s.pct, 25);
+  assert.equal(s.estimated, false);
+  assert.equal(s.windowKnown, true);
+  // No window: measured against the compaction point, as the panel draws its bar.
+  const budget = contextFromBreakdown({ sessionId: "s", totalTokens: 16_000, autoCompactAt: 64_000, source: "estimated", categories: [] });
+  assert.equal(ringState(budget).pct, 25);
+  assert.equal(ringState(budget).windowKnown, false);
+  assert.equal(ringState(budget).estimated, true);
 });
 
 test("the bar is drawn against the window, shares add up, and free/buffer are not 'used'", () => {
