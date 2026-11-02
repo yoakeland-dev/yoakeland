@@ -116,7 +116,6 @@
     }
   });
   const selected = $derived([...mcpRows, ...skillRows].find((r) => r.key === selKey) ?? null);
-  const editing = $derived(pane?.mode === "edit" && pane.ctx.project ? pane.ctx.srv.mcpByProject[pane.ctx.project]?.servers.find((s) => s.name === pane!.name && s.scope === "user") : undefined);
 
   function pick(r: Row) {
     selKey = r.key;
@@ -134,6 +133,14 @@
   // Phone: the list and the picked item are two screens; the top-left toggle (and a swipe right) goes back.
   const inDetail = $derived(!!pane || !!selected);
   const back = () => ((selKey = null), (pane = null));
+  // The page slides away over the list, so it keeps showing what was open until it has gone.
+  let held = $state<{ sel: typeof selected; pane: typeof pane }>({ sel: null, pane: null });
+  $effect(() => {
+    if (selected || pane) held = { sel: selected, pane };
+  });
+  const vs = $derived(selected ?? (viewport.narrow ? held.sel : null));
+  const vp = $derived(pane ?? (viewport.narrow && !selected ? held.pane : null));
+  const editing = $derived(vp?.mode === "edit" && vp.ctx.project ? vp.ctx.srv.mcpByProject[vp.ctx.project]?.servers.find((s) => s.name === vp!.name && s.scope === "user") : undefined);
   $effect(() => {
     viewport.back = inDetail ? back : null;
     return () => (viewport.back = null);
@@ -238,26 +245,26 @@
     </nav>
 
     <div class="pane">
-      {#if pane && (pane.mode === "add" || (pane.mode === "edit" && editing))}
-        {#key pane.name ?? "add"}
-          <div class="narrow"><McpForm cid={pane.ctx.cid} projectPath={pane.ctx.project} connected initial={editing ?? null} onclose={(names) => saved(pane!.ctx, names)} /></div>
+      {#if vp && (vp.mode === "add" || (vp.mode === "edit" && editing))}
+        {#key vp.name ?? "add"}
+          <div class="narrow"><McpForm cid={vp.ctx.cid} projectPath={vp.ctx.project} connected initial={editing ?? null} onclose={(names) => saved(vp!.ctx, names)} /></div>
         {/key}
-      {:else if pane?.mode === "import"}
-        <div class="narrow"><McpImport cid={pane.ctx.cid} projectPath={pane.ctx.project} connected onclose={() => (pane = null)} /></div>
-      {:else if selected?.kind === "mcp"}
-        {#key selected.key}
+      {:else if vp?.mode === "import"}
+        <div class="narrow"><McpImport cid={vp.ctx.cid} projectPath={vp.ctx.project} connected onclose={() => (pane = null)} /></div>
+      {:else if vs?.kind === "mcp"}
+        {#key vs.key}
           <McpDetail
-            cid={selected.ctx.cid}
-            projectPath={selected.ctx.project}
-            s={selected.s}
-            connected={selected.ctx.srv.connectionStatus === "connected"}
-            onedit={() => (pane = { mode: "edit", ctx: selected!.ctx, name: selected!.s.name })}
+            cid={vs.ctx.cid}
+            projectPath={vs.ctx.project}
+            s={vs.s}
+            connected={vs.ctx.srv.connectionStatus === "connected"}
+            onedit={() => (pane = { mode: "edit", ctx: vs!.ctx, name: vs!.s.name })}
             onremoved={() => (selKey = null)}
           />
         {/key}
-      {:else if selected?.kind === "skill"}
-        {#key selected.key}
-          <SkillDetail cid={selected.ctx.cid} projectPath={selected.ctx.project} s={selected.s} connected={selected.ctx.srv.connectionStatus === "connected"} />
+      {:else if vs?.kind === "skill"}
+        {#key vs.key}
+          <SkillDetail cid={vs.ctx.cid} projectPath={vs.ctx.project} s={vs.s} connected={vs.ctx.srv.connectionStatus === "connected"} />
         {/key}
       {:else}
         <div class="blank">
@@ -594,13 +601,42 @@
       width: 100%;
       border-right: 0;
     }
-    .panel.detail .list,
-    .panel:not(.detail) .pane {
-      display: none;
+    /* Two screens in one place: the picked item slides in over the list (which shifts and dims), like a settings page. */
+    .body {
+      position: relative;
+      overflow: hidden;
+    }
+    .list,
+    .pane {
+      position: absolute;
+      inset: 0;
+      transition:
+        transform calc(0.34s * var(--anim-speed, 1)) cubic-bezier(0.32, 0.72, 0, 1),
+        filter calc(0.34s * var(--anim-speed, 1)) cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .panel.detail .list {
+      transform: translateX(-24%);
+      filter: brightness(0.6);
     }
     .pane {
       padding: 0 1rem;
       touch-action: pan-y;
+      background: var(--panel-bg);
+      box-shadow: -12px 0 28px -16px rgb(0 0 0 / 0.5);
+      transform: translateX(100%);
+    }
+    .panel.detail .pane {
+      transform: none;
+    }
+    .panel:not(.detail) .pane {
+      visibility: hidden;
+      transition-property: transform, filter, visibility;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .list,
+      .pane {
+        transition: none;
+      }
     }
     .narrow {
       padding: 0.8rem 0 calc(var(--safe-bottom) + 2rem);

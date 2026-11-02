@@ -5,7 +5,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as backend from "./backend.js";
-import { copyState } from "./stableCopy.js";
 import { createOsAlerts } from "./osAlerts.js";
 import { lanHosts } from "./lanHosts.js";
 import { createGuards } from "./agentGuard.js";
@@ -30,27 +29,6 @@ if (app.getName() === "Yoakeland" && !existsSync(userData) && existsSync(legacyD
 app.setPath("userData", userData);
 const isEarly = app.getName() === "Yoakeland Early";
 backend.setEarly(isEarly);
-
-// First run of Early: it has its own server state, so offer to start from a copy of stable's.
-// Declining still creates the folder, so it is asked once.
-async function offerStableCopy() {
-  const from = backend.stableStateDir(), to = backend.earlyStateDir();
-  if (existsSync(to) || !existsSync(from)) return;
-  const { response } = await dialog.showMessageBox({
-    type: "question",
-    buttons: ["Copy my Yoakeland data", "Start fresh"],
-    defaultId: 0,
-    cancelId: 1,
-    message: "Copy your Yoakeland data into Yoakeland Early?",
-    detail: "Early keeps its own data, apart from Yoakeland. This copies your projects, chats and settings now; the two don't stay in sync, and Early may upgrade its copy so it can't be copied back.",
-  });
-  try {
-    if (response === 0) copyState(from, to);
-    else mkdirSync(to, { recursive: true });
-  } catch (e) {
-    dialog.showErrorBox("Couldn't copy", String(e.message ?? e));
-  }
-}
 
 // At 1x scale Chromium won't give a scroller with a transparent background its own layer (it
 // would lose LCD subpixel text), so scrolling the chat, a diff or the editor repainted and
@@ -351,7 +329,6 @@ function lockDownWebviews() {
 }
 
 app.whenReady().then(async () => {
-  if (isEarly) await offerStableCopy();
   lockDownWebviews();
   // Not file://: adapter-static emits absolute asset paths.
   protocol.handle("app", async (req) => {

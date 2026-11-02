@@ -3050,6 +3050,9 @@ class AppState {
     return this.activeConnectionId ? (this.servers[this.activeConnectionId] ?? null) : null;
   }
 
+  /** Early's first run: stable's data can be copied in, which has to happen before this channel's server first runs (Onboarding's copy step). */
+  stableCopyPending = $state(false);
+
   // Tracks a connect attempt before any ServerState exists (no ConnectionId until
   // connect_tcp/connect_unix succeeds). Reset to "disconnected" once a real ServerState exists.
   private pendingConnectStatus = $state<ConnectionStatus>("disconnected");

@@ -45,9 +45,33 @@
   import { extractAccentFromImage, hexToHue, hslToHex, tokensFor, TERMINAL_THEME_PRESETS } from "../theme";
   import { APP_THEME_PRESETS } from "../themePresets";
   import { encodePairingCode } from "../pairing";
+  import { settingsFromFile, settingsToFile } from "../settingsFile";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
   import type { CliKind, LimitAction, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
+  let settingsFileMsg = $state("");
+  let settingsFileInput = $state<HTMLInputElement | null>(null);
+  function exportSettings() {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([settingsToFile(app.settings)], { type: "application/json" }));
+    a.download = "yoakeland-settings.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  async function importSettings(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    try {
+      const found = settingsFromFile(await file.text(), app.settings);
+      Object.assign(app.settings, found);
+      apply();
+      settingsFileMsg = `Imported ${Object.keys(found).length} settings.`;
+    } catch (err) {
+      settingsFileMsg = err instanceof Error ? err.message : String(err);
+    }
+  }
   let webAlerts = $state<string>(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
   /** Each tab's page title, and whether it applies to one server (shown as [server] / page). */
   const HEADS: Record<string, { title: string; scoped: boolean }> = {
@@ -689,11 +713,11 @@
   $effect(() => {
     if (app.showSettings) untrack(() => nav.reset(app.settingsTab !== "appearance" ? ["tab"] : []));
   });
-  // The outer shell's back button pops one settings level first.
+  // The outer shell's back button (and the browser's) pops one settings level first, then closes settings.
   $effect(() => {
-    if (!app.showSettings || !viewport.narrow || !nav.depth) return;
+    if (!app.showSettings || !viewport.narrow) return;
     const prev = untrack(() => viewport.back);
-    viewport.back = () => void nav.pop();
+    viewport.back = () => (nav.depth ? void nav.pop() : (app.showSettings = false));
     return () => (viewport.back = prev);
   });
   let settingsSearch = $state("");
@@ -1344,6 +1368,12 @@
             {/if}
             <section class="settings-section">
               <div class="card">
+              <div class="setting-row">
+                {@render rowText("Settings file", "Move your settings to another install, or back them up.", settingsFileMsg || "Server pairings and sign-ins stay where they are.")}
+                <Button type="button" onclick={exportSettings}>Export</Button>
+                <Button type="button" onclick={() => settingsFileInput?.click()}>Import…</Button>
+                <input bind:this={settingsFileInput} type="file" accept="application/json,.json" hidden onchange={importSettings} />
+              </div>
               <div class="setting-row">
                 {@render rowText("Setup", "Walk through connecting a server, a provider and a project again.")}
                 <Button type="button" onclick={() => ((app.settings.onboarded = false), apply(), (app.showSettings = false))}>Run setup again</Button>
@@ -3787,6 +3817,10 @@
       position: relative;
       touch-action: pan-y;
     }
+    /* A nested scroller stops inheriting the page's touch-action; without this the browser claims a sideways drag (and cancels the swipe back). */
+    :global(:where(.settings-tabs *)) {
+      touch-action: pan-y;
+    }
     /* A real header: a round back button and the page's name, tall enough for a thumb. */
     .settings-bar {
       display: flex;
@@ -4109,18 +4143,17 @@
     :global(.settings-tabs .settings-tab-trigger:active) {
       background: var(--wash-3);
     }
-    /* The icon becomes a 30px tile; the hairline starts after it. */
+    /* A small, light icon; the hairline starts after it. */
     :global(.settings-tabs .settings-tab-trigger .icon) {
-      width: 30px !important;
-      height: 30px !important;
-      border-radius: 8px;
-      background: var(--wash-3);
-      color: var(--text);
+      width: 22px !important;
+      height: 22px !important;
+      color: var(--text-dim);
       opacity: 1;
     }
     :global(.settings-tabs .settings-tab-trigger .icon svg) {
-      width: 18px;
-      height: 18px;
+      width: 17px;
+      height: 17px;
+      stroke-width: 1.5;
     }
     :global(.settings-tabs .settings-tab-trigger + .settings-tab-trigger::before) {
       content: "";
@@ -4128,7 +4161,7 @@
       position: absolute;
       top: 0;
       bottom: auto;
-      left: 60px;
+      left: 52px;
       right: 0;
       width: auto;
       height: 1px;

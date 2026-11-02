@@ -382,6 +382,9 @@ function startUpdateChecks() {
 }
 
 /** Downloads the newest server. A running daemon keeps its old binary until it is restarted. */
+/** Early channel, first run: copies stable's data (or just starts empty), after which the local server can start. */
+export const copyStableData = (copy: boolean) => invoke("stable_copy_run", { copy });
+
 export async function installServer(): Promise<string> {
   const r = await invoke<{ version: string }>("server_install");
   app.latestServerVersion = r.version;
@@ -622,15 +625,19 @@ async function connectFromUrl(): Promise<ConnectionId | null> {
  * connected by hand; if nothing connects, FirstServerPanel takes over. */
 export async function autoConnect() {
   const socketPath = isDesktop ? await getDefaultSocketPath() : "";
+  const channelSockets = isDesktop ? await invoke<string[]>("channel_socket_paths").catch(() => []) : [];
   startUpdateChecks();
-  if (isDesktop) await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
+  // A first run on the early channel starts its server only after Onboarding's copy step, as a running server holds its state in memory.
+  if (isDesktop && !app.settings.onboarded) app.stableCopyPending = await invoke<boolean>("stable_copy_pending").catch(() => false);
+  if (isDesktop && !app.stableCopyPending) await connectLocalUnix({ binPath: "yoakeland", socketPath }).catch(() => {});
   const pairedId = await connectFromUrl();
   const pairedServerId = pairedId ? app.servers[pairedId]?.serverId : undefined;
   await Promise.allSettled(
     loadKnownServers().map(async (k) => {
       if (k.serverId === pairedServerId) return;
       if (k.mode === "local") {
-        if (isDesktop && k.socketPath && k.socketPath !== socketPath) {
+        // The other release channel's own server isn't this app's to dial; only a custom socket is.
+        if (isDesktop && k.socketPath && k.socketPath !== socketPath && !channelSockets.includes(k.socketPath)) {
           await connectLocalUnix({ binPath: "yoakeland", socketPath: k.socketPath });
         }
         return;

@@ -3,12 +3,13 @@
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { pairWithPin } from "./pair.js";
+import { copyPending, copyState } from "./stableCopy.js";
 import { ensureBundledServer, installedServer, installServer, latestRelease, managedBinPath } from "./serverInstall.js";
 
 const MAX_FRAME_BYTES = 10 * 1024 * 1024;
@@ -101,18 +102,18 @@ const identity = ({ name, deviceType, avatar, deviceId }) =>
 // touches stable's data. Set once at startup (main.js).
 let early = false;
 export const setEarly = (v) => (early = v);
-const sfx = () => (early ? "-early" : "");
 export const stableStateDir = () => expandTilde("~/.yoake");
 export const earlyStateDir = () => expandTilde("~/.yoake-early");
 
 // Must match the server's default (yoakeland's internal/sockpath), apart from the early suffix.
-export function defaultSocketPath() {
-  if (isWindows) return `\\\\.\\pipe\\yoakeland${sfx()}-${process.env.USERNAME ?? ""}`;
+export function defaultSocketPath(isEarly = early) {
+  const sfx = isEarly ? "-early" : "";
+  if (isWindows) return `\\\\.\\pipe\\yoakeland${sfx}-${process.env.USERNAME ?? ""}`;
   const xdg = process.env.XDG_RUNTIME_DIR;
-  if (xdg) return `${xdg.replace(/\/+$/, "")}/yoake${sfx()}/yoakeland.sock`;
+  if (xdg) return `${xdg.replace(/\/+$/, "")}/yoake${sfx}/yoakeland.sock`;
   const tmp = process.env.TMPDIR;
-  if (process.platform === "darwin" && tmp) return `${tmp.replace(/\/+$/, "")}/yoake${sfx()}/yoakeland.sock`;
-  return expandTilde(`~/.yoake${sfx()}/yoakeland.sock`);
+  if (process.platform === "darwin" && tmp) return `${tmp.replace(/\/+$/, "")}/yoake${sfx}/yoakeland.sock`;
+  return expandTilde(`~/.yoake${sfx}/yoakeland.sock`);
 }
 
 // Logs go to a file, not a pipe: after the app exits, a write to a pipe would raise SIGPIPE and kill the server.
@@ -160,10 +161,23 @@ async function readGranted(p, encoding) {
 }
 
 export function commands(emit, dataDir) {
+  // Early's first run (Onboarding's copy step): only before its server has run, since a live server holds its state in memory.
+  const copyOffered = async () => early && copyPending(stableStateDir(), earlyStateDir()) && !(await probe(net.connect(defaultSocketPath())));
   return {
+    stable_copy_pending: copyOffered,
+    // Either way the state dir exists afterwards, so this is asked once. Themes are plain files; the rest of the client's settings live in the page's storage, out of reach here.
+    stable_copy_run: async ({ copy }) => {
+      if (!(await copyOffered())) throw new Error("there is nothing to copy, or the server is already running");
+      if (copy) {
+        await copyState(stableStateDir(), earlyStateDir(), (p) => emit("yoake-copy-progress", p));
+        await cp(path.join(path.dirname(dataDir), "Yoakeland", "themes"), path.join(dataDir, "themes"), { recursive: true, force: false }).catch(() => {});
+      } else await mkdir(earlyStateDir(), { recursive: true });
+    },
     probe_tcp: ({ host, port }) => probe(net.connect({ host, port })),
     probe_unix: ({ path: p }) => probe(net.connect(expandTilde(p))),
     default_socket_path: () => defaultSocketPath(),
+    // Both channels' sockets: a client only dials its own (ipc.ts autoConnect).
+    channel_socket_paths: () => [defaultSocketPath(false), defaultSocketPath(true)],
     // A bare daemon: it is configured at runtime over its socket (set_remote_access,
     // set_runtime_settings, ...), never by launch flags. Only a non-default socket
     // location is still a launch argument, because nothing can be told before it exists.

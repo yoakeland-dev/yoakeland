@@ -5,9 +5,10 @@
   import { tick } from "svelte";
   import { fade } from "svelte/transition";
   import { app, CHAT_PROJECT, type ConnectionId } from "../state.svelte";
-  import { isDesktop, pickFiles } from "../platform";
+  import { isDesktop, listen, pickFiles } from "../platform";
   import {
     cancelOpenRouterSignIn,
+    copyStableData,
     connectLocalUnix,
     detectCli,
     installServer,
@@ -36,8 +37,14 @@
   import Spinner from "./ui/Spinner.svelte";
   import TextField from "./ui/TextField.svelte";
 
-  const STEPS = ["welcome", "server", "provider", "project", "remotes", "done"] as const;
-  type Step = (typeof STEPS)[number];
+  const ALL = ["welcome", "copy", "server", "provider", "project", "remotes", "done"] as const;
+  type Step = (typeof ALL)[number];
+  // The copy step exists only on the early channel's first run (app.stableCopyPending, known a moment after launch).
+  let copyStep = $state(false);
+  $effect(() => {
+    if (app.stableCopyPending) copyStep = true;
+  });
+  const STEPS = $derived(ALL.filter((s) => s !== "copy" || copyStep));
   const AVATARS = ["🐣", "🦊", "🐙", "🐢", "🐝", "🐺"];
 
   let step = $state<Step>("welcome");
@@ -60,7 +67,8 @@
     (to === "welcome" ? nameEl : headingEl)?.focus();
   }
 
-  function finish() {
+  async function finish() {
+    if (app.stableCopyPending) await settleCopy(false);
     if (cid && server && !server.currentProjectPath && server.recentProjects[0]) selectProject(cid, server.recentProjects[0]);
     // The composer only adopts a provider once one has been confirmed, so a first chat would
     // open on an empty picker.
@@ -108,6 +116,36 @@
     } catch {
       photoError = "Couldn't read that image.";
     }
+  }
+
+  // ---- Copy ----
+  let copying = $state(false);
+  let copyError = $state("");
+  let copyProgress = $state(0);
+  $effect(() => {
+    if (!copying) return;
+    copyProgress = 0;
+    const off = listen<{ done: number; total: number }>("yoake-copy-progress", (p) => (copyProgress = p.done / p.total));
+    return () => void off.then((f) => f());
+  });
+  // Whatever is chosen, the early server's state exists afterwards and the local server can start.
+  async function settleCopy(copy: boolean) {
+    copying = true;
+    copyError = "";
+    try {
+      await copyStableData(copy);
+    } catch (e) {
+      copyError = e instanceof Error ? e.message : String(e);
+      copying = false;
+      return;
+    }
+    app.stableCopyPending = false;
+    copying = false;
+    if (step === "copy") {
+      await go("server");
+      copyStep = false;
+    }
+    await tryLocal();
   }
 
   // ---- Server ----
@@ -281,6 +319,7 @@
 
   const TEXT: Record<Step, { title: string; sub: string }> = {
     welcome: { title: "Welcome to yoakeland", sub: "Chat with coding agents that work inside your projects. About a minute of setup." },
+    copy: { title: "Bring your data over?", sub: "Yoakeland Early keeps its own data, apart from Yoakeland. Copy your projects, chats and server settings now, or start empty." },
     server: {
       title: "Connect a server",
       sub: isDesktop ? "Yoakeland runs as its own process. It looks for one on this computer." : "Connect to the yoakeland server this page belongs to.",
@@ -329,7 +368,7 @@
         <p class="sub">{TEXT[step].sub}</p>
 
         {#if step === "welcome"}
-          <form class="body" onsubmit={(e) => (e.preventDefault(), saveProfile(), go("server"))}>
+          <form class="body" onsubmit={(e) => (e.preventDefault(), saveProfile(), go(STEPS[1]))}>
             <label>
               What should we call you?
               <TextField bind:el={nameEl} bind:value={name} placeholder="Your name" maxlength={40} autocomplete="off" />
@@ -367,6 +406,23 @@
               <p class="hint">{photoError || "Other people on your servers see this."}</p>
             </div>
           </form>
+        {:else if step === "copy"}
+          <div class="body">
+            {#if copying}
+              <div class="row">
+                {@render row("copy", null, "Copying your data…", "Larger histories take a minute. Keep the app open.")}
+                <span class="state"><Spinner /></span>
+              </div>
+              <progress value={copyProgress} aria-label="Copy progress"></progress>
+            {:else}
+              <div class="actions">
+                <Button variant="primary" onclick={() => settleCopy(true)}><Icon name="copy" size={14} /> Copy my data</Button>
+                <Button onclick={() => settleCopy(false)}>Start fresh</Button>
+              </div>
+              <p class="hint">The two don't stay in sync, and Early may upgrade its copy so it can't be copied back. Custom themes come along. Move your other settings with Export and Import in Settings > General.</p>
+            {/if}
+            {#if copyError}<p class="error"><Icon name="alert-circle" size={14} /> {copyError}</p>{/if}
+          </div>
         {:else if step === "server"}
           <div class="body">
             {#if connected && server}
@@ -532,16 +588,18 @@
 
     <footer>
       {#if step !== "welcome"}
-        <Button variant="ghost" icon aria-label="Back" onclick={() => go(STEPS[at - 1])}><Icon name="chevron-left" size={15} /></Button>
+        <Button variant="ghost" icon aria-label="Back" disabled={copying} onclick={() => go(STEPS[at - 1])}><Icon name="chevron-left" size={15} /></Button>
       {/if}
       <span class="spacer"></span>
       {#if step !== "done"}
-        <Button variant="ghost" onclick={finish}>Skip setup</Button>
+        <Button variant="ghost" disabled={copying} onclick={finish}>Skip setup</Button>
       {/if}
       {#if step === "welcome"}
-        <Button variant="primary" onclick={() => (saveProfile(), go("server"))}>Get started <Icon name="chevron-right" size={14} /></Button>
+        <Button variant="primary" onclick={() => (saveProfile(), go(STEPS[1]))}>Get started <Icon name="chevron-right" size={14} /></Button>
       {:else if step === "done"}
         <Button variant="primary" onclick={finish}>Start coding</Button>
+      {:else if step === "copy"}
+        <!-- the two choices in the body are the way forward -->
       {:else if step === "server"}
         <Button variant="primary" disabled={!connected} onclick={() => go(next)}>Continue <Icon name="chevron-right" size={14} /></Button>
       {:else}
@@ -820,6 +878,11 @@
     justify-content: center;
     gap: var(--space-1);
     margin-top: var(--space-half);
+  }
+  progress {
+    width: 100%;
+    height: 3px;
+    accent-color: var(--accent);
   }
   .hint {
     display: flex;

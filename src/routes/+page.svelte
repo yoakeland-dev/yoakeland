@@ -185,6 +185,29 @@
     app.showUsage = app.showExtensions = app.showDiagnostics = false;
     showHome();
   }
+  // Phone: the browser's own back (button, edge swipe) steps out of the open screen instead of leaving the
+  // app. One history entry is held while anything is open; popping it runs back() and re-arms if still open.
+  const open = $derived(viewport.narrow && (deep || app.showSettings));
+  let armed = false;
+  let skip = false;
+  $effect(() => {
+    if (open === armed) return;
+    armed = open;
+    if (open) history.pushState({ yoakeBack: 1 }, "");
+    else ((skip = true), history.back());
+  });
+  onMount(() => {
+    const onPop = () => {
+      if (skip) return void (skip = false);
+      if (!armed) return;
+      armed = false;
+      if (app.showSettings && viewport.back) viewport.back();
+      else back();
+      if (open) ((armed = true), history.pushState({ yoakeBack: 1 }, ""));
+    };
+    addEventListener("popstate", onPop);
+    return () => removeEventListener("popstate", onPop);
+  });
   // Motion: one 0..1 progress (0 = top screen off to the right, 1 = fully in) drives the top screen, the
   // parallax of Home beneath it (-24%) and its dim veil. Pushes, backs, programmatic changes and swipes all
   // settle through settleTo(), so any of them can interrupt any other from where it currently is.
