@@ -97,14 +97,22 @@ const send = (sock, obj) => sock.write(JSON.stringify(obj) + "\n");
 const identity = ({ name, deviceType, avatar, deviceId }) =>
   Object.fromEntries(Object.entries({ name, deviceType, avatar, deviceId }).filter(([, v]) => v != null));
 
-// Must match the server's default (yoakeland's internal/sockpath).
+// The early channel runs its own server beside stable's: own state dir and own socket, so it never
+// touches stable's data. Set once at startup (main.js).
+let early = false;
+export const setEarly = (v) => (early = v);
+const sfx = () => (early ? "-early" : "");
+export const stableStateDir = () => expandTilde("~/.yoake");
+export const earlyStateDir = () => expandTilde("~/.yoake-early");
+
+// Must match the server's default (yoakeland's internal/sockpath), apart from the early suffix.
 export function defaultSocketPath() {
-  if (isWindows) return `\\\\.\\pipe\\yoakeland-${process.env.USERNAME ?? ""}`;
+  if (isWindows) return `\\\\.\\pipe\\yoakeland${sfx()}-${process.env.USERNAME ?? ""}`;
   const xdg = process.env.XDG_RUNTIME_DIR;
-  if (xdg) return `${xdg.replace(/\/+$/, "")}/yoake/yoakeland.sock`;
+  if (xdg) return `${xdg.replace(/\/+$/, "")}/yoake${sfx()}/yoakeland.sock`;
   const tmp = process.env.TMPDIR;
-  if (process.platform === "darwin" && tmp) return `${tmp.replace(/\/+$/, "")}/yoake/yoakeland.sock`;
-  return expandTilde("~/.yoake/yoakeland.sock");
+  if (process.platform === "darwin" && tmp) return `${tmp.replace(/\/+$/, "")}/yoake${sfx()}/yoakeland.sock`;
+  return expandTilde(`~/.yoake${sfx()}/yoakeland.sock`);
 }
 
 // Logs go to a file, not a pipe: after the app exits, a write to a pipe would raise SIGPIPE and kill the server.
@@ -165,7 +173,10 @@ export function commands(emit, dataDir) {
       if (binPath === "yoakeland" && (await ensureBundledServer(dataDir).catch(() => installedServer(dataDir)))) binPath = managedBinPath(dataDir);
       // Otherwise only a binary the user picked (ConnectForm, Onboarding); the page can't name another.
       else if (binPath !== "yoakeland" && !isGranted(binPath)) throw new Error(`not a server binary you picked: ${binPath}`);
-      return spawnDetached(dataDir, binPath, wanted === defaultSocketPath() ? [] : ["-listen", `unix:${wanted}`]);
+      return spawnDetached(dataDir, binPath, [
+        ...(early ? ["-state-dir", earlyStateDir()] : []),
+        ...(early || wanted !== defaultSocketPath() ? ["-listen", `unix:${wanted}`] : []),
+      ]);
     },
 
     // The server inside this app counts as installed: it is put in place here, so no download is offered.
