@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, Notification, protocol, safeStorage, session, shell } from "electron";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, watch, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from "node:fs";
 import os from "node:os";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -29,26 +29,6 @@ if (app.getName() === "Yoakeland" && !existsSync(userData) && existsSync(legacyD
 app.setPath("userData", userData);
 const isEarly = app.getName() === "Yoakeland Early";
 backend.setEarly(isEarly);
-
-// One client at a time across both channels (they work on the same project folders): a lock file
-// in the shared appData holding our pid. A leftover from a crash is taken over once its pid is gone.
-// ponytail: a reused pid reads as "still running"; delete the file by hand if that ever happens.
-const lockFile = path.join(app.getPath("appData"), "yoakeland-app.lock");
-function takeLock() {
-  for (let i = 0; i < 2; i++) {
-    try {
-      writeFileSync(lockFile, `${process.pid} ${app.getName()}`, { flag: "wx" });
-      app.on("quit", () => { try { unlinkSync(lockFile); } catch { /* already gone */ } });
-      return null;
-    } catch (e) {
-      if (e.code !== "EEXIST") return null; // can't lock (read-only home?): don't block starting
-      const [pid, ...name] = readFileSync(lockFile, "utf8").split(" ");
-      try { process.kill(Number(pid), 0); return name.join(" ") || "Yoakeland"; } catch (k) { if (k.code === "EPERM") return name.join(" "); }
-      try { unlinkSync(lockFile); } catch { /* raced with another start */ }
-    }
-  }
-  return null;
-}
 
 // First run of Early: it has its own server state, so offer to start from a copy of stable's.
 // Declining still creates the folder, so it is asked once.
@@ -370,11 +350,6 @@ function lockDownWebviews() {
 }
 
 app.whenReady().then(async () => {
-  const other = takeLock();
-  if (other) {
-    dialog.showErrorBox(`${other} is already running`, `Close ${other} before opening ${app.getName()}: they work on the same projects, so only one can run at a time.`);
-    return app.quit();
-  }
   if (isEarly) await offerStableCopy();
   lockDownWebviews();
   // Not file://: adapter-static emits absolute asset paths.
