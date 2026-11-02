@@ -2719,7 +2719,7 @@ export class ServerState {
         this.version = data.version ?? null;
         if (!this.aheadToasted && serverAhead(this.version, __APP_VERSION__)) {
           this.aheadToasted = true;
-          this.app.toastAction(this.connectionId, `This server (${fmtVersion(this.version!)}) is newer than the app. Some things may not work.`);
+          this.app.toastAction(this.connectionId, "Server is newer than this app");
         }
         if (data.serverId && this.serverId !== data.serverId) {
           this.serverId = data.serverId;
