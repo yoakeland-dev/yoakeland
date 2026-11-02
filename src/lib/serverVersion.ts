@@ -15,3 +15,10 @@ export function isOlder(have: string | null | undefined, latest: string): boolea
 
 /** "0.1.6" -> "v0.1.6"; a dev build's "dev" stays as is. */
 export const fmtVersion = (v: string) => (/^\d/.test(v) ? `v${v}` : v);
+
+/** True when `server` is ahead of this `client`: a nightly of a stable client, or a newer release.
+ * An early client never warns (it is the newest build there is), nor does a server that predates version reporting. */
+export function serverAhead(server: string | null | undefined, client: string): boolean {
+  if (!server || client.includes("-early")) return false;
+  return server.includes("-early") || isOlder(client, server);
+}

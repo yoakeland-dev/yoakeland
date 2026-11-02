@@ -1,5 +1,5 @@
 import { applyQuietTokens } from "./quietRoom";
-import { fmtVersion, isOlder } from "./serverVersion";
+import { fmtVersion, isOlder, serverAhead } from "./serverVersion";
 import type {
   AskUserQuestionData,
   ChatMessage,
@@ -584,6 +584,7 @@ export class ServerState {
   version = $state<string | null>(null);
   /** The latest version this connection already toasted about, so a newer release toasts again. */
   private outdatedToastedFor: string | null = null;
+  private aheadToasted = false;
   get outdated() {
     return this.serverId != null && !!this.app.latestServerVersion && isOlder(this.version, this.app.latestServerVersion);
   }
@@ -2716,6 +2717,10 @@ export class ServerState {
         this.tierRestricted = !!data.restricted;
         this.awaitingApproval = false;
         this.version = data.version ?? null;
+        if (!this.aheadToasted && serverAhead(this.version, __APP_VERSION__)) {
+          this.aheadToasted = true;
+          this.app.toastAction(this.connectionId, `This server (${fmtVersion(this.version!)}) is newer than the app. Some things may not work.`);
+        }
         if (data.serverId && this.serverId !== data.serverId) {
           this.serverId = data.serverId;
           this.hydrateFromServerId(data.serverId);
