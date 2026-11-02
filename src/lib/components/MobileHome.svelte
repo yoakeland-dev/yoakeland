@@ -195,7 +195,7 @@
             <Icon name="plug-connected" size={18} /><span>MCP servers and skills</span>
             {#if extWaiting}<span class="count">{extWaiting}</span>{/if}
           </DropdownMenu.Item>
-          <DropdownMenu.Item class="context-menu-item" disabled={!pairCid} onSelect={() => (showPair = true)}><Icon name="qrcode" size={18} /><span>Pair a phone</span></DropdownMenu.Item>
+          <DropdownMenu.Item class="context-menu-item" disabled={!pairCid} onSelect={() => (showPair = true)}><Icon name="qrcode" size={18} /><span>Pair a device</span></DropdownMenu.Item>
           <DropdownMenu.Item class="context-menu-item" onSelect={() => (showAbout = true)}><Icon name="info-circle" size={18} /><span>About</span></DropdownMenu.Item>
           <DropdownMenu.Separator class="menu-sep" />
           <DropdownMenu.Item class="context-menu-item danger" disabled={!connected.length} onSelect={logOut}><Icon name="logout" size={18} /><span>Log out</span></DropdownMenu.Item>

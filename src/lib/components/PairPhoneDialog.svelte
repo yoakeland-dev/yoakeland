@@ -34,11 +34,12 @@
   $effect(() => {
     if (!open) return;
     phase = "form";
+    copied = false;
     token = "";
     error = "";
     blocked = false;
     const mine = app.settings.profileName;
-    name = mine ? `${mine}'s phone` : "Phone";
+    name = mine ? `${mine}'s device` : "Device";
     // In a browser the server names its own addresses (the address this page connected to first); it
     // is already reachable, and only the desktop may change remote access.
     const seen = connectedHost(cid);
@@ -50,7 +51,7 @@
         hosts = info.hosts;
         host = info.hosts[0] ?? "";
         blocked = !info.hosts.length;
-        if (!info.hosts.length) error = "No network address found. Put the server on the same network as the phone.";
+        if (!info.hosts.length) error = "No network address found. Put the server on the same network as the device.";
         // Points the server's own page at the built client (the fallback for a server with no
         // fingerprint); the listener keeps running.
         else if (!isDesktop) return;
@@ -81,6 +82,8 @@
   // The phone connects under the token just made, so match on that: its own name and picture then
   // confirm the right device paired and kept its identity.
   const request = $derived(phase === "scan" ? server?.pairingRequests.find((r) => r.credential === name) : undefined);
+  const link = $derived(pairingUrl([host, ...hosts.filter((h) => h !== host)], port, token, rtcFp || undefined));
+  let copied = $state(false);
   const joined = $derived(phase === "scan" ? server?.peers.find((p) => p.credential === name) : undefined);
 
   function create(e: Event) {
@@ -104,15 +107,15 @@
     <Dialog.Overlay class="dialog-overlay" />
     <SheetDialog class="dialog-content pair">
       <Dialog.Close class="dialog-close pair-close"><Icon name="xmark" size={14} /></Dialog.Close>
-      <Dialog.Title class="pair-title"><span class="pair-badge"><Icon name="qrcode" size={16} /></span> Pair a phone</Dialog.Title>
+      <Dialog.Title class="pair-title"><span class="pair-badge"><Icon name="qrcode" size={16} /></span> Pair a device</Dialog.Title>
 
       {#if phase === "form" || phase === "waiting"}
         <Dialog.Description class="pair-hint">
-          The phone opens yoakeland in its browser and connects to this server directly. It gets its own token, named below. Revoke it under People if the phone is lost.
+          A phone or another computer opens yoakeland in its browser and connects to this server directly. It gets its own token, named below. Revoke it under People if the device is lost.
         </Dialog.Description>
         {#if error}<p class="pair-error">{error}</p>{/if}
         <form class="pair-form" onsubmit={create}>
-          <label>Name <TextField bind:value={name} placeholder="Phone" /></label>
+          <label>Name <TextField bind:value={name} placeholder="Device" /></label>
           {#if hosts.length > 1}
             <label>
               Address
@@ -127,16 +130,19 @@
         </form>
       {:else if phase === "old"}
         <Dialog.Description class="pair-hint">
-          This server is too old to pair a phone. It doesn't report the fingerprint a phone needs to connect safely. Update it in Settings → General, then try again.
+          This server is too old to pair a device. It doesn't report the fingerprint a device needs to connect safely. Update it in Settings → General, then try again.
         </Dialog.Description>
         <div class="pair-actions">
           <Button type="button" variant="primary" onclick={() => (open = false)}>Close</Button>
         </div>
       {:else}
         <Dialog.Description class="pair-hint">
-          Scan with the phone's camera. It opens yoakeland and connects as <strong>{name}</strong>. Only the first phone to scan it can use it, and it expires in 10 minutes. You'll be asked to allow it here.
+          Scan with a phone's camera, or copy the link and open it in a desktop browser. It connects as <strong>{name}</strong>. Only the first device to open it can use it, and it expires in 10 minutes. You'll be asked to allow it here.
         </Dialog.Description>
-        <div class="qr"><QrCode text={pairingUrl([host, ...hosts.filter((h) => h !== host)], port, token, rtcFp || undefined)} label="Pairing code" /></div>
+        <div class="qr"><QrCode text={link} label="Pairing code" /></div>
+        <Button type="button" variant="ghost" onclick={() => { void navigator.clipboard?.writeText(link); copied = true; }}>
+          <Icon name={copied ? "check" : "copy"} size={13} /> {copied ? "Copied" : "Copy link"}
+        </Button>
         {#if request}
           <div class="pair-request">
             <p><strong>{request.name || "A device"}</strong> scanned this{request.ip ? ` from ${request.ip}` : ""}. Let it in?</p>

@@ -64,7 +64,7 @@
     step = "address";
     void tick().then(() => hostInputEl?.focus());
   }
-  // The desktop shows the QR code (Pair a phone); scanning one is for the phone's browser.
+  // The desktop shows the QR code (Pair a device); scanning one is for the phone's browser.
   const canScan = !isDesktop && !!navigator.mediaDevices?.getUserMedia;
   // The hosted app can only reach a server by its WebRTC fingerprint, so a code without one is an old server.
   const TOO_OLD = "Server too old for a phone: it sends no WebRTC fingerprint. Update the server and pair again.";
@@ -254,7 +254,7 @@
 {#snippet remoteFormBody()}
   <form class="steps" onsubmit={submitRemote}>
     {#if step === "scan"}
-      <p class="hint">Point the camera at the QR code from Pair a phone on your computer, or the one the server prints at startup.</p>
+      <p class="hint">Point the camera at the QR code from Pair a device on your computer, or the one the server prints at startup.</p>
       <QrScanner onscan={onScan} onerror={fail} />
       <Button type="button" variant="ghost" onclick={() => (step = host.trim() ? "code" : "address")}>Cancel</Button>
     {:else if step === "address"}

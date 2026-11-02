@@ -972,7 +972,7 @@
               </DropdownMenu.Portal>
             </DropdownMenu.Sub>
             <DropdownMenu.Item class="context-menu-item" disabled={!pairCid} onSelect={() => (showPair = true)}>
-              <Icon name="qrcode" size={13} /><span>Pair a phone</span>
+              <Icon name="qrcode" size={13} /><span>Pair a device</span>
             </DropdownMenu.Item>
             <DropdownMenu.Item class="context-menu-item" onSelect={() => (showAbout = true)}>
               <Icon name="info-circle" size={13} /><span>About</span>
