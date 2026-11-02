@@ -1,10 +1,11 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, net as enet, Notification, protocol, safeStorage, session, shell } from "electron";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from "node:fs";
 import os from "node:os";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as backend from "./backend.js";
+import { copyState } from "./stableCopy.js";
 import { createOsAlerts } from "./osAlerts.js";
 import { lanHosts } from "./lanHosts.js";
 import { createGuards } from "./agentGuard.js";
@@ -44,7 +45,7 @@ async function offerStableCopy() {
     detail: "Early keeps its own data, apart from Yoakeland. This copies your projects, chats and settings now; the two don't stay in sync, and Early may upgrade its copy so it can't be copied back.",
   });
   try {
-    if (response === 0) cpSync(from, to, { recursive: true, filter: (f) => !/\.sock$|server\.log$/.test(f) });
+    if (response === 0) copyState(from, to);
     else mkdirSync(to, { recursive: true });
   } catch (e) {
     dialog.showErrorBox("Couldn't copy", String(e.message ?? e));
