@@ -287,7 +287,7 @@
     text-align: center;
   }
   .badge.ask {
-    background: var(--warning);
+    background: var(--lamp);
   }
   :global(.notif-panel) {
     width: min(23rem, 92vw);

@@ -125,7 +125,7 @@
 {#snippet fieldEmpty(d: boolean)}<TextField value="" placeholder="Project name" disabled={d} />{/snippet}
 {#snippet fieldBad(d: boolean)}<TextField value="not a url" invalid disabled={d} />{/snippet}
 {#snippet area(d: boolean)}<TextArea value="" placeholder="A longer note" disabled={d} />{/snippet}
-{#snippet slider(d: boolean)}<Slider value={62} disabled={d} label="Volume" />{/snippet}
+{#snippet slider(d: boolean)}<div class="slide"><Slider value={62} disabled={d} label="Volume" /></div>{/snippet}
 {#snippet chip(_d: boolean)}<Chip pressed>Filter</Chip>{/snippet}
 {#snippet chipOff(_d: boolean)}<Chip pressed={false}>Filter</Chip>{/snippet}
 
@@ -344,6 +344,10 @@
   }
   .cell {
     display: block;
+  }
+  /* Room for the value bubble the focused slider raises. */
+  .slide {
+    padding-top: 1.71rem;
   }
   .flow {
     display: flex;

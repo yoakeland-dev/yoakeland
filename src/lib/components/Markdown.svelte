@@ -482,7 +482,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.14rem 0.29rem;
-    color: color-mix(in srgb, var(--code-fg) 55%, transparent);
+    color: color-mix(in srgb, var(--code-fg) 70%, transparent);
     font-size: var(--text-label-size);
     user-select: none;
   }

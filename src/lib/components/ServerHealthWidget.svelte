@@ -196,7 +196,7 @@
     font-variant-numeric: tabular-nums;
   }
   .dim {
-    opacity: 0.6;
+    opacity: 0.85;
   }
   .state {
     display: inline-flex;
