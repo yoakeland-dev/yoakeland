@@ -151,7 +151,7 @@
 {#if viewport.narrow}
   <button type="button" class="sb-trigger" aria-label="Notifications" onclick={() => (app.notificationsOpen = !app.notificationsOpen)}>
     <Icon name={items.length || asks.length ? "bell-filled" : "bell"} size={13} />
-    {#if unread || asks.length}<span class="badge" class:ask={asks.length > 0}>{asks.length || unread}</span>{/if}
+    {#if unread || asks.length}<span class="badge">{asks.length || unread}</span>{/if}
   </button>
   {#if mounted}
     <div class="page" role="dialog" aria-label="Notifications" {@attach page} {@attach swipe(() => back)}>
@@ -209,7 +209,7 @@
 <Popover.Root bind:open={app.notificationsOpen}>
   <Popover.Trigger class="sb-trigger" {@attach tip("Notifications", "notifications.open")} aria-label="Notifications">
     <Icon name={items.length || asks.length ? "bell-filled" : "bell"} size={13} />
-    {#if unread || asks.length}<span class="badge" class:ask={asks.length > 0}>{asks.length || unread}</span>{/if}
+    {#if unread || asks.length}<span class="badge">{asks.length || unread}</span>{/if}
   </Popover.Trigger>
   <Popover.Portal>
     <PopoverContent class="sb-panel notif-panel" side="top" align="end" sideOffset={8}>
@@ -277,16 +277,13 @@
     min-width: 0.93rem;
     padding: 0 0.21rem;
     border-radius: var(--radius-pill);
-    background: var(--accent);
+    background: var(--text-dim);
     color: var(--panel-bg);
     font-size: 0.71rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     line-height: 0.93rem;
     text-align: center;
-  }
-  .badge.ask {
-    background: var(--warning);
   }
   :global(.notif-panel) {
     width: min(23rem, 92vw);

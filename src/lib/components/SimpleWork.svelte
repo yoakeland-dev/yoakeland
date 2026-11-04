@@ -100,8 +100,6 @@
   const latest = $derived(calls[calls.length - 1]);
 
   const liveLabel = $derived.by(() => {
-    const waiting = calls.find((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer");
-    if (waiting) return waiting.status === "awaiting_answer" ? "Waiting for your answer" : "Waiting for your approval";
     const running = calls.findLast((c) => IN_FLIGHT.has(c.status));
     if (running) {
       const inner = running.subagent ? callActivity(running) : "";
@@ -130,7 +128,7 @@
           <span class="status-icon rest" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
         {:else if isRunning}
           {#if calls.some((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer")}
-            <span class="status-icon status-lamp" transition:fade={{ duration: 160 }}></span>
+            <span class="status-icon status-held" transition:fade={{ duration: 160 }}></span>
           {:else}
           <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
           {/if}
@@ -178,7 +176,7 @@
     color: var(--text-dim);
     padding: 0.29rem 0;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
     font-family: inherit;
     text-align: left;
   }

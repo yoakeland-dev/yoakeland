@@ -552,7 +552,7 @@
     background: var(--wash-2);
     color: var(--text);
     font-size: var(--text-label-size);
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
   }
   .btn:hover {
@@ -567,12 +567,11 @@
     color: var(--danger);
   }
   .btn.primary {
-    background: var(--accent);
+    background: color-mix(in srgb, var(--accent) 72%, var(--panel-bg));
     color: #0d1020;
   }
   .btn.primary:hover {
     background: var(--accent);
-    filter: brightness(1.08);
   }
   kbd {
     padding: 0.05rem 0.3rem;

@@ -55,7 +55,6 @@
   }
   .notice :global(svg) {
     flex-shrink: 0;
-    color: var(--warning);
   }
   /* The tooltip has the rest; a narrow composer keeps just the name of it. */
   @container (max-width: 26rem) {

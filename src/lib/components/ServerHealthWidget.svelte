@@ -202,7 +202,6 @@
     display: inline-flex;
     align-items: center;
     gap: 0.29rem;
-    color: var(--warning);
   }
   .down-label {
     display: inline-flex;

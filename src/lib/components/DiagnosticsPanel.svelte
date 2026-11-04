@@ -288,10 +288,10 @@
           </div>
           <div class="graphs">
             {@render graph("cpu", "var(--accent)", "CPU load", cpuPct != null ? `${cpuPct}%` : "–", `${st.load1?.toFixed(2) ?? "–"} load · ${st.cpus} cores`, hh?.load ?? [], 100)}
-            {@render graph("database", "var(--info)", "Memory", memUsed != null ? fileSize(memUsed) : "–", st.memTotalBytes ? `of ${fileSize(st.memTotalBytes)}` : "", hh?.mem ?? [], st.memTotalBytes ?? 1)}
-            {@render graph("gauge", "var(--success)", "yoakeland heap", fileSize(st.heapBytes), "Go runtime", hh?.heap ?? [], 64 * 1024 * 1024)}
+            {@render graph("database", "var(--accent)", "Memory", memUsed != null ? fileSize(memUsed) : "–", st.memTotalBytes ? `of ${fileSize(st.memTotalBytes)}` : "", hh?.mem ?? [], st.memTotalBytes ?? 1)}
+            {@render graph("gauge", "var(--accent)", "yoakeland heap", fileSize(st.heapBytes), "Go runtime", hh?.heap ?? [], 64 * 1024 * 1024)}
             {#if list && all.length}
-              {@render graph("activity", "var(--warning)", "Process memory", fileSize(sum.rss), `${sum.cpu.toFixed(1)}% CPU · ${all.length} ${all.length === 1 ? "process" : "processes"}`, h?.rss ?? [], 64 * 1024 * 1024)}
+              {@render graph("activity", "var(--accent)", "Process memory", fileSize(sum.rss), `${sum.cpu.toFixed(1)}% CPU · ${all.length} ${all.length === 1 ? "process" : "processes"}`, h?.rss ?? [], 64 * 1024 * 1024)}
             {/if}
           </div>
         {:else}
@@ -655,11 +655,9 @@
   }
   /* A card is one fill step above the panel, with a hairline: tonal elevation, as the rest of the app does it. */
   .card {
-    --card-bg: color-mix(in srgb, var(--text) 3%, var(--panel-bg));
+    --card-bg: var(--panel-bg);
     min-width: 0;
-    background: var(--card-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-lg);
+    background: none;
     overflow: hidden;
   }
   .sec-head {
@@ -679,9 +677,7 @@
     place-items: center;
     width: 1.7rem;
     height: 1.7rem;
-    border-radius: var(--radius-sm);
-    background: var(--accent-dim);
-    color: var(--accent);
+    color: var(--text-dim);
   }
   .count {
     padding: 0 0.45rem;

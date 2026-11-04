@@ -1478,7 +1478,6 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--sidebar-fg-dim);
-    opacity: 0.75;
   }
   .section-label .count {
     margin-left: 0.3rem;
@@ -1726,7 +1725,6 @@
   .server-state {
     font-size: 0.79rem;
     font-weight: 400;
-    color: var(--warning);
   }
   .server-state.error {
     color: var(--danger);

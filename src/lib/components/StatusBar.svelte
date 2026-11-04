@@ -75,14 +75,15 @@
 <footer class="statusbar">
   <div class="left">
     <ServerHealthWidget />
-    <PeersWidget />
     <GitWidget />
+    <span class="rest"><PeersWidget /></span>
   </div>
   <div class="right">
-    <TerminalsWidget />
+    <span class="rest"><TerminalsWidget /></span>
     {#if waiting.length}
       <button
         class="item attention"
+        class:rest={!app.sidebarCollapsed}
         {@attach tip(waitingCard)}
         onclick={() => jump(waiting)}
       >
@@ -90,17 +91,17 @@
       </button>
     {/if}
     {#if running.length}
-      <button class="item busy" {@attach tip(runningCard)} onclick={() => jump(running)}>
+      <button class="item busy" class:rest={!app.sidebarCollapsed} {@attach tip(runningCard)} onclick={() => jump(running)}>
         <span class="spin"><Icon name="loader-2" size={12} /></span> {running.length} running
       </button>
     {/if}
     {#if queued > 0}
-      <span class="item" {@attach tip("Turns waiting for their chat's current turn to finish")}>
+      <span class="item rest" {@attach tip("Turns waiting for their chat's current turn to finish")}>
         <Icon name="clock" size={12} /> {queued} queued
       </span>
     {/if}
     {#if scheduledCount > 0}
-      <span class="item" {@attach tip("Scheduled turns waiting to run")}>
+      <span class="item rest" {@attach tip("Scheduled turns waiting to run")}>
         <Icon name="clock" size={12} /> {scheduledCount} scheduled
       </span>
     {/if}
@@ -131,9 +132,20 @@
     /* Floating main area: blends into the window; flat keeps its own bar and hairline. */
     background: var(--bg);
     color: var(--statusbar-fg);
-    font-size: 0.79rem;
+    font-size: var(--text-label-size);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  /* Quiet until the bar is pointed at: still one click away, not on screen for hours. */
+  .rest {
+    display: inline-flex;
+    align-items: center;
+    opacity: 0;
+    transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .statusbar:hover .rest,
+  .statusbar:focus-within .rest {
+    opacity: 1;
   }
   :global(:root[data-main="flat"]) .statusbar {
     background: var(--statusbar-bg);

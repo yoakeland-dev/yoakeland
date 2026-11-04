@@ -6,7 +6,7 @@ colors:
   ground: "hsl(226 12% 6%)"
   panel: "hsl(226 10% 9%)"
   text: "hsl(226 10% 92%)"
-  text-dim: "hsl(226 7% 68%)"
+  text-dim: "hsl(226 7% 72%)"
   edge: "hsla(226 20% 95% / 0.08)"
   danger: "#ff6b6b"
   success: "#58d68d"
@@ -81,12 +81,12 @@ Low-saturation surfaces so the accent (often 60 to 90% saturation) is the only l
 ### Neutral
 - **Ground** (`hsl(h 12% 6%)`): the window behind panels.
 - **Panel** (`hsl(h 10% 9%)`): the chat, sidebars, drawers.
-- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 7% 68%)`, 7.8:1 on panel): body and secondary.
+- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 7% 72%)`, 8.8:1 on panel): body and secondary.
 - **Edge** (`hsla(h 20% 95% / 0.08)`): the one hairline. Same value on all four sides.
 - **Washes** (`--wash-1..4`, 4/6/9/14% of text): rest, hover, active, strong edge. Always these four, never white or black literals.
 
 ### Semantic
-Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure and for destructive intent (hover); a warning that's standing state stays quiet: dim text, a warning-colored icon.
+Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure and for destructive intent (hover); a warning that's standing state stays quiet: plain dim text.
 
 ### Named Rules
 **The One Hue Rule.** Every neutral is derived from the accent hue. A component that hard-codes a gray or a white alpha breaks on light themes and on sampled accents.
@@ -148,10 +148,13 @@ Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a faint a
 `--float-bg`, lg radius, pop or dialog shadow, shared float-in/out motion (0.16s in, 0.12s out).
 
 ### Sidebar tiers
-Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab and a work row waiting on the user (`.status-lamp`).
+Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab. Amber means "needs you" and nothing else: a notice, a dirty count, a favorite or a work row stays neutral.
 
 ### Composer and ask
 One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. A standing notice (no sandbox) is the same width as the composer and tucks under its top corners. In an approval, Reject has a fill like any button and reddens on hover; it's the safe choice, so it's never weaker than Allow.
+
+### Status bar
+At rest it shows only what's nowhere else: server health, branch, usage, spend, the bell. Counts the sidebar already shows (waiting, running) and secondary widgets fade in when the bar is pointed at, and the counts stay out for good only while the sidebar is showing.
 
 ## Do's and Don'ts
 

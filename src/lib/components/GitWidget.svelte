@@ -127,9 +127,6 @@
   :global(.git-panel) {
     width: min(22rem, 92vw);
   }
-  .changed {
-    color: var(--warning);
-  }
   .dim {
     opacity: 0.6;
   }

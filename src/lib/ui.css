@@ -13,14 +13,14 @@
   --ui-spring: cubic-bezier(0.3, 1.35, 0.5, 1);
 }
 
-/* Waiting on you: the sidebar's lamp, so the same state looks the same in a work row. */
-.status-lamp::before {
+/* A work row held on the user: still, and quiet. The ask itself is the composer's card. */
+.status-held::before {
   content: "";
-  width: 7px;
-  height: 7px;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent);
+  border: 1.5px solid var(--text-dim);
 }
 
 /* The box of a text field, number field, textarea and file drop. Focus lifts the fill and adds a

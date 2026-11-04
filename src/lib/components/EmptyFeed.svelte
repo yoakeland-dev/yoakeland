@@ -396,9 +396,6 @@
     font-weight: 600;
     color: var(--text);
   }
-  .dirty {
-    color: var(--warning);
-  }
   .dirty,
   .sync {
     font-size: var(--text-label-size);

@@ -221,7 +221,7 @@
     color: var(--text-dim);
   }
   .asking .meta {
-    color: var(--warning);
+    color: var(--text-dim);
   }
   .failed .meta {
     color: var(--danger);
@@ -253,9 +253,6 @@
     margin-left: 0.5rem;
     padding-left: 0.71rem;
     border-left: 2px solid var(--panel-border);
-  }
-  .asking > .accordion > .accordion-inner > .body {
-    border-left-color: color-mix(in srgb, var(--warning) 55%, var(--panel-border));
   }
   .task-toggle {
     align-self: flex-start;

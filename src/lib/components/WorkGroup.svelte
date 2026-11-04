@@ -54,7 +54,7 @@
       {#if held.flashing}
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
       {:else if waiting}
-        <span class="status-icon status-lamp" transition:fade={{ duration: 160 }}></span>
+        <span class="status-icon status-held" transition:fade={{ duration: 160 }}></span>
       {:else if isRunning}
         <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
       {:else}
@@ -115,7 +115,7 @@
     color: var(--text-dim);
     padding: 0.29rem 0;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
     font-family: inherit;
     text-align: left;
   }
@@ -215,7 +215,7 @@
     border-left: 2px solid var(--panel-border);
     color: var(--text-dim);
     font-style: italic;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
     line-height: 1.5;
     white-space: pre-wrap;
   }
@@ -224,7 +224,7 @@
     align-items: center;
     gap: var(--space-1);
     color: var(--text-dim);
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
     font-family: inherit;
   }
   .done-icon {

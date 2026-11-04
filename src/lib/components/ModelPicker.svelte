@@ -902,7 +902,7 @@
     color: var(--text);
   }
   .star-btn.active {
-    color: var(--warning);
+    color: var(--text);
   }
   .empty {
     padding: 0.86rem;

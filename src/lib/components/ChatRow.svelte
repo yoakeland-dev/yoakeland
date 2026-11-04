@@ -389,7 +389,7 @@ import { haptic } from "../haptics";
     cursor: pointer;
     text-align: left;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
   }
   .row.has-meta .main {
     align-items: flex-start;
@@ -442,7 +442,7 @@ import { haptic } from "../haptics";
     display: grid;
     grid-template-columns: subgrid;
     align-items: center;
-    font-size: 0.79rem;
+    font-size: var(--text-label-size);
     color: var(--text-dim);
   }
   .origin-icon {
@@ -627,7 +627,7 @@ import { haptic } from "../haptics";
     justify-content: center;
     width: 1.5rem;
     white-space: nowrap;
-    font-size: 0.79rem;
+    font-size: var(--text-label-size);
     color: var(--sidebar-fg-dim);
     font-variant-numeric: tabular-nums;
   }

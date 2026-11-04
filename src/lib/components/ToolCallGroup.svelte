@@ -53,7 +53,7 @@
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
       {:else if isRunning}
         {#if waiting}
-          <span class="status-icon status-lamp" transition:fade={{ duration: 160 }}></span>
+          <span class="status-icon status-held" transition:fade={{ duration: 160 }}></span>
         {:else}
           <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
         {/if}
@@ -97,7 +97,7 @@
     color: var(--text-dim);
     padding: 0.29rem 0;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
     font-family: inherit;
     text-align: left;
   }

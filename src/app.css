@@ -51,12 +51,12 @@
   --panel-border-top: var(--wash-2);
   --panel-border-bottom: var(--wash-2);
   --sidebar-fg: #cfd2dc;
-  --sidebar-fg-dim: #a3a6b2;
+  --sidebar-fg-dim: #aeb1bc;
   --sidebar-hover: var(--wash-2);
   --sidebar-active: var(--wash-3);
 
   --text: #e7e8ee;
-  --text-dim: #a3a6b2;
+  --text-dim: #aeb1bc;
   /* Fallback values only, visible before JS applies a theme — every token on
      this list is overridden at runtime by applySettings() in state.svelte.ts
      (deriveTheme in theme.ts), predefined scheme or custom accent alike, so
