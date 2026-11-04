@@ -558,13 +558,13 @@
   .btn:hover {
     background: var(--wash-3);
   }
+  /* Reject is the safe choice, so it's never weaker than Allow: same size, a real fill. It reddens on intent. */
   .btn.danger {
     margin-right: auto;
-    background: none;
-    color: var(--danger);
   }
   .btn.danger:hover {
     background: var(--danger-dim);
+    color: var(--danger);
   }
   .btn.primary {
     background: var(--accent);

@@ -389,6 +389,7 @@
                   name={VENDOR_META[v].icon}
                   fallback="openrouter"
                   size={16}
+                  variant={activeTab === `vendor:${v}` ? "auto" : "mono"}
                 />
               </button>
             {/each}
@@ -520,7 +521,7 @@
                     <div class="entry-main">
                       <span class="entry-name">{titleFor(entry)}</span>
                       <span class="entry-vendor">
-                        {#if activeTab.startsWith("vendor:")}
+                        {#if activeTab !== "favorites"}
                           {providerLabel(entry.provider)}
                         {:else}
                           <LobeIcon name={vendor.icon} fallback="openrouter" size={12} variant="mono" />

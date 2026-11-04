@@ -85,7 +85,7 @@
   }
   const checked = (ms: number | undefined) => (ms ? relTime(ms, app.now) : "–");
   const KIND_ICON = { Server: "server", Agent: "robot", MCP: "plug-connected", Terminal: "terminal-2", Subprocess: "bolt" } as const;
-  const KIND_TONE = { Server: "accent", Agent: "accent", MCP: "success", Terminal: "neutral", Subprocess: "neutral" } as const;
+  const KIND_TONE = { Server: "neutral", Agent: "neutral", MCP: "neutral", Terminal: "neutral", Subprocess: "neutral" } as const;
 
   // Processes every poll; problems every fifth (10 s). Both are local-socket only (see `waited`).
   let tick = 0;
@@ -209,7 +209,7 @@
 
 {#snippet stat(icon: string, label: string, value: string, tone: "default" | "warning" | "danger" = "default", hint = "")}
   <div class="stat {tone}" {@attach tip(hint)}>
-    <span class="k"><Icon name={icon as any} size={12} />{label}</span>
+    <span class="k">{label}</span>
     <span class="v">{value}</span>
   </div>
 {/snippet}

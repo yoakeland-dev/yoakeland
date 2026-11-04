@@ -51,7 +51,7 @@
     >
       {#if focused.icon}<LobeIcon name={focused.icon} size={12} />{/if}
       {#if focused.peak}
-        <span class="sb-level {level(focused.peak.pct)}">{focused.peak.short} {focused.peak.pct}%</span>
+        <span>{focused.peak.short} {focused.peak.pct}%</span>
         <span class="sb-bar mini"><span class="sb-fill {level(focused.peak.pct)}" style="width: {Math.min(focused.peak.pct, 100)}%"></span></span>
       {:else}
         <span>{focused.title}</span>

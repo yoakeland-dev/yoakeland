@@ -728,7 +728,6 @@
   .avatars {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
     gap: var(--space-1);
   }
   .avatar.upload {

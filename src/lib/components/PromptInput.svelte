@@ -1459,8 +1459,6 @@
     pointer-events: none;
   }
   .hero-project {
-    font-family: var(--logo-font-family);
-    font-weight: 800;
     text-decoration: underline;
     text-underline-offset: 3px;
     text-decoration-color: var(--accent);

@@ -192,6 +192,7 @@
 
 <style>
   .feed {
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
     /* What the wallpaper is washed with as the cards rise over it; see .lead and .sheet. */
     --wash-c: var(--panel-bg);
     --wash-a: 86%;
@@ -257,21 +258,9 @@
   .card,
   .stat,
   h3 {
-    background: var(--float-bg);
-    backdrop-filter: var(--float-blur);
-    border: 1px solid var(--float-border);
-    border-block-color: var(--float-border-top) var(--float-border-bottom);
-  }
-  /* A label pill rather than a rule: a hairline gets lost over a wallpaper, a surface doesn't. */
-  h3 {
-    align-self: flex-start;
-    margin: 0;
-    padding: 0.18rem 0.65rem;
-    border-radius: var(--radius-pill);
-    font-size: 0.79rem;
-    font-weight: var(--text-heading-weight, 600);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    margin: 0 0 0.14rem 0.14rem;
+    font-size: var(--text-label-size);
+    font-weight: 500;
     color: var(--text-dim);
   }
   .grid {

@@ -285,7 +285,7 @@
     };
     local.openPlanSessionId = "s1";
   }
-  local.modelBySession = { s1: "claude-opus-5-5" };
+  local.modelBySession = { s1: "claude-opus-5-5", s2: "claude-opus-5-5" };
   const msgs: ChatMessage[] = [
     { id: "m1", role: "user", text: "Can you tighten up the settings layout?", toolCalls: [], streaming: false, createdAt: now - 200_000 },
     {
