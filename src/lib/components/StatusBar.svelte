@@ -155,7 +155,7 @@
   }
   @media (max-width: 1100px) {
     .dim,
-    .minor {
+    .item.minor {
       display: none;
     }
   }
