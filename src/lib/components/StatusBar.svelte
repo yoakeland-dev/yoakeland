@@ -175,9 +175,6 @@
   .busy {
     color: var(--accent);
   }
-  .dim {
-    opacity: 0.7;
-  }
   .spin {
     display: inline-flex;
     animation: spin calc(1s * var(--icon-slow, 1)) linear infinite;

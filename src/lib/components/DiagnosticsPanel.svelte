@@ -814,12 +814,13 @@
   .s {
     width: 6rem;
   }
-  .proc .act {
-    width: 9rem;
-  }
   .act {
+    width: 4.5rem;
     text-align: right;
     white-space: nowrap;
+  }
+  .proc .act {
+    width: 9rem;
   }
   .kill {
     padding: 0.05rem 0.4rem;
@@ -970,7 +971,7 @@
     white-space: nowrap;
   }
   .n {
-    width: 5.5rem;
+    width: 7rem;
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
