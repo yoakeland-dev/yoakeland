@@ -859,6 +859,9 @@
     scrollbar-gutter: stable;
     resize: vertical; /* drag the bottom-right corner */
   }
+  .scroll:not(:hover)::-webkit-resizer {
+    display: none;
+  }
   .scroll.tall {
     max-height: 20rem;
   }

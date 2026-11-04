@@ -152,7 +152,7 @@
     color: var(--sidebar-fg-dim);
   }
   .state.action {
-    color: var(--warning);
+    color: var(--lamp);
   }
   .state.finished {
     color: var(--success);

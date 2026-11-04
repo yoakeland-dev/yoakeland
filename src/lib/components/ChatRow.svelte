@@ -559,7 +559,7 @@ import { haptic } from "../haptics";
     color: var(--sidebar-fg-dim);
   }
   .status-icon.status-action {
-    color: var(--warning);
+    color: var(--lamp);
   }
   .status-icon.status-finished {
     color: var(--success);

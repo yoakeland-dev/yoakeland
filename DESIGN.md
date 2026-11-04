@@ -151,10 +151,10 @@ Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a faint a
 Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab. Amber means "needs you" and nothing else: a notice, a dirty count, a favorite or a work row stays neutral.
 
 ### Composer and ask
-One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. A standing notice (no sandbox) is the same width as the composer and tucks under its top corners. In an approval, Reject has a fill like any button and reddens on hover; it's the safe choice, so it's never weaker than Allow.
+One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. The no-sandbox notice is the same width as the composer and tucks under its top corners before the first message; after that a short label stays beside the mode (a phone, with no mode button, keeps the notice). In an approval, Reject has a fill like any button and reddens on hover; it's the safe choice, so it's never weaker than Allow.
 
 ### Status bar
-At rest it shows only what's nowhere else: server health, branch, usage, spend, the bell. Counts the sidebar already shows (waiting, running) and secondary widgets fade in when the bar is pointed at, and the counts stay out for good only while the sidebar is showing.
+At rest it shows only what's nowhere else: server health, branch, usage, spend, the bell. Counts the sidebar already shows (waiting, running) and secondary widgets fade in when the bar is pointed at; the counts show at rest only while the sidebar is hidden.
 
 ## Do's and Don'ts
 

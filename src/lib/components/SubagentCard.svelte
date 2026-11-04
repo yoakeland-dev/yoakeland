@@ -129,6 +129,15 @@
 </div>
 
 <style>
+  /* A narrow pane drops the small print before it cuts into the title. */
+  .subagent {
+    container-type: inline-size;
+  }
+  @container (max-width: 20rem) {
+    .subagent:not(.asking) .meta {
+      display: none;
+    }
+  }
   /* Flat like the chat's tool groups: a one-line head, and what the subagent did sits under a thread line. */
   .subagent {
     container-type: inline-size;

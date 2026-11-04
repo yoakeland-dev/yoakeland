@@ -860,6 +860,7 @@
     margin: 0.15rem 0 0.3rem;
   }
   .hero-value {
+    color: var(--text);
     font-size: 2.6rem;
     font-weight: 600;
     line-height: 1.1;

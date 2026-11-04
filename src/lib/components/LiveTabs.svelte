@@ -122,7 +122,7 @@
     align-items: center;
     gap: 0.43rem;
     height: var(--chrome-h);
-    max-width: 7.5rem;
+    max-width: 11rem;
     padding: 0 var(--space-1) 0 0.64rem;
     /* Centres the card on the header's content line, like the chat island. */
     margin-block: calc((var(--header-line) - var(--chrome-h)) / 2);
@@ -162,7 +162,7 @@
   }
   .live :global(.live-tab.action .status),
   :global(.live-item.action .status) {
-    color: var(--warning);
+    color: var(--lamp);
   }
   .live :global(.live-tab.working .status),
   :global(.live-item.working .status) {

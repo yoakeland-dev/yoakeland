@@ -58,7 +58,7 @@ export function deriveTheme(accentHex: string, mode: "dark" | "light"): ThemeTok
       sidebarFg: `hsl(${h} 20% 15%)`,
       sidebarFgDim: `hsl(${h} 10% 34%)`,
       sidebarHover: `hsla(${h} 30% 10% / 0.05)`,
-      sidebarActive: `hsla(${h} 30% 10% / 0.08)`,
+      sidebarActive: `hsla(${h} 30% 10% / 0.11)`,
       text: `hsl(${h} 20% 9%)`,
       textDim: `hsl(${h} 10% 34%)`,
       accent: accentHex,

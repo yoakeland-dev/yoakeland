@@ -345,7 +345,7 @@
     color: var(--text-dim);
   }
   .status.action {
-    color: var(--warning);
+    color: var(--lamp);
   }
   .status.finished {
     color: var(--success);

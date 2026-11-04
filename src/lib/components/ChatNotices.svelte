@@ -4,6 +4,7 @@
   import { fade } from "svelte/transition";
   import { tip } from "../tooltip.svelte";
   import { app } from "../state.svelte";
+  import { viewport } from "../viewport.svelte";
   import Icon from "./Icon.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
@@ -12,9 +13,12 @@
   const project = $derived(server?.projectBySession[sessionId]);
   const unsandboxed = $derived(!!server?.isUnsandboxed(project));
   const shellOff = $derived(!!server?.shellDisabled(project));
+  // Said in full before the first message; once the chat is going, ModePicker keeps a short label
+  // beside the mode. A phone's composer has no mode button, so there it stays.
+  const show = $derived(unsandboxed && (viewport.narrow || !server?.messagesBySession[sessionId]?.length));
 </script>
 
-{#if unsandboxed}
+{#if show}
   <div class="notices" role="status" transition:fade={{ duration: 120 }}>
     <div
       class="notice"

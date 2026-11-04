@@ -72,6 +72,8 @@
   --success: var(--success-base);
   --warning-base: #f0b429;
   --warning: var(--warning-base);
+  /* The "needs you" dot. Same as --warning on dark; on light it stays saturated where text has to go deep. */
+  --lamp: var(--warning);
   --info-base: #5b9bff;
   --info: var(--info-base);
 
@@ -492,6 +494,7 @@ pre {
 
 /* Signal colors are tuned for dark surfaces; on a light one they need to be deeper to stay readable as text. */
 :root[data-scheme="light"] {
+  --lamp: #e08a00;
   --shadow-pop: 0 8px 24px rgba(20, 22, 30, 0.12);
   --shadow-dialog: 0 16px 48px rgba(20, 22, 30, 0.16);
   --shadow-drawer: 10px 0 32px rgba(20, 22, 30, 0.14);
