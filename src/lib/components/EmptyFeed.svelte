@@ -242,7 +242,7 @@
   }
   .content {
     grid-area: 1 / 1;
-    width: min(54rem, calc(100% - 3.43rem));
+    width: min(44rem, calc(100% - 3.43rem));
     margin: 0 auto;
     display: flex;
     flex-direction: column;

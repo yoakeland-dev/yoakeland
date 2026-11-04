@@ -76,7 +76,7 @@
   --warning: var(--warning-base);
   /* The "needs you" dot. Same as --warning on dark; on light it stays saturated where text has to go deep. */
   --lamp: var(--warning);
-  --info-base: #5b9bff;
+  --info-base: #4cc4e0;
   --info: var(--info-base);
 
   --bubble-user-bg: #232838;
@@ -505,9 +505,9 @@ pre {
   --shadow-dialog: 0 16px 48px rgba(20, 22, 30, 0.16);
   --shadow-drawer: 10px 0 32px rgba(20, 22, 30, 0.14);
   --success-base: #1a7f47;
-  --warning-base: #a56a00;
+  --warning-base: #7a4d00;
   --danger-base: #c93636;
-  --info-base: #2563c9;
+  --info-base: #0b6f8c;
 }
 
 /* Placeholder text always reads as "not a value yet" — lower contrast, so a real value
@@ -1009,7 +1009,7 @@ button.sb-row-main {
 @property --success { syntax: "<color>"; inherits: true; initial-value: #58d68d; }
 @property --warning { syntax: "<color>"; inherits: true; initial-value: #f0b429; }
 @property --danger { syntax: "<color>"; inherits: true; initial-value: #ff6b6b; }
-@property --info { syntax: "<color>"; inherits: true; initial-value: #5b9bff; }
+@property --info { syntax: "<color>"; inherits: true; initial-value: #4cc4e0; }
 
 :root {
   --quiet-light: 255 196 140;

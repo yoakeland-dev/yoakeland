@@ -3480,7 +3480,7 @@ class AppState {
     root.style.setProperty("--orig-code-bg", code.background);
     applyQuietTokens();
     root.style.setProperty("--code-fg", code.foreground);
-    root.style.setProperty("--syn-comment", code.brightBlack);
+    root.style.setProperty("--syn-comment", `color-mix(in srgb, ${code.brightBlack} 65%, ${code.foreground})`);
     root.style.setProperty("--syn-keyword", code.magenta);
     root.style.setProperty("--syn-string", code.green);
     root.style.setProperty("--syn-number", code.yellow);

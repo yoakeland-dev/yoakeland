@@ -209,7 +209,7 @@
     padding: 0 0.5rem 0 0.14rem;
     background: none;
     border: none;
-    color: color-mix(in srgb, var(--text) 45%, transparent);
+    color: var(--text-dim);
     font-size: var(--text-label-size);
     white-space: nowrap;
     cursor: pointer;

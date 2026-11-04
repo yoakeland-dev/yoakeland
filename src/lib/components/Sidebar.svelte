@@ -1435,7 +1435,6 @@
   .dock-count {
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
-    opacity: 0.7;
   }
   .dock-chevron {
     margin-left: auto;

@@ -11,7 +11,7 @@ colors:
   danger: "#ff6b6b"
   success: "#58d68d"
   warning: "#f0b429"
-  info: "#5b9bff"
+  info: "#4cc4e0"
 typography:
   title:
     fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
@@ -143,7 +143,7 @@ Circles (`50%`) for avatars, dots and rings. New code picks lg/sm/xs; `-md` and 
 Flat, solid fills. Height from `--ctrl-h` (2rem default); a place that needs another size sets the variable. Press scales the button's container layer only, never the label. Held things (sliders) follow the pointer with no easing and ease only on release.
 
 ### Fields
-Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a faint accent ring (3px at 14%); the border never turns accent.
+Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a soft accent ring (3px at 30%); the border never turns accent.
 
 ### Menus and popovers
 `--float-bg`, lg radius, pop or dialog shadow, shared float-in/out motion (0.16s in, 0.12s out).

@@ -419,7 +419,7 @@
   .markdown :global(.mention),
   .markdown :global(code.file-ref) {
     /* Toward --text, so a muted theme accent still reads. */
-    color: color-mix(in srgb, var(--accent) 60%, var(--text));
+    color: color-mix(in srgb, var(--accent-ink) 60%, var(--text));
     padding: 0.1em 0.35em 0.1em 1.55em;
     background: var(--icon) no-repeat 0.35em 50% / 1.05em, var(--accent-dim);
     border-radius: var(--radius-sm);

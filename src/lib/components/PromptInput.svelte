@@ -1400,7 +1400,7 @@
     /* Centered on the visible body below the header, not the whole panel: .wrap spans behind
        the overlaid header, so a plain 50% would sit too high. */
     top: calc(50% + var(--chat-top, var(--header-height)) / 2);
-    width: min(36rem, calc(100% - 3.43rem));
+    width: min(44rem, calc(100% - 3.43rem));
     transform: translate(-50%, -50%);
   }
   .hero {
