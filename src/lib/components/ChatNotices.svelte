@@ -4,7 +4,6 @@
   import { fade } from "svelte/transition";
   import { tip } from "../tooltip.svelte";
   import { app } from "../state.svelte";
-  import { viewport } from "../viewport.svelte";
   import Icon from "./Icon.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
@@ -13,12 +12,9 @@
   const project = $derived(server?.projectBySession[sessionId]);
   const unsandboxed = $derived(!!server?.isUnsandboxed(project));
   const shellOff = $derived(!!server?.shellDisabled(project));
-  // Said in full before the first message; once the chat is going, ModePicker keeps a short label
-  // beside the mode. A phone's composer has no mode button, so there it stays.
-  const show = $derived(unsandboxed && (viewport.narrow || !server?.messagesBySession[sessionId]?.length));
 </script>
 
-{#if show}
+{#if unsandboxed}
   <div class="notices" role="status" transition:fade={{ duration: 120 }}>
     <div
       class="notice"
@@ -27,7 +23,7 @@
         : "Bash and terminals here have no sandbox. They can read and change anything the server's user can")}
     >
       <Icon name="warning" size={13} />
-      <span>No sandbox<span class="more">{shellOff ? " · bash and terminals are off" : " · bash can reach anything on this machine"}</span></span>
+      <span>No sandbox{shellOff ? " · bash and terminals are off" : " · bash can reach anything on this machine"}</span>
     </div>
   </div>
 {/if}
@@ -40,14 +36,12 @@
     z-index: 0;
     display: flex;
     flex-direction: column;
-    container-type: inline-size;
-    margin: 0 0 calc(-1 * var(--radius-float));
-    padding-bottom: var(--radius-float);
-    background: var(--float-bg);
-    color: var(--text-dim);
+    margin: 0 22px -1px;
+    background: color-mix(in srgb, var(--danger) 14%, var(--panel-bg));
+    color: var(--danger);
     border: 1px solid var(--float-border);
     border-bottom: 0;
-    border-radius: var(--radius-float) var(--radius-float) 0 0;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
   }
   .notice {
     display: flex;
@@ -57,16 +51,7 @@
     padding: 0.36rem 0.71rem;
     font-size: var(--text-label-size);
   }
-  .notice :global(svg) {
-    flex-shrink: 0;
-  }
-  /* The tooltip has the rest; a narrow composer keeps just the name of it. */
-  @container (max-width: 26rem) {
-    .more {
-      display: none;
-    }
-  }
-  .notice > span {
+  .notice span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

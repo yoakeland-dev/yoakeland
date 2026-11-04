@@ -87,7 +87,7 @@
     </span>
     <span class="title">{subagentTitle(call)}</span>
     {#if model}<span class="model" title="Model">{model}</span>{/if}
-    <span class="meta" class:asking={!!asking}>
+    <span class="meta">
       {#if running}{asking ? status : latest ? activityFor(latest) : "starting"}{elapsed ? ` · ${elapsed}` : ""}{:else if counts}{counts}{:else if failed}failed{/if}
     </span>
     <span class="chevron" class:open={expanded}><Icon name="chevron-right" size={13} /></span>
@@ -129,9 +129,6 @@
 </div>
 
 <style>
-  .meta.asking {
-    color: var(--warning);
-  }
   /* A narrow pane drops the small print before it cuts into the title. */
   .subagent {
     container-type: inline-size;
@@ -233,7 +230,7 @@
     color: var(--text-dim);
   }
   .asking .meta {
-    color: var(--text-dim);
+    color: var(--warning);
   }
   .failed .meta {
     color: var(--danger);
@@ -265,6 +262,9 @@
     margin-left: 0.5rem;
     padding-left: 0.71rem;
     border-left: 2px solid var(--panel-border);
+  }
+  .asking > .accordion > .accordion-inner > .body {
+    border-left-color: color-mix(in srgb, var(--warning) 55%, var(--panel-border));
   }
   .task-toggle {
     align-self: flex-start;

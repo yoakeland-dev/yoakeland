@@ -1,17 +1,17 @@
 ---
 name: Yoake
-description: A calm, dark client for supervising many agent chats. One accent tints every surface, so nothing reads as black and white.
+description: A calm, dark, hue-agnostic client for supervising many agent chats. One accent drives every color.
 colors:
   accent: "#7c9bff"
-  ground: "hsl(226 34% 8%)"
-  panel: "hsl(226 30% 12%)"
-  text: "hsl(226 40% 95%)"
-  text-dim: "hsl(226 26% 80%)"
-  edge: "hsla(226 50% 85% / 0.11)"
+  ground: "hsl(226 15% 5%)"
+  panel: "hsl(226 12% 7%)"
+  text: "hsl(226 10% 92%)"
+  text-dim: "hsl(226 7% 72%)"
+  edge: "hsla(226 20% 95% / 0.08)"
   danger: "#ff6b6b"
   success: "#58d68d"
   warning: "#f0b429"
-  info: "#4cc4e0"
+  info: "#5b9bff"
 typography:
   title:
     fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
@@ -58,7 +58,7 @@ components:
 
 **Creative North Star: "The Night Desk"**
 
-A dim desk at blue hour, where the work is lit and everything else stays out of the way. Surfaces are a few quiet steps of one visible hue, never neutral black; the accent is the lamp. Nothing shouts until an agent needs you. This describes the system as built; the name is proposed and not yet confirmed.
+A dim desk where the work is lit and everything else stays out of the way. Surfaces are a few quiet steps of one hue; the accent is the lamp. Nothing shouts until an agent needs you. This describes the system as built; the name is proposed and not yet confirmed.
 
 The direction is "more professional and production-ready, comfort kept": this file records the system as built plus the rules it is being tightened toward, and is not a promise to preserve every current detail.
 
@@ -73,23 +73,23 @@ Color is never a fixed palette. The user picks one accent (a hue slider, one of 
 
 ## Colors
 
-Surfaces carry the hue at 30 to 40% saturation, dark enough that the accent (often 60 to 90%) stays the loudest thing. Selection and hover are tints of the hue, not gray.
+Low-saturation surfaces so the accent (often 60 to 90% saturation) is the only loud thing.
 
 ### Primary
 - **Accent** (default `#7c9bff`, user-chosen): on-state, focus ring, selection, active tab, links, caret. Used on a small share of any screen.
 
 ### Neutral
-- **Ground** (`hsl(h 34% 8%)`): the window behind panels.
-- **Panel** (`hsl(h 30% 12%)`): the chat, sidebars, drawers.
-- **Text** (`hsl(h 40% 95%)`) and **Text dim** (`hsl(h 26% 80%)`): body and secondary.
-- **Edge** (`hsla(h 50% 85% / 0.11)`): the one hairline. Same value on all four sides.
+- **Ground** (`hsl(h 15% 5%)`): the window behind panels.
+- **Panel** (`hsl(h 12% 7%)`): the chat, sidebars, drawers.
+- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 7% 72%)`, 8.8:1 on panel): body and secondary.
+- **Edge** (`hsla(h 20% 95% / 0.08)`): the one hairline. Same value on all four sides.
 - **Washes** (`--wash-1..4`, 4/6/9/14% of text): rest, hover, active, strong edge. Always these four, never white or black literals.
 
 ### Semantic
-State shows in color wherever it helps: a finished step is green, a failed one red, a step waiting on you amber. Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure and for destructive intent (hover); a warning that's standing state stays quiet: plain dim text.
+Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure, destructive intent and the no-sandbox warning.
 
 ### Named Rules
-**The Blue Hour Rule.** Nothing is pure black, white or gray. A screen that could be mistaken for grayscale has lost the theme.
+**The Living Details Rule.** Surfaces stay quiet and themes own them. Details keep their color: status marks, chart lines, kind badges, provider logos, name-tinted tiles. Refined never means gray; don't flatten or strip a detail just to look calmer.
 **The One Hue Rule.** Every neutral is derived from the accent hue. A component that hard-codes a gray or a white alpha breaks on light themes and on sampled accents.
 **The Provider Rule.** A provider's brand color appears only on things that belong to that provider (`usage.ts` `BRANDS`). Everything else uses the accent.
 **The Wallpaper Rule.** The wallpaper shows only on the new-chat empty state. It may supply the accent; it never tints surfaces directly.
@@ -143,19 +143,19 @@ Circles (`50%`) for avatars, dots and rings. New code picks lg/sm/xs; `-md` and 
 Flat, solid fills. Height from `--ctrl-h` (2rem default); a place that needs another size sets the variable. Press scales the button's container layer only, never the label. Held things (sliders) follow the pointer with no easing and ease only on release.
 
 ### Fields
-Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a soft accent ring (3px at 30%); the border never turns accent.
+Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a faint accent ring (3px at 14%); the border never turns accent.
 
 ### Menus and popovers
 `--float-bg`, lg radius, pop or dialog shadow, shared float-in/out motion (0.16s in, 0.12s out).
 
 ### Sidebar tiers
-Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab. Amber means "needs you" and nothing else: a notice, a dirty count, a favorite or a work row stays neutral.
+Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab. Amber marks what wants a look: a chat waiting, a dirty count, a favorite.
 
 ### Composer and ask
-One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. The no-sandbox notice is the same width as the composer and tucks under its top corners before the first message; after that a short label stays beside the mode (a phone, with no mode button, keeps the notice). In an approval, Reject has a fill like any button and reddens on hover; it's the safe choice, so it's never weaker than Allow.
+One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. The no-sandbox notice is a red tab tucked behind the composer's top edge, for as long as the chat is unsandboxed. In an approval, Allow once is the solid accent and Reject has a fill with a red label.
 
 ### Status bar
-At rest it shows only what's nowhere else: server health, branch, usage, spend, the bell. Counts the sidebar already shows (waiting, running) and secondary widgets fade in when the bar is pointed at; the counts show at rest only while the sidebar is hidden.
+Server health, peers, branch, terminals, waiting and running counts, usage, spend and the bell, each with its own signal color.
 
 ## Do's and Don'ts
 

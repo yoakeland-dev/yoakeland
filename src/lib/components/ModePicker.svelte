@@ -86,7 +86,7 @@
       <span class="crossfade b"><Icon name="chevron-down" size={13} /></span>
     </span>
     <span class="trigger-label"><SlideText text={currentMeta.label} {dir} /></span>
-    {#if server?.isUnsandboxed(projectPath) && server.messagesBySession[sessionId]?.length}<span class="no-sandbox">No sandbox</span>{/if}
+    {#if unsandboxed}<span class="danger-dot" class:off={shellOff} aria-label="No sandbox"></span>{/if}
   </Popover.Trigger>
 
   <Popover.Portal>
@@ -243,11 +243,17 @@
   .danger-line {
     color: var(--danger);
   }
-  .no-sandbox {
-    margin-left: 0.14rem;
-    color: var(--text-dim);
-    font-size: var(--text-label-size);
-    white-space: nowrap;
+  :global(.picker-trigger) .danger-dot {
+    width: 0.46rem;
+    height: 0.46rem;
+    border-radius: 50%;
+    background: var(--danger);
+    margin-left: 0.28rem;
+  }
+  :global(.picker-trigger) .danger-dot.off {
+    background: none;
+    border: 1.5px solid var(--danger);
+    box-sizing: border-box;
   }
   .line.foot {
     margin-top: 0.14rem;

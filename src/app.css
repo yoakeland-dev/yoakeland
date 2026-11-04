@@ -38,8 +38,8 @@
   --chat-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1'/%3E%3C/svg%3E");
   color-scheme: dark;
 
-  --bg: #0d111a;
-  --panel-bg: #151a27;
+  --bg: #0b0c11;
+  --panel-bg: #16181f;
   --panel-border: var(--wash-2);
   /* The two halves of --panel-border, so a hairline can sit a touch lighter
      along its top edge than along its bottom one — what keeps a 1px border
@@ -76,7 +76,7 @@
   --warning: var(--warning-base);
   /* The "needs you" dot. Same as --warning on dark; on light it stays saturated where text has to go deep. */
   --lamp: var(--warning);
-  --info-base: #4cc4e0;
+  --info-base: #5b9bff;
   --info: var(--info-base);
 
   --bubble-user-bg: #232838;
@@ -85,14 +85,13 @@
   --statusbar-bg: #10141c;
   --statusbar-fg: #9498a8;
 
-  /* Washes: the four tints a surface takes at rest, hover, active and edge. Mixed from text and accent
+  /* Washes: the four tints a surface takes at rest, hover, active and edge. Mixed from --text
      rather than white, so they follow whichever theme, accent hue or light/dark mode is on and
      the Quiet Room dimming. Never write rgba(255,255,255,x) in a component. */
-  --wash-ink: color-mix(in srgb, var(--accent) 35%, var(--text));
-  --wash-1: color-mix(in srgb, var(--wash-ink) 5%, transparent);
-  --wash-2: color-mix(in srgb, var(--wash-ink) 8%, transparent);
-  --wash-3: color-mix(in srgb, var(--wash-ink) 11%, transparent);
-  --wash-4: color-mix(in srgb, var(--wash-ink) 17%, transparent);
+  --wash-1: color-mix(in srgb, var(--text) 4%, transparent);
+  --wash-2: color-mix(in srgb, var(--text) 6%, transparent);
+  --wash-3: color-mix(in srgb, var(--text) 9%, transparent);
+  --wash-4: color-mix(in srgb, var(--text) 14%, transparent);
 
   /* Radii follow the inset rule: a child's radius is its container's radius
      minus the gap between their edges (padding + border), so the curves stay
@@ -265,17 +264,16 @@
      --float-hover-bg is the resting wash the pills use when they light up,
      which has to be a solid-ish tone of its own (a translucent pill only
      frosts once it's hovered). */
-  /* One clear step above the panel, so a question or menu reads as lifted. */
-  --float-bg: oklch(from var(--panel-bg) calc(l + 0.035) c h);
+  --float-bg: var(--panel-bg);
   --float-hover-bg: var(--wash-2);
   --float-blur: none;
   /* The outline of a floating surface, split into the same two halves
      --panel-border is (see above) — an exact alias of it in opaque mode, and a
      little stronger once the surface is translucent: a blurred backdrop behind
      the edge costs the hairline the contrast an opaque panel gets for free. */
-  --float-border: var(--wash-4);
-  --float-border-top: var(--wash-4);
-  --float-border-bottom: var(--wash-4);
+  --float-border: var(--wash-3);
+  --float-border-top: var(--wash-3);
+  --float-border-bottom: var(--wash-3);
 
   /* One in/out animation for every floating surface in the app (popovers,
      dropdowns, the context menu, dialogs, the @mention list) — see the
@@ -499,7 +497,6 @@ pre {
 /* Signal colors are tuned for dark surfaces; on a light one they need to be deeper to stay readable as text. */
 :root[data-scheme="light"] {
   --accent-ink: oklch(from var(--accent) min(l, 0.48) c h);
-  --float-bg: var(--panel-bg);
   --lamp: #e08a00;
   --shadow-pop: 0 8px 24px rgba(20, 22, 30, 0.12);
   --shadow-dialog: 0 16px 48px rgba(20, 22, 30, 0.16);
@@ -507,7 +504,7 @@ pre {
   --success-base: #1a7f47;
   --warning-base: #7a4d00;
   --danger-base: #c93636;
-  --info-base: #0b6f8c;
+  --info-base: #2563c9;
 }
 
 /* Placeholder text always reads as "not a value yet" — lower contrast, so a real value
@@ -1009,7 +1006,7 @@ button.sb-row-main {
 @property --success { syntax: "<color>"; inherits: true; initial-value: #58d68d; }
 @property --warning { syntax: "<color>"; inherits: true; initial-value: #f0b429; }
 @property --danger { syntax: "<color>"; inherits: true; initial-value: #ff6b6b; }
-@property --info { syntax: "<color>"; inherits: true; initial-value: #4cc4e0; }
+@property --info { syntax: "<color>"; inherits: true; initial-value: #5b9bff; }
 
 :root {
   --quiet-light: 255 196 140;

@@ -85,7 +85,7 @@
   }
   const checked = (ms: number | undefined) => (ms ? relTime(ms, app.now) : "–");
   const KIND_ICON = { Server: "server", Agent: "robot", MCP: "plug-connected", Terminal: "terminal-2", Subprocess: "bolt" } as const;
-  const KIND_TONE = { Server: "neutral", Agent: "neutral", MCP: "neutral", Terminal: "neutral", Subprocess: "neutral" } as const;
+  const KIND_TONE = { Server: "accent", Agent: "accent", MCP: "success", Terminal: "neutral", Subprocess: "neutral" } as const;
 
   // Processes every poll; problems every fifth (10 s). Both are local-socket only (see `waited`).
   let tick = 0;
@@ -209,7 +209,7 @@
 
 {#snippet stat(icon: string, label: string, value: string, tone: "default" | "warning" | "danger" = "default", hint = "")}
   <div class="stat {tone}" {@attach tip(hint)}>
-    <span class="k">{label}</span>
+    <span class="k"><Icon name={icon as any} size={12} />{label}</span>
     <span class="v">{value}</span>
   </div>
 {/snippet}
@@ -288,10 +288,10 @@
           </div>
           <div class="graphs">
             {@render graph("cpu", "var(--accent)", "CPU load", cpuPct != null ? `${cpuPct}%` : "–", `${st.load1?.toFixed(2) ?? "–"} load · ${st.cpus} cores`, hh?.load ?? [], 100)}
-            {@render graph("database", "var(--accent)", "Memory", memUsed != null ? fileSize(memUsed) : "–", st.memTotalBytes ? `of ${fileSize(st.memTotalBytes)}` : "", hh?.mem ?? [], st.memTotalBytes ?? 1)}
-            {@render graph("gauge", "var(--accent)", "yoakeland heap", fileSize(st.heapBytes), "Go runtime", hh?.heap ?? [], 64 * 1024 * 1024)}
+            {@render graph("database", "var(--info)", "Memory", memUsed != null ? fileSize(memUsed) : "–", st.memTotalBytes ? `of ${fileSize(st.memTotalBytes)}` : "", hh?.mem ?? [], st.memTotalBytes ?? 1)}
+            {@render graph("gauge", "var(--success)", "yoakeland heap", fileSize(st.heapBytes), "Go runtime", hh?.heap ?? [], 64 * 1024 * 1024)}
             {#if list && all.length}
-              {@render graph("activity", "var(--accent)", "Process memory", fileSize(sum.rss), `${sum.cpu.toFixed(1)}% CPU · ${all.length} ${all.length === 1 ? "process" : "processes"}`, h?.rss ?? [], 64 * 1024 * 1024)}
+              {@render graph("activity", "var(--warning)", "Process memory", fileSize(sum.rss), `${sum.cpu.toFixed(1)}% CPU · ${all.length} ${all.length === 1 ? "process" : "processes"}`, h?.rss ?? [], 64 * 1024 * 1024)}
             {/if}
           </div>
         {:else}
@@ -382,7 +382,7 @@
                     <tr>
                       <td class="pad-l"><span class="label" {@attach tip(p.path)}>{p.name}</span></td>
                       <td class="n dim">{p.chats}</td>
-                      <td class="n" {@attach tip(p.down ? `${p.down} not connected` : "")}>{p.mcp ? (p.down ? `${p.mcp - p.down}/${p.mcp}` : p.mcp) : "–"}</td>
+                      <td class="n" class:bad-text={p.down > 0} {@attach tip(p.down ? `${p.down} not connected` : "")}>{p.mcp ? (p.down ? `${p.mcp - p.down}/${p.mcp}` : p.mcp) : "–"}</td>
                       <td class="n dim">{p.terminals || "–"}</td>
                     </tr>
                   {/each}
@@ -677,7 +677,9 @@
     place-items: center;
     width: 1.7rem;
     height: 1.7rem;
-    color: var(--text-dim);
+    border-radius: var(--radius-sm);
+    background: var(--accent-dim);
+    color: var(--accent-ink);
   }
   .count {
     padding: 0 0.45rem;
@@ -735,7 +737,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .stat.danger .v {
+  .stat.danger .v,
+  .bad-text {
     color: var(--danger);
   }
   .stat.warning .v {
@@ -953,6 +956,10 @@
   th:first-child,
   td.pad-l {
     padding-left: 0.9rem;
+  }
+  /* Alternating rows, so a long line is easy to follow across the table. */
+  tbody tr:nth-child(even) {
+    background: var(--wash-1);
   }
   tbody tr:hover {
     background: var(--wash-2);

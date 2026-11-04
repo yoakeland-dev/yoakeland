@@ -127,6 +127,9 @@
   :global(.git-panel) {
     width: min(22rem, 92vw);
   }
+  .changed {
+    color: var(--warning);
+  }
   .dim {
     opacity: 0.6;
   }
@@ -147,6 +150,6 @@
     color: var(--text-dim);
   }
   .counts .behind {
-    color: var(--accent-ink);
+    color: var(--accent);
   }
 </style>

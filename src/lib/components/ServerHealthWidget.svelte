@@ -78,8 +78,8 @@
     {:else}
       <Icon name="server" size={12} /> No servers
     {/if}
-    {#if fh.cpu != null && level(fh.cpu)}<span class="metric"><span class="dim">CPU</span> <span class="sb-level {level(fh.cpu)}">{fh.cpu}%</span></span>{/if}
-    {#if fh.mem != null && level(fh.mem)}<span class="metric"><span class="dim">RAM</span> <span class="sb-level {level(fh.mem)}">{fh.mem}%</span></span>{/if}
+    {#if fh.cpu != null}<span class="metric"><span class="dim">CPU</span> <span class="sb-level {level(fh.cpu)}">{fh.cpu}%</span></span>{/if}
+    {#if fh.mem != null}<span class="metric"><span class="dim">RAM</span> <span class="sb-level {level(fh.mem)}">{fh.mem}%</span></span>{/if}
     {#if down.length === 1}
       <span class="down-label"><span class="down-name">{down[0].label}</span> <span class="state {down[0].connectionStatus}">{STATE[down[0].connectionStatus as keyof typeof STATE]}</span></span>
     {:else if down.length}
@@ -202,6 +202,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.29rem;
+    color: var(--warning);
   }
   .down-label {
     display: inline-flex;

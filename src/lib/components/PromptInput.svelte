@@ -2274,12 +2274,6 @@
       border-radius: 0;
     }
     /* The dock: ask card and composer as one surface floating 8px off the edges. */
-    /* The notice stays exactly as wide as the shared surface it tucks under. */
-    .stack :global(.notices) {
-      margin: 0 8px -24px;
-      padding-bottom: 24px;
-      border-radius: 24px 24px 0 0;
-    }
     .surface {
       display: block;
       margin-inline: 8px;

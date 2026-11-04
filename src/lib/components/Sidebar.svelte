@@ -1724,6 +1724,7 @@
   .server-state {
     font-size: 0.79rem;
     font-weight: 400;
+    color: var(--warning);
   }
   .server-state.error {
     color: var(--danger);
