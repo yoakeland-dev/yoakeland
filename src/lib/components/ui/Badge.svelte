@@ -37,7 +37,7 @@
     white-space: nowrap;
   }
   .accent {
-    --c: var(--accent);
+    --c: var(--accent-ink);
   }
   .success {
     --c: var(--success);

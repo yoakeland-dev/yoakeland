@@ -884,6 +884,7 @@ button.sb-row-main {
 .sb-foot-meta {
   font-size: var(--text-label-size);
   color: var(--text-dim);
+  white-space: nowrap;
 }
 /* Title, meta, then actions: meta sits beside the title. */
 .sb-foot-meta:not(:last-child) {

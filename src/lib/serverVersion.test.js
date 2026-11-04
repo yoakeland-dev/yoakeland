@@ -1,7 +1,7 @@
 // @ts-nocheck: run by node --test, which needs the .ts import extension.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isOlder, serverAhead } from "./serverVersion.ts";
+import { isOlder, serverAhead, shortVersion } from "./serverVersion.ts";
 
 test("compares numerically, not as strings", () => {
   assert.equal(isOlder("0.9.0", "0.10.0"), true);
@@ -21,4 +21,10 @@ test("a stable app warns about a newer or early server, an early app never", () 
   assert.equal(serverAhead("0.1.6", "0.1.7"), false);
   assert.equal(serverAhead("0.1.7", "0.1.8-early.202611021200"), false);
   assert.equal(serverAhead(null, "0.1.7"), false);
+});
+
+test("a short version drops an early build's date", () => {
+  assert.equal(shortVersion("0.1.7-early.202611042156"), "v0.1.7 early");
+  assert.equal(shortVersion("0.1.7"), "v0.1.7");
+  assert.equal(shortVersion("dev"), "dev");
 });

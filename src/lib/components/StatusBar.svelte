@@ -95,12 +95,12 @@
       </button>
     {/if}
     {#if queued > 0}
-      <span class="item" {@attach tip("Turns waiting for their chat's current turn to finish")}>
+      <span class="item minor" {@attach tip("Turns waiting for their chat's current turn to finish")}>
         <Icon name="clock" size={12} /> {queued} queued
       </span>
     {/if}
     {#if scheduledCount > 0}
-      <span class="item" {@attach tip("Scheduled turns waiting to run")}>
+      <span class="item minor" {@attach tip("Scheduled turns waiting to run")}>
         <Icon name="clock" size={12} /> {scheduledCount} scheduled
       </span>
     {/if}
@@ -148,6 +148,16 @@
   }
   .left {
     overflow: hidden;
+  }
+  /* The left side gives way first; usage, spend and the bell stay on screen. */
+  .right {
+    flex-shrink: 0;
+  }
+  @media (max-width: 1100px) {
+    .dim,
+    .minor {
+      display: none;
+    }
   }
   .item {
     display: inline-flex;

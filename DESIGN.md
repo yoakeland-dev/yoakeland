@@ -154,6 +154,9 @@ Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that n
 ### Composer and ask
 One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. The no-sandbox notice is a red tab tucked behind the composer's top edge, for as long as the chat is unsandboxed. In an approval, Allow once is the solid accent and Reject has a fill with a red label.
 
+### Diagnostics
+Each section is a card, one fill step above the panel, with one hairline and no boxes inside it. Figures sit in plain columns. Live readings span the full card width with their own colors, and table meters reuse those colors. Long lines scroll sideways rather than crushing the name column.
+
 ### Status bar
 Server health, peers, branch, terminals, waiting and running counts, usage, spend and the bell, each with its own signal color.
 
