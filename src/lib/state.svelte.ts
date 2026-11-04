@@ -75,6 +75,7 @@ import {
   type TerminalColorTheme,
 } from "./theme";
 import { APP_THEME_PRESETS } from "./themePresets";
+import { refusalNotice } from "./pairing";
 import { invoke, setCloseHook, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { viewport } from "./viewport.svelte";
 import { base64ToBytes } from "./base64";
@@ -2915,10 +2916,11 @@ export class ServerState {
       case "error": {
         const data = env.data as { message: string; fatal?: boolean; projectPath?: string };
         this.app.log(`error: ${data.message}`);
-        // A limited device is refused some requests outright. Say so, and end a folder browse that
-        // would otherwise wait for a listing that is never coming.
-        if (/isn't available from a paired device/.test(data.message)) {
-          this.app.toastAction(this.connectionId, "This device has limited access to the server. Ask its owner for full access (Settings → Access).");
+        // A refused request: say why, and end a folder browse that would otherwise wait for a
+        // listing that is never coming.
+        const refusal = refusalNotice(data.message, this.limited);
+        if (refusal) {
+          this.app.toastAction(this.connectionId, refusal);
           if (data.message.startsWith("list_directory") && this.app.browsingConnectionId === this.connectionId) {
             this.app.directoryListing = { path: this.app.directoryListing?.path ?? "", entries: [], error: "This device has limited access, so it can't browse folders on the server." };
           }
