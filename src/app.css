@@ -478,9 +478,12 @@ body {
   overflow: hidden;
 }
 /* Thin scrollbars everywhere, standard properties rather than ::-webkit-scrollbar: Chromium
-   paints those custom ones on the main thread, so every scroll frame repainted them. */
-body {
+   paints those custom ones on the main thread, so every scroll frame repainted them.
+   scrollbar-width doesn't inherit, so it goes on every element; a class's own value still wins. */
+* {
   scrollbar-width: thin;
+}
+body {
   scrollbar-color: var(--wash-4) transparent;
 }
 
