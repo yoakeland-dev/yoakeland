@@ -1,6 +1,6 @@
 <script lang="ts">
   // One ring for a chat's quiet life: spinning while it runs, a dashed blue ring once it was
-  // stopped, a dashed gray one at rest. "stop" is the filled disc the row swaps in on hover.
+  // stopped, a small gray dot at rest. "stop" is the filled disc the row swaps in on hover.
   let { state, size = 13 }: { state: "running" | "stop" | "stopped" | "quiet"; size?: number } = $props();
 </script>
 
@@ -56,7 +56,10 @@
   .stopped .dash {
     stroke: var(--info);
   }
+  /* At rest: a small plain dot, so it can't be mistaken for the working ring or the lamp. */
   .quiet .dash {
-    stroke: var(--sidebar-fg-dim);
+    r: 2.5px;
+    fill: var(--sidebar-fg-dim);
+    stroke: none;
   }
 </style>

@@ -13,16 +13,6 @@
   --ui-spring: cubic-bezier(0.3, 1.35, 0.5, 1);
 }
 
-/* A work row held on the user: still, and quiet. The ask itself is the composer's card. */
-.status-held::before {
-  content: "";
-  box-sizing: border-box;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid var(--text-dim);
-}
-
 /* The box of a text field, number field, textarea and file drop. Focus lifts the fill and adds a
    faint accent ring; it never recolors the border. */
 .ui-field {

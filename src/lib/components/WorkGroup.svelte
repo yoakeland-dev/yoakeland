@@ -53,9 +53,7 @@
     <span class="icon-slot">
       {#if held.flashing}
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
-      {:else if waiting}
-        <span class="status-icon status-held" transition:fade={{ duration: 160 }}></span>
-      {:else if isRunning}
+      {:else if isRunning && !waiting}
         <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
       {:else}
         <span class="status-icon rest" class:err={hasError} transition:fade={{ duration: 160 }}><Icon name="brain" size={14} /></span>

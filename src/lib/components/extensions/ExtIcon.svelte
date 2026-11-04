@@ -14,8 +14,8 @@
 </script>
 
 <span class="tile" class:brand={!!brand} style="width: {size}px; height: {size}px; font-size: {Math.round(size * 0.36)}px" aria-hidden="true">
-  {#if kind === "mcp"}
-    <LobeIcon name={brand ?? "mcp"} variant={brand ? "auto" : "mono"} size={Math.round(size * 0.55)} />
+  {#if brand}
+    <LobeIcon name={brand} variant="auto" size={Math.round(size * 0.55)} />
   {:else}
     {initials}
   {/if}

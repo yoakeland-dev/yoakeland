@@ -3173,7 +3173,7 @@ class AppState {
     typeof localStorage !== "undefined" ? loadBool(RIGHT_SIDEBAR_COLLAPSED_KEY) : false,
   );
   sidebarWidth = $state(
-    typeof localStorage !== "undefined" ? Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || 250 : 250,
+    typeof localStorage !== "undefined" ? Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || 272 : 272,
   );
   // A fraction (0-0.5), not a pixel value: RightSidebar.svelte turns it into a live width via
   // CSS `clamp()`, staying proportional across resizes with no JS syncing.

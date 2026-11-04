@@ -127,10 +127,10 @@
         {#if held.flashing}
           <span class="status-icon rest" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
         {:else if isRunning}
-          {#if calls.some((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer")}
-            <span class="status-icon status-held" transition:fade={{ duration: 160 }}></span>
-          {:else}
+          {#if !calls.some((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer")}
           <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
+          {:else}
+            <span class="status-icon rest" transition:fade={{ duration: 160 }}><Icon name="tool" size={14} /></span>
           {/if}
         {:else}
           <span class="status-icon rest" transition:fade={{ duration: 160 }}><Icon name="tool" size={14} /></span>
