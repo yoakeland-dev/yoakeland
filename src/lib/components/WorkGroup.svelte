@@ -17,6 +17,7 @@
 
   const IN_FLIGHT = new Set(["requested", "awaiting_permission", "running"]);
   const allCalls = $derived(steps.flatMap((s) => (s.kind === "cluster" ? s.calls : [])));
+  const waiting = $derived(allCalls.some((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer"));
   const isRunning = $derived(live || allCalls.some((c) => IN_FLIGHT.has(c.status)));
   const hasError = $derived(allCalls.some((c) => c.status === "error" || c.status === "denied"));
 
@@ -52,6 +53,8 @@
     <span class="icon-slot">
       {#if held.flashing}
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
+      {:else if waiting}
+        <span class="status-icon status-lamp" transition:fade={{ duration: 160 }}></span>
       {:else if isRunning}
         <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
       {:else}

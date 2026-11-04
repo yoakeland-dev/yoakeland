@@ -1096,8 +1096,8 @@
             }}
             placeholder={asks.length
               ? asks.length > 1
-                ? `Or tell it what to do instead (answers all ${asks.length})…`
-                : "Or tell it what to do instead…"
+                ? `Or say what to do instead (answers all ${asks.length})…`
+                : "Or say what to do instead…"
               : !projectPath
                 ? "Pick a project in the sidebar to chat…"
                 : floating

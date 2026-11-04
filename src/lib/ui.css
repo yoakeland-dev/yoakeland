@@ -13,6 +13,16 @@
   --ui-spring: cubic-bezier(0.3, 1.35, 0.5, 1);
 }
 
+/* Waiting on you: the sidebar's lamp, so the same state looks the same in a work row. */
+.status-lamp::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent);
+}
+
 /* The box of a text field, number field, textarea and file drop. Focus lifts the fill and adds a
    faint accent ring; it never recolors the border. */
 .ui-field {

@@ -2548,7 +2548,7 @@
   :global(.settings-overlay) {
     position: fixed;
     inset: 0;
-    background: rgba(6, 7, 11, 0.5);
+    background: rgba(6, 7, 11, 0.66);
     z-index: var(--z-overlay-backdrop);
     animation: scrimIn var(--dialog-enter-duration) ease-out;
   }
@@ -3581,17 +3581,17 @@
     flex: 1;
     -webkit-appearance: none;
     appearance: none;
-    height: 1.43rem;
+    height: 0.57rem;
     border-radius: 999px;
     background: linear-gradient(
       to right,
-      hsl(0 70% 65%),
-      hsl(60 70% 65%),
-      hsl(120 70% 65%),
-      hsl(180 70% 65%),
-      hsl(240 70% 65%),
-      hsl(300 70% 65%),
-      hsl(360 70% 65%)
+      hsl(0 48% 62%),
+      hsl(60 48% 62%),
+      hsl(120 48% 62%),
+      hsl(180 48% 62%),
+      hsl(240 48% 62%),
+      hsl(300 48% 62%),
+      hsl(360 48% 62%)
     );
   }
   .hue-slider::-webkit-slider-thumb {

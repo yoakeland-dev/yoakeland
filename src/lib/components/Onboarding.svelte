@@ -590,10 +590,10 @@
       {#if step !== "welcome"}
         <Button variant="ghost" icon aria-label="Back" disabled={copying} onclick={() => go(STEPS[at - 1])}><Icon name="chevron-left" size={15} /></Button>
       {/if}
-      <span class="spacer"></span>
       {#if step !== "done"}
         <Button variant="ghost" disabled={copying} onclick={finish}>Skip setup</Button>
       {/if}
+      <span class="spacer"></span>
       {#if step === "welcome"}
         <Button variant="primary" onclick={() => (saveProfile(), go(STEPS[1]))}>Get started <Icon name="chevron-right" size={14} /></Button>
       {:else if step === "done"}

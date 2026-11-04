@@ -347,13 +347,13 @@
                       </span>
                     </td>
                     <td class="s"><Badge tone={KIND_TONE[kind]}>{kind}</Badge></td>
-                    <td class="s dim">{r.status}</td>
+                    <td class="s dim">{({ R: "Running", S: "Idle", D: "Blocked", Z: "Zombie", T: "Stopped" } as Record<string, string>)[r.status] ?? r.status}</td>
                     <td class="n bar" style="--p: {Math.min(100, r.cpuPercent ?? 0)}%"><span>{(r.cpuPercent ?? 0).toFixed(1)}%</span></td>
                     <td class="n bar m" style="--p: {(r.rssBytes / Math.max(1, sum.rss)) * 100}%"><span>{fileSize(r.rssBytes)}</span></td>
                     <td class="n p dim">{r.pid}</td>
                     <td class="act">
                       {#if kind !== "Server"}
-                        <button type="button" class="kill" disabled={busy} onclick={() => signal(cid, r.pid, "SIGINT")}>INT</button>
+                        <button type="button" class="kill" disabled={busy} onclick={() => signal(cid, r.pid, "SIGINT")}>Interrupt</button>
                         <button type="button" class="kill danger" disabled={busy} onclick={() => signal(cid, r.pid, "SIGKILL")}>Kill</button>
                       {/if}
                     </td>
@@ -816,7 +816,7 @@
     width: 6rem;
   }
   .act {
-    width: 6.5rem;
+    width: 9rem;
     text-align: right;
     white-space: nowrap;
   }
@@ -931,6 +931,7 @@
   }
   /* The heading style from DESIGN.md: small, uppercase, tracked. */
   th {
+    white-space: nowrap;
     text-align: left;
     font-size: 0.79rem;
     font-weight: 700;

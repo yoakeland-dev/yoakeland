@@ -24,7 +24,7 @@ test("cli displayNames that differ from the id are kept, minus a vendor prefix",
 
 test("cli ids without a vendor prefix are just title-cased", () => {
   assert.equal(titleFor(entry("cli_claude", "claude-subscription", "claude-subscription")), "Claude Subscription");
-  assert.equal(titleFor(entry("cli_claude", "claude-sonnet-4-5", "claude-sonnet-4-5")), "Claude Sonnet 4 5");
+  assert.equal(titleFor(entry("cli_claude", "claude-sonnet-4-5", "claude-sonnet-4-5")), "Claude Sonnet 4.5");
   assert.equal(titleFor(entry("cli_codex", "gpt-5.1-codex")), "Gpt 5.1 Codex");
 });
 

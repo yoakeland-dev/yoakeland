@@ -212,7 +212,7 @@
     right: 0;
     z-index: 2;
     background: none;
-    --header-fade-mid: color-mix(in srgb, var(--panel-bg) 94%, transparent);
+    --header-fade-mid: var(--panel-bg);
   }
   .header.overlay::before {
     content: "";

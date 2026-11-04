@@ -520,12 +520,12 @@
                     <div class="entry-main">
                       <span class="entry-name">{titleFor(entry)}</span>
                       <span class="entry-vendor">
-                        <LobeIcon
-                          name={vendor.icon}
-                          fallback="openrouter"
-                          size={12}
-                        />
-                        {vendor.label} · {providerLabel(entry.provider)}
+                        {#if activeTab.startsWith("vendor:")}
+                          {providerLabel(entry.provider)}
+                        {:else}
+                          <LobeIcon name={vendor.icon} fallback="openrouter" size={12} variant="mono" />
+                          {vendor.label} · {providerLabel(entry.provider)}
+                        {/if}
                       </span>
                     </div>
                     <button

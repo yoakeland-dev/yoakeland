@@ -112,7 +112,7 @@
           ? `Spent across ${reporting.length === 1 ? reporting[0].label : `${reporting.length} servers`} (server-local day/month)` +
             (spend.month != null ? `\nThis month: ${usd(spend.month)}` : "")
           : "Spent today across every server (turns this app has seen)")}
-        >{usd(spend.today)} today{#if spend.month != null}<span class="dim">&nbsp;· {usd(spend.month)} mo</span>{/if}</span
+        >{usd(spend.today)} today</span
       >
     {/if}
     <NotificationCenter />

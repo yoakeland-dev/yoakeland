@@ -90,7 +90,7 @@
   </Popover.Trigger>
 
   <Popover.Portal>
-    <PopoverContent class="mode-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
+    <PopoverContent class="mode-panel" side="bottom" align="end" sideOffset={8} collisionPadding={8}>
       <div class="panel-head">
         <span class="panel-heading">Mode</span>
         {#if canPlan}

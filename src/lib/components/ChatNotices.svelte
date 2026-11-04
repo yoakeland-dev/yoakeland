@@ -23,7 +23,7 @@
         : "Bash and terminals here have no sandbox. They can read and change anything the server's user can")}
     >
       <Icon name="warning" size={13} />
-      <span>No sandbox{shellOff ? " · bash and terminals are off" : " · bash can reach anything on this machine"}</span>
+      <span>No sandbox<span class="more">{shellOff ? " · bash and terminals are off" : " · bash can reach anything on this machine"}</span></span>
     </div>
   </div>
 {/if}
@@ -36,12 +36,14 @@
     z-index: 0;
     display: flex;
     flex-direction: column;
-    margin: 0 22px -1px;
+    container-type: inline-size;
+    margin: 0 0 calc(-1 * var(--radius-float));
+    padding-bottom: var(--radius-float);
     background: var(--float-bg);
     color: var(--text-dim);
     border: 1px solid var(--float-border);
     border-bottom: 0;
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    border-radius: var(--radius-float) var(--radius-float) 0 0;
   }
   .notice {
     display: flex;
@@ -55,7 +57,13 @@
     flex-shrink: 0;
     color: var(--warning);
   }
-  .notice span {
+  /* The tooltip has the rest; a narrow composer keeps just the name of it. */
+  @container (max-width: 26rem) {
+    .more {
+      display: none;
+    }
+  }
+  .notice > span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
