@@ -448,8 +448,8 @@
   height: 7px;
   margin: 3px;
   border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent);
+  background: var(--lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lamp) 20%, transparent);
 }
 
 * {

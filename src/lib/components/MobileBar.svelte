@@ -131,8 +131,8 @@
     background: var(--text-dim);
   }
   .lamp.action {
-    background: var(--warning);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 28%, transparent);
+    background: var(--lamp);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--lamp) 28%, transparent);
   }
   .lamp.working {
     width: 0.85rem;
