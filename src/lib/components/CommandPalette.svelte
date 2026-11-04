@@ -840,7 +840,7 @@
   /* Same small-caps label as Settings' tab groups, for one visual language. */
   :global(.palette-heading) {
     padding: 0.71rem 0.57rem 0.29rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;

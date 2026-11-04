@@ -12,6 +12,7 @@ const entry = (kind, id, displayName = "") => ({
 test("cli ids with a vendor/ prefix read without it", () => {
   assert.equal(titleFor({ provider: { kind: "cli_opencode" }, model: { id: "opencode/grok-code", displayName: "" } }), "Grok Code");
   assert.equal(titleFor(entry("cli_opencode", "opencode/qwen3-coder")), "Qwen3 Coder");
+  assert.equal(titleFor(entry("cli_opencode", "opencode/claude-sonnet-5-5")), "Claude Sonnet 5.5");
   // a displayName that merely repeats the id is still treated as the id
   assert.equal(titleFor(entry("cli_opencode", "opencode/grok-code", "opencode/grok-code")), "Grok Code");
 });

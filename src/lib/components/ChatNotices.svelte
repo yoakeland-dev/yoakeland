@@ -37,8 +37,8 @@
     display: flex;
     flex-direction: column;
     margin: 0 22px -1px;
-    background: color-mix(in srgb, var(--danger) 14%, var(--panel-bg));
-    color: var(--danger);
+    background: var(--float-bg);
+    color: var(--text-dim);
     border: 1px solid var(--float-border);
     border-bottom: 0;
     border-radius: var(--radius-md) var(--radius-md) 0 0;
@@ -50,6 +50,10 @@
     min-width: 0;
     padding: 0.36rem 0.71rem;
     font-size: var(--text-label-size);
+  }
+  .notice :global(svg) {
+    flex-shrink: 0;
+    color: var(--warning);
   }
   .notice span {
     overflow: hidden;

@@ -82,7 +82,7 @@
   }
   .foot {
     margin-top: 0.4rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
 </style>

@@ -171,7 +171,7 @@
   }
   .age {
     flex-shrink: 0;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     font-variant-numeric: tabular-nums;
     color: var(--info);
     padding: 0 0.4rem;
@@ -201,7 +201,7 @@
   }
   .facts dt {
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
   }
   .facts dd {
     display: flex;
@@ -263,6 +263,6 @@
     align-items: center;
     gap: 0.4rem;
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
   }
 </style>

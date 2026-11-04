@@ -168,7 +168,7 @@
     white-space: nowrap;
   }
   .meta {
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .restore {
@@ -183,7 +183,7 @@
     border-radius: var(--radius-sm);
     padding: 0.21rem 0.5rem;
     font: inherit;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     cursor: pointer;
   }
   .restore:hover:not(:disabled) {

@@ -442,7 +442,7 @@ import { haptic } from "../haptics";
     display: grid;
     grid-template-columns: subgrid;
     align-items: center;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .origin-icon {
@@ -528,7 +528,7 @@ import { haptic } from "../haptics";
     white-space: nowrap;
   }
   .meta-line {
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--sidebar-fg-dim);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -627,7 +627,7 @@ import { haptic } from "../haptics";
     justify-content: center;
     width: 1.5rem;
     white-space: nowrap;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     color: var(--sidebar-fg-dim);
     font-variant-numeric: tabular-nums;
   }

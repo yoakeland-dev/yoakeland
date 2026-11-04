@@ -167,7 +167,7 @@
     width: 1rem;
     text-align: center;
     font-weight: 600;
-    font-family: ui-monospace, monospace;
+    font-family: var(--code-font-family);
   }
   .badge.added {
     color: var(--diff-add);

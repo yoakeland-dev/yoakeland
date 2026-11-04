@@ -100,6 +100,6 @@
   .files li {
     padding: 0.5rem 0;
     border-bottom: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
-    font-size: 0.78rem;
+    font-size: 0.79rem;
   }
 </style>

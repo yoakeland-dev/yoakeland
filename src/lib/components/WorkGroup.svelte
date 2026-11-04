@@ -113,7 +113,7 @@
     padding: 0.29rem 0;
     cursor: pointer;
     font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-family: inherit;
     text-align: left;
   }
   /* Same cross-fade slot as ToolCallCard/ToolCallGroup. */
@@ -222,7 +222,7 @@
     gap: var(--space-1);
     color: var(--text-dim);
     font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-family: inherit;
   }
   .done-icon {
     display: inline-flex;

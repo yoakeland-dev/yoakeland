@@ -2644,7 +2644,7 @@
   .tabs-group-label {
     flex-shrink: 0;
     margin: 0.86rem 0 0.29rem 0.57rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -3495,7 +3495,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.36rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .mode-card.active .mode-card-label {

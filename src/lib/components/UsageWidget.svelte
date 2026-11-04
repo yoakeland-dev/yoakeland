@@ -131,7 +131,7 @@
     grid-template-columns: minmax(0, 6.5rem) 1fr auto 4rem;
     align-items: center;
     gap: 0.36rem 0.57rem;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
   }
   .wname {
     overflow: hidden;
@@ -142,7 +142,7 @@
     min-width: 2.2rem;
   }
   .reset {
-    font-size: 0.64rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     text-align: right;
     white-space: nowrap;
@@ -164,7 +164,7 @@
   }
   .plan {
     flex-shrink: 0;
-    font-size: 0.6rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .age {
@@ -172,7 +172,7 @@
     align-items: center;
     gap: 0.21rem;
     flex-shrink: 0;
-    font-size: 0.64rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     white-space: nowrap;
   }

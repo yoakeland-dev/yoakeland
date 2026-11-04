@@ -241,7 +241,7 @@
   }
   .add h4 {
     margin: 0;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     font-weight: 600;
     color: var(--text-dim);
     text-transform: uppercase;

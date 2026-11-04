@@ -78,7 +78,7 @@
   }
   .tt small {
     display: block;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     white-space: nowrap;
     overflow: hidden;

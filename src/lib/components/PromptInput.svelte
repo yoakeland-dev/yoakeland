@@ -1724,7 +1724,7 @@
   }
   kbd {
     font-family: inherit;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     opacity: 0.75;
   }
   .input-area {
@@ -1845,7 +1845,7 @@
   }
   .m-scope {
     flex-shrink: 0;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     color: var(--accent);
   }
   .skills {

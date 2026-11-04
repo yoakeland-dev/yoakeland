@@ -677,7 +677,7 @@
   /* Unsaved: a dot where the close button is, until hovered. */
   .tab-x .dot {
     display: none;
-    font-size: 0.6rem;
+    font-size: 0.79rem;
     color: var(--accent);
   }
   .tab-x.dirty:not(:hover) .dot {

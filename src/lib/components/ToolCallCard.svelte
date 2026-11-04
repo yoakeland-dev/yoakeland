@@ -101,7 +101,7 @@
     gap: 0.29rem;
   }
   .chip {
-    font-size: 0.75rem;
+    font-size: 0.79rem;
     padding: 0.07rem 0.43rem;
     border-radius: var(--radius-sm);
     background: var(--wash-2);
@@ -126,7 +126,7 @@
     padding: 0.57rem 0.71rem;
     cursor: pointer;
     font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-family: inherit;
     transition: background calc(0.12s * var(--anim-speed, 1)) ease;
   }
   .head:hover {
@@ -208,7 +208,7 @@
   }
   .status {
     flex: none;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -245,7 +245,7 @@
     padding: var(--space-1);
     background: rgba(0, 0, 0, 0.25);
     border-radius: var(--radius-sm);
-    font-size: 0.75rem;
+    font-size: 0.79rem;
     white-space: pre-wrap;
     word-break: break-word;
   }

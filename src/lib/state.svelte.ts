@@ -517,7 +517,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   uiFontSize: 14,
   codeFontSize: 12.5,
   uiFontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  codeFontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+  codeFontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
   codeWrapLines: true,
   codeLineNumbers: false,
   autoSummary: true,
@@ -3447,6 +3447,7 @@ class AppState {
     const root = document.documentElement;
     const resolved = this.resolvedTheme;
     root.style.colorScheme = resolved;
+    root.dataset.scheme = resolved;
     const tokens = tokensFor(this.appTheme, this.settings.accent, resolved);
     root.style.setProperty("--orig-bg", tokens.bg);
     root.style.setProperty("--orig-panel-bg", tokens.panelBg);

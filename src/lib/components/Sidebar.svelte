@@ -1013,7 +1013,9 @@
         {:else if serverEntries.length && newLook}
           <!-- New look: the inbox is one flat list; each card names its project. -->
           {#each activeRows as r (key(r))}{@render rowFor(r, "default")}{:else}
-            <p class="empty">No chats yet. Start one from a project, or with the button above.</p>
+            {#if !tiers?.needs.length && !tiers?.running.length && !pinned.length}
+              <p class="empty">No chats yet. Start one from a project, or with the button above.</p>
+            {/if}
           {/each}
         {:else if serverEntries.length && grouping === "remote"}
           <!-- Classic look: the server head then project groups are the list itself. -->
@@ -1421,7 +1423,7 @@
     background: none;
     color: var(--sidebar-fg-dim);
     font: inherit;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -1471,7 +1473,7 @@
   /* Same small-caps label as the palette's and Settings' group headings. */
   .section-label {
     padding: 0.71rem var(--space-1) 0.29rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -1528,7 +1530,7 @@
     padding: var(--space-1);
   }
   .note {
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     padding-top: 0;
   }
   .sidebar-empty {
@@ -1631,7 +1633,7 @@
     flex: 1;
   }
   :global(.filter-item .filter-count) {
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     opacity: 0.7;
   }
   :global(.filter-item .filter-count.warn) {
@@ -1677,7 +1679,7 @@
     border: none;
     color: var(--text);
     font: inherit;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     font-weight: 600;
     cursor: pointer;
     text-align: left;
@@ -1722,7 +1724,7 @@
     opacity: 0.55;
   }
   .server-state {
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     font-weight: 400;
     color: var(--warning);
   }
@@ -1862,7 +1864,7 @@
     color: var(--text);
   }
   .profile-status {
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--sidebar-fg-dim);
   }
   .icon-btn {

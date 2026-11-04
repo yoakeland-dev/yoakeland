@@ -375,7 +375,7 @@
     height: 1.35rem;
     border-radius: 50%;
     background: var(--wash-3);
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     font-weight: 600;
   }
   .pair-steps li.cur {

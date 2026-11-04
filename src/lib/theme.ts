@@ -50,42 +50,42 @@ export function deriveTheme(accentHex: string, mode: "dark" | "light"): ThemeTok
   const h = Math.round(hexToHue(accentHex));
   if (mode === "light") {
     return {
-      bg: `hsl(${h} 18% 90%)`,
+      bg: `hsl(${h} 12% 95%)`,
       panelBg: `hsl(${h} 20% 100%)`,
       panelBorder: `hsla(${h} 30% 10% / 0.09)`,
       panelBorderTop: `hsla(${h} 30% 10% / 0.09)`,
       panelBorderBottom: `hsla(${h} 30% 10% / 0.09)`,
       sidebarFg: `hsl(${h} 20% 15%)`,
-      sidebarFgDim: `hsl(${h} 10% 42%)`,
+      sidebarFgDim: `hsl(${h} 10% 34%)`,
       sidebarHover: `hsla(${h} 30% 10% / 0.05)`,
       sidebarActive: `hsla(${h} 30% 10% / 0.08)`,
       text: `hsl(${h} 20% 9%)`,
-      textDim: `hsl(${h} 10% 39%)`,
+      textDim: `hsl(${h} 10% 34%)`,
       accent: accentHex,
-      bubbleUserBg: `hsl(${h} 30% 94%)`,
+      bubbleUserBg: `hsl(${h} 18% 93%)`,
       bubbleBorder: `hsla(${h} 30% 10% / 0.08)`,
-      statusbarBg: `hsl(${h} 25% 93%)`,
-      statusbarFg: `hsl(${h} 10% 39%)`,
+      statusbarBg: `hsl(${h} 12% 95%)`,
+      statusbarFg: `hsl(${h} 10% 34%)`,
     };
   }
   return {
     // Surfaces stay low-saturation so the accent (often 60-90%) pops instead of blending in.
-    bg: `hsl(${h} 15% 5%)`,
-    panelBg: `hsl(${h} 12% 7%)`,
+    bg: `hsl(${h} 12% 6%)`,
+    panelBg: `hsl(${h} 10% 9%)`,
     panelBorder: `hsla(${h} 20% 95% / 0.08)`,
     panelBorderTop: `hsla(${h} 20% 95% / 0.08)`,
     panelBorderBottom: `hsla(${h} 20% 95% / 0.08)`,
     sidebarFg: `hsl(${h} 10% 85%)`,
-    sidebarFgDim: `hsl(${h} 6% 58%)`,
+    sidebarFgDim: `hsl(${h} 7% 68%)`,
     sidebarHover: `hsla(${h} 20% 95% / 0.06)`,
     sidebarActive: `hsla(${h} 20% 95% / 0.1)`,
     text: `hsl(${h} 10% 92%)`,
-    textDim: `hsl(${h} 6% 62%)`,
+    textDim: `hsl(${h} 7% 68%)`,
     accent: accentHex,
     bubbleUserBg: `hsl(${h} 13% 16%)`,
     bubbleBorder: `hsla(${h} 20% 95% / 0.08)`,
-    statusbarBg: `hsl(${h} 13% 8%)`,
-    statusbarFg: `hsl(${h} 6% 62%)`,
+    statusbarBg: `hsl(${h} 12% 6%)`,
+    statusbarFg: `hsl(${h} 7% 68%)`,
   };
 }
 

@@ -787,7 +787,7 @@
     width: 2.2rem;
     color: var(--text-dim);
     font-family: system-ui, sans-serif;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     vertical-align: middle;
   }
   .glyphs {
@@ -834,7 +834,7 @@
     gap: var(--space-2);
     padding: 0.14rem var(--space-1);
     border-top: 1px solid var(--panel-border);
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
   }

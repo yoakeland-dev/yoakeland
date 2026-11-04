@@ -175,7 +175,7 @@
     padding: 0.29rem 0;
     cursor: pointer;
     font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-family: inherit;
     text-align: left;
   }
   .icon-slot {

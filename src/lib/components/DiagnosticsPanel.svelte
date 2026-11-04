@@ -354,7 +354,7 @@
                     <td class="act">
                       {#if kind !== "Server"}
                         <button type="button" class="kill" disabled={busy} onclick={() => signal(cid, r.pid, "SIGINT")}>INT</button>
-                        <button type="button" class="kill danger" disabled={busy} onclick={() => signal(cid, r.pid, "SIGKILL")}>KILL</button>
+                        <button type="button" class="kill danger" disabled={busy} onclick={() => signal(cid, r.pid, "SIGKILL")}>Kill</button>
                       {/if}
                     </td>
                   </tr>
@@ -688,7 +688,7 @@
     border-radius: var(--radius-pill);
     background: var(--wash-3);
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-variant-numeric: tabular-nums;
     line-height: 1.4rem;
   }
@@ -696,7 +696,7 @@
     flex: 1;
   }
   .small {
-    font-size: 0.75rem;
+    font-size: 0.79rem;
   }
   .empty {
     display: flex;
@@ -772,7 +772,7 @@
     letter-spacing: -0.02em;
   }
   .sub {
-    font-size: 0.75rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .spark {
@@ -827,14 +827,14 @@
     background: none;
     color: inherit;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     font-weight: 600;
     cursor: pointer;
   }
   .kill:hover:not(:disabled) {
     background: var(--wash-3);
   }
-  .kill.danger {
+  .kill.danger:hover:not(:disabled) {
     color: var(--danger);
     border-color: color-mix(in srgb, var(--danger) 45%, transparent);
   }
@@ -932,7 +932,7 @@
   /* The heading style from DESIGN.md: small, uppercase, tracked. */
   th {
     text-align: left;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;

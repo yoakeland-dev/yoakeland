@@ -1,5 +1,22 @@
 @import "./lib/ui.css";
 
+/* Inter and JetBrains Mono (SIL OFL), latin subset, variable weight: the UI and code faces, bundled
+   so the app reads the same on a machine that has neither installed. */
+@font-face {
+  font-family: "Inter";
+  src: url("./lib/fonts/Inter-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./lib/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Questrial (SIL OFL), latin subset. */
 @font-face {
   font-family: "Questrial";
@@ -21,8 +38,8 @@
   --chat-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1'/%3E%3C/svg%3E");
   color-scheme: dark;
 
-  --bg: #0b0c11;
-  --panel-bg: #16181f;
+  --bg: #0e0f13;
+  --panel-bg: #15171c;
   --panel-border: var(--wash-2);
   /* The two halves of --panel-border, so a hairline can sit a touch lighter
      along its top edge than along its bottom one — what keeps a 1px border
@@ -34,12 +51,12 @@
   --panel-border-top: var(--wash-2);
   --panel-border-bottom: var(--wash-2);
   --sidebar-fg: #cfd2dc;
-  --sidebar-fg-dim: #83879a;
+  --sidebar-fg-dim: #a3a6b2;
   --sidebar-hover: var(--wash-2);
   --sidebar-active: var(--wash-3);
 
   --text: #e7e8ee;
-  --text-dim: #9498a8;
+  --text-dim: #a3a6b2;
   /* Fallback values only, visible before JS applies a theme — every token on
      this list is overridden at runtime by applySettings() in state.svelte.ts
      (deriveTheme in theme.ts), predefined scheme or custom accent alike, so
@@ -110,13 +127,13 @@
 
   /* Type scale: four sizes, deliberate weight jumps between them rather than
      leaning on color/opacity alone to separate a modal title from a label. */
-  --text-title-size: 1.05rem;
-  --text-title-weight: 700;
-  --text-heading-size: 0.72rem;
-  --text-heading-weight: 700;
-  --text-label-size: 0.78rem;
+  --text-title-size: 1.14rem;
+  --text-title-weight: 600;
+  --text-heading-size: 0.79rem;
+  --text-heading-weight: 600;
+  --text-label-size: 0.86rem;
   --text-label-weight: 500;
-  --text-body-size: 0.85rem;
+  --text-body-size: 0.93rem;
   --text-body-weight: 400;
 
   /* Layout rhythm. The chat panel floats with --chat-margin around it and
@@ -218,9 +235,9 @@
   /* Informational only (pointer-events: none), so it may sit over everything. */
   --z-tooltip: 130;
 
-  --ui-font-family: "Questrial", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --logo-font-family: "Departure Mono", ui-monospace, monospace;
-  --code-font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  --code-font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --ui-font-size: 14px;
   --code-font-size: 12.5px;
   /* Multiplier on transition/animation durations — Settings > Appearance;
@@ -473,14 +490,20 @@ pre {
   font-size: var(--code-font-size);
 }
 
-/* Placeholder text always reads as "not a value yet" — lower contrast and
-   italic, so a real value (plain, full --text) is never confused with one,
-   most importantly in the credentials fields under Settings > Providers and
+/* Signal colors are tuned for dark surfaces; on a light one they need to be deeper to stay readable as text. */
+:root[data-scheme="light"] {
+  --success-base: #1a7f47;
+  --warning-base: #a56a00;
+  --danger-base: #c93636;
+  --info-base: #2563c9;
+}
+
+/* Placeholder text always reads as "not a value yet" — lower contrast, so a real value
+   (plain, full --text) is never confused with one, most importantly in the credentials fields under Settings > Providers and
    the Connect screen. */
 ::placeholder {
   color: var(--text-dim);
-  opacity: 0.65;
-  font-style: italic;
+  opacity: 0.75;
 }
 
 /* One empty-state recipe (icon over one-line copy, centered) shared by the
@@ -714,7 +737,7 @@ button.sb-card.selected:hover {
 }
 .sb-meter-note {
   flex-shrink: 0;
-  font-size: 0.64rem;
+  font-size: 0.79rem;
   color: var(--text-dim);
 }
 .sb-bar {
@@ -742,7 +765,7 @@ button.sb-card.selected:hover {
   flex-shrink: 0;
   min-width: 2.2rem;
   text-align: right;
-  font-size: 0.74rem;
+  font-size: 0.79rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -862,7 +885,7 @@ button.sb-row-main {
   padding: 0.71rem;
   text-align: center;
   color: var(--text-dim);
-  font-size: 0.78rem;
+  font-size: 0.79rem;
 }
 
 /* The only drag region. Electron applies drag and no-drag areas in document

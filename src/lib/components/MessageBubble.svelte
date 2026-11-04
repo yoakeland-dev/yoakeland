@@ -234,7 +234,7 @@
     position: static;
   }
   .author {
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     margin: 0 0.2rem 0.25rem;
   }
@@ -242,13 +242,13 @@
     display: inline-flex;
     align-items: center;
     gap: 0.21rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     margin: 0 0.2rem 0.25rem;
   }
   .reset { display: flex; align-items: center; gap: 0.7rem; }
   .reset-text { display: flex; flex-direction: column; line-height: 1.25; }
-  .reset-text span { font-size: 0.78rem; color: var(--text-dim); }
+  .reset-text span { font-size: 0.79rem; color: var(--text-dim); }
   /* A full meter: the limit is back to 100%. */
   .ring {
     position: relative;
@@ -271,7 +271,7 @@
     align-items: center;
     gap: 0.5rem;
     margin: 0.25rem 0.2rem 0;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .action {
@@ -376,7 +376,7 @@
     background: none;
     border: none;
     color: var(--accent);
-    font-size: 0.75rem;
+    font-size: 0.79rem;
     padding: 0.2rem 0;
     cursor: pointer;
   }
@@ -412,7 +412,7 @@
   .strip .avatar {
     width: 18px;
     height: 18px;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
   }
 
   /* Phone: no hover, so the row's actions stay in view (quietly), with a finger-sized hit area

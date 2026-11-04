@@ -579,7 +579,7 @@
     border-radius: var(--radius-xs);
     background: var(--wash-3);
     font-family: inherit;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: 500;
     opacity: 0.7;
   }
@@ -635,7 +635,7 @@
     border-radius: var(--radius-xs);
     background: var(--wash-2);
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-variant-numeric: tabular-nums;
   }
   .other {

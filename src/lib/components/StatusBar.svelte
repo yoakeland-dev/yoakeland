@@ -131,7 +131,7 @@
     /* Floating main area: blends into the window; flat keeps its own bar and hairline. */
     background: var(--bg);
     color: var(--statusbar-fg);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

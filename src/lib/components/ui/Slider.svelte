@@ -390,7 +390,7 @@
     border: 1px solid var(--panel-border-top);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
     font-family: var(--code-font-family);
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     line-height: 1.5;
     color: var(--text);
     white-space: nowrap;
@@ -422,7 +422,7 @@
     left: calc(var(--t) / 2 + var(--k) * (100% - var(--t)));
     translate: -50% 0;
     padding: 0.1rem 0.35rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     background: none;
     border: none;

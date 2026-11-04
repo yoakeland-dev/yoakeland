@@ -56,7 +56,7 @@
      so the popover doesn't resize as the pointer moves along the dial. */
   .hint {
     margin: 0;
-    font-size: 0.76rem;
+    font-size: 0.79rem;
     line-height: 1.4;
     color: var(--text);
     min-height: 2.8em;
@@ -68,7 +68,7 @@
   }
   .note {
     margin: 0;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     line-height: 1.3;
     color: var(--text-dim);
     min-height: 2.6em;
@@ -89,7 +89,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.28rem;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .cell i {

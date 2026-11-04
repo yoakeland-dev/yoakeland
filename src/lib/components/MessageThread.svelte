@@ -66,7 +66,7 @@
   }
   .note {
     margin-top: 0.3rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
   }
   .reply {
     display: flex;

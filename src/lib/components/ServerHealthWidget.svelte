@@ -189,7 +189,7 @@
   }
   .more {
     margin-left: 0.29rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     opacity: 0.8;
   }
   .metric {
@@ -285,7 +285,7 @@
   }
   .gb {
     align-self: flex-end;
-    font-size: 0.64rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
   }

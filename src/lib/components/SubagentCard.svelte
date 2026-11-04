@@ -158,7 +158,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .head {
@@ -216,8 +216,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: ui-monospace, monospace;
-    font-size: 0.72rem;
+    font-family: inherit;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .asking .meta {
@@ -267,7 +267,7 @@
     border: none;
     color: var(--text-dim);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     cursor: pointer;
@@ -280,7 +280,7 @@
     padding: var(--space-1);
     background: rgba(0, 0, 0, 0.25);
     border-radius: var(--radius-sm);
-    font-size: 0.75rem;
+    font-size: 0.79rem;
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 16rem;

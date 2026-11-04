@@ -181,7 +181,7 @@
     max-width: 22rem;
   }
   :global(.live-item .label) {
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
 </style>

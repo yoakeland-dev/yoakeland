@@ -20,7 +20,7 @@
     align-items: baseline;
     flex-shrink: 0;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     opacity: 0.8;
     white-space: nowrap;

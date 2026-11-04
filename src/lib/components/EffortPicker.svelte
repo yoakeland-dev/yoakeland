@@ -176,7 +176,7 @@
     padding: 0.43rem 0.57rem 0.29rem;
   }
   .panel-heading {
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -230,13 +230,13 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.29rem 0.57rem 0.36rem;
-    font-size: 0.74rem;
+    font-size: 0.79rem;
     color: var(--text);
     cursor: pointer;
   }
   .line em {
     font-style: normal;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     margin-left: 0.3rem;
   }

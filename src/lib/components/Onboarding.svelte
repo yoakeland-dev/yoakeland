@@ -691,9 +691,8 @@
     outline: none;
   }
   h1.big {
-    font-family: var(--logo-font-family);
-    font-weight: 400;
     font-size: 1.6rem;
+    letter-spacing: -0.01em;
   }
   .sub {
     margin: 0 auto var(--space-2);

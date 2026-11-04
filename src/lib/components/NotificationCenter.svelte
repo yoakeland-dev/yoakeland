@@ -278,8 +278,10 @@
     padding: 0 0.21rem;
     border-radius: var(--radius-pill);
     background: var(--accent);
-    color: #0d1020;
-    font-size: 0.64rem;
+    color: var(--panel-bg);
+    font-size: 0.71rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
     line-height: 0.93rem;
     text-align: center;
   }

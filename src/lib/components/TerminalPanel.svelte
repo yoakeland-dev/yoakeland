@@ -465,7 +465,7 @@
     border-radius: 999px;
     border: 1px solid var(--panel-border);
     color: var(--text-dim);
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     line-height: 1.3;
   }
 

@@ -368,7 +368,7 @@
     background: none;
     color: var(--text-dim);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -430,7 +430,7 @@
     justify-content: space-between;
     gap: 0.4rem;
     padding: 0.4rem 0.5rem 0.2rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .row {
@@ -479,16 +479,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--font-mono, monospace);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .sub.plain {
     font-family: inherit;
-    font-size: 0.76rem;
+    font-size: 0.79rem;
   }
   .tag {
     flex-shrink: 0;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     font-weight: 400;
     color: var(--accent);
   }

@@ -694,7 +694,7 @@
     display: flex;
     align-items: center;
     gap: 0.36rem;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     font-weight: 600;
     color: var(--text);
   }
@@ -709,7 +709,7 @@
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-sm);
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     white-space: nowrap;
     cursor: pointer;
   }
@@ -745,7 +745,7 @@
     border: none;
     border-radius: var(--radius-xs);
     color: var(--text);
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     cursor: pointer;
   }
   .acct-row:hover {
@@ -769,7 +769,7 @@
   }
   .acct-note {
     margin: 0.29rem 0.43rem 0.14rem;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .acct-strip {
@@ -837,7 +837,7 @@
   }
   .hint {
     margin: 0.86rem 0.43rem;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .hint.loading {
@@ -885,7 +885,7 @@
     display: flex;
     align-items: center;
     gap: 0.29rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .star-btn {
@@ -924,7 +924,7 @@
     border-block-color: var(--panel-border-top) var(--panel-border-bottom);
     border-radius: var(--radius-sm);
     color: var(--text-dim);
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     cursor: pointer;
   }
   .add-provider:hover {

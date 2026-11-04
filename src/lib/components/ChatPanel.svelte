@@ -405,7 +405,7 @@
     border-block-color: var(--float-border-top) var(--float-border-bottom);
     border-radius: var(--radius-pill);
     padding: 0.36rem 0.86rem;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
     /* Held back so a quick local fetch never flashes it. */

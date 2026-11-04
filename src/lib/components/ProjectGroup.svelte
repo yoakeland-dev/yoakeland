@@ -223,7 +223,7 @@
     padding: 0.24rem 0.26rem 0.24rem calc(0.57rem + var(--project-indent, 0rem));
     border-radius: var(--radius-sm);
     cursor: pointer;
-    font-size: 0.76rem;
+    font-size: 0.79rem;
     font-weight: 600;
     color: var(--sidebar-fg-dim);
     background: none;
@@ -321,7 +321,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     opacity: 0.7;
     transition: opacity calc(0.15s * var(--anim-speed, 1)) ease;
   }
@@ -350,7 +350,7 @@
   .empty {
     margin: 0;
     padding: 0.36rem 0.71rem 0.36rem calc(var(--row-indent) + 1.3rem);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--sidebar-fg-dim);
   }
   .link {

@@ -268,7 +268,7 @@
     margin: 0;
     padding: 0.18rem 0.65rem;
     border-radius: var(--radius-pill);
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight, 600);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -431,7 +431,7 @@
     white-space: nowrap;
     padding: 0.08rem 0.45rem;
     border-radius: var(--radius-xs);
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     font-family: var(--code-font-family);
     color: var(--text-dim);
     background: color-mix(in srgb, var(--text) 6%, transparent);
