@@ -1594,7 +1594,7 @@
     gap: 0.43rem;
     border-radius: inherit;
     background: color-mix(in srgb, var(--float-bg) 85%, var(--accent));
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: 0.86rem;
     font-weight: 500;
     pointer-events: none;
@@ -1692,7 +1692,7 @@
     border-left: 2px solid var(--accent);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     background: color-mix(in srgb, var(--accent) 8%, transparent);
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: var(--text-label-size);
   }
   .editing-label {
@@ -1844,7 +1844,7 @@
   .m-scope {
     flex-shrink: 0;
     font-size: 0.79rem;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .skills {
     display: grid;
@@ -2017,7 +2017,7 @@
   }
   mark {
     background: none;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   /* Collapses to nothing when compact (0fr), leaving the text field and the send button. */
   .toolbar-clip {
@@ -2274,6 +2274,12 @@
       border-radius: 0;
     }
     /* The dock: ask card and composer as one surface floating 8px off the edges. */
+    /* The notice stays exactly as wide as the shared surface it tucks under. */
+    .stack :global(.notices) {
+      margin: 0 8px -24px;
+      padding-bottom: 24px;
+      border-radius: 24px 24px 0 0;
+    }
     .surface {
       display: block;
       margin-inline: 8px;

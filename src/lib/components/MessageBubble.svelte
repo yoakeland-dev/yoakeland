@@ -375,7 +375,7 @@
     gap: 0.21rem;
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: 0.79rem;
     padding: 0.2rem 0;
     cursor: pointer;

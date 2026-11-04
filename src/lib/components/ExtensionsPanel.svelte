@@ -490,7 +490,7 @@
     flex-shrink: 0;
     font-size: 0.79rem;
     font-weight: 400;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .dot {
     flex-shrink: 0;

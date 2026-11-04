@@ -185,7 +185,7 @@
     color: var(--warning);
   }
   .busy {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .spin {
     display: inline-flex;

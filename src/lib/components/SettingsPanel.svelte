@@ -2698,7 +2698,7 @@
     background: var(--accent);
   }
   :global(.settings-tab-trigger[data-state="active"] .icon) {
-    color: var(--accent);
+    color: var(--accent-ink);
     opacity: 1;
   }
   :global(.settings-tab-trigger.tab-dim) {
@@ -3108,7 +3108,7 @@
   }
   .bind-prompt {
     font-size: var(--text-label-size);
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .bind-x {
     display: inline-flex;
@@ -4429,7 +4429,7 @@
     background: none;
     border: 0;
     border-radius: var(--radius-pill);
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-weight: 600;
   }

@@ -149,7 +149,7 @@
     color: var(--text-dim);
   }
   .badge.allow {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .badge.deny {
     color: var(--danger);

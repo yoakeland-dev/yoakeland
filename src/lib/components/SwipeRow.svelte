@@ -146,7 +146,7 @@
   }
   .act:last-child {
     background: color-mix(in srgb, var(--accent) 22%, var(--bg));
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .act.danger {
     background: color-mix(in srgb, var(--danger) 18%, var(--bg));

@@ -686,7 +686,7 @@ import { haptic } from "../haptics";
       overflow: hidden;
       white-space: nowrap;
       font-size: var(--text-label-size);
-      color: var(--accent);
+      color: var(--accent-ink);
       background: var(--accent-dim);
       border-radius: var(--radius-sm);
       pointer-events: none;

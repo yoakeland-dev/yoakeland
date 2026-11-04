@@ -1,13 +1,13 @@
 ---
 name: Yoake
-description: A calm, dark, hue-agnostic client for supervising many agent chats. One accent drives every color.
+description: A calm, dark client for supervising many agent chats. One accent tints every surface, so nothing reads as black and white.
 colors:
   accent: "#7c9bff"
-  ground: "hsl(226 12% 6%)"
-  panel: "hsl(226 10% 9%)"
-  text: "hsl(226 10% 92%)"
-  text-dim: "hsl(226 7% 72%)"
-  edge: "hsla(226 20% 95% / 0.08)"
+  ground: "hsl(226 34% 8%)"
+  panel: "hsl(226 30% 12%)"
+  text: "hsl(226 40% 95%)"
+  text-dim: "hsl(226 26% 80%)"
+  edge: "hsla(226 50% 85% / 0.11)"
   danger: "#ff6b6b"
   success: "#58d68d"
   warning: "#f0b429"
@@ -58,7 +58,7 @@ components:
 
 **Creative North Star: "The Night Desk"**
 
-A dim desk where the work is lit and everything else stays out of the way. Surfaces are a few quiet steps of one hue; the accent is the lamp. Nothing shouts until an agent needs you. This describes the system as built; the name is proposed and not yet confirmed.
+A dim desk at blue hour, where the work is lit and everything else stays out of the way. Surfaces are a few quiet steps of one visible hue, never neutral black; the accent is the lamp. Nothing shouts until an agent needs you. This describes the system as built; the name is proposed and not yet confirmed.
 
 The direction is "more professional and production-ready, comfort kept": this file records the system as built plus the rules it is being tightened toward, and is not a promise to preserve every current detail.
 
@@ -73,22 +73,23 @@ Color is never a fixed palette. The user picks one accent (a hue slider, one of 
 
 ## Colors
 
-Low-saturation surfaces so the accent (often 60 to 90% saturation) is the only loud thing.
+Surfaces carry the hue at 30 to 40% saturation, dark enough that the accent (often 60 to 90%) stays the loudest thing. Selection and hover are tints of the hue, not gray.
 
 ### Primary
 - **Accent** (default `#7c9bff`, user-chosen): on-state, focus ring, selection, active tab, links, caret. Used on a small share of any screen.
 
 ### Neutral
-- **Ground** (`hsl(h 12% 6%)`): the window behind panels.
-- **Panel** (`hsl(h 10% 9%)`): the chat, sidebars, drawers.
-- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 7% 72%)`, 8.8:1 on panel): body and secondary.
-- **Edge** (`hsla(h 20% 95% / 0.08)`): the one hairline. Same value on all four sides.
+- **Ground** (`hsl(h 34% 8%)`): the window behind panels.
+- **Panel** (`hsl(h 30% 12%)`): the chat, sidebars, drawers.
+- **Text** (`hsl(h 40% 95%)`) and **Text dim** (`hsl(h 26% 80%)`): body and secondary.
+- **Edge** (`hsla(h 50% 85% / 0.11)`): the one hairline. Same value on all four sides.
 - **Washes** (`--wash-1..4`, 4/6/9/14% of text): rest, hover, active, strong edge. Always these four, never white or black literals.
 
 ### Semantic
-Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure and for destructive intent (hover); a warning that's standing state stays quiet: plain dim text.
+State shows in color wherever it helps: a finished step is green, a failed one red, a step waiting on you amber. Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure and for destructive intent (hover); a warning that's standing state stays quiet: plain dim text.
 
 ### Named Rules
+**The Blue Hour Rule.** Nothing is pure black, white or gray. A screen that could be mistaken for grayscale has lost the theme.
 **The One Hue Rule.** Every neutral is derived from the accent hue. A component that hard-codes a gray or a white alpha breaks on light themes and on sampled accents.
 **The Provider Rule.** A provider's brand color appears only on things that belong to that provider (`usage.ts` `BRANDS`). Everything else uses the accent.
 **The Wallpaper Rule.** The wallpaper shows only on the new-chat empty state. It may supply the accent; it never tints surfaces directly.
@@ -159,6 +160,7 @@ At rest it shows only what's nowhere else: server health, branch, usage, spend, 
 ## Do's and Don'ts
 
 ### Do:
+- **Do** check a new piece on `/__preview/components`, the sheet of real components with hover, focus and pressed forced on.
 - **Do** derive any new color from `--accent`, `--text`, `--panel-bg` or the wash tokens.
 - **Do** pick a radius by nesting depth: lg, sm, xs. Use `--radius-float` only for the composer and ask card.
 - **Do** keep a screen to one focal element and push secondary numbers behind a drill or tab.

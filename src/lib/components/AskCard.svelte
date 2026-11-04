@@ -421,7 +421,7 @@
   }
   .kind {
     display: inline-flex;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .owner {
     display: flex;
@@ -616,7 +616,7 @@
   }
   /* A question already answered, revisited with Back. */
   .options button.chosen {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .options button.chosen .num {
     background: var(--accent);

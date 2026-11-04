@@ -76,16 +76,16 @@ export function deriveTheme(accentHex: string, mode: "dark" | "light"): ThemeTok
     panelBorderTop: `hsla(${h} 50% 85% / 0.11)`,
     panelBorderBottom: `hsla(${h} 50% 85% / 0.11)`,
     sidebarFg: `hsl(${h} 30% 88%)`,
-    sidebarFgDim: `hsl(${h} 22% 76%)`,
+    sidebarFgDim: `hsl(${h} 26% 80%)`,
     sidebarHover: `hsla(${h} 70% 78% / 0.09)`,
     sidebarActive: `hsla(${h} 80% 72% / 0.2)`,
     text: `hsl(${h} 40% 95%)`,
-    textDim: `hsl(${h} 22% 76%)`,
+    textDim: `hsl(${h} 26% 80%)`,
     accent: accentHex,
     bubbleUserBg: `hsl(${h} 38% 21%)`,
     bubbleBorder: `hsla(${h} 50% 85% / 0.11)`,
     statusbarBg: `hsl(${h} 34% 8%)`,
-    statusbarFg: `hsl(${h} 22% 76%)`,
+    statusbarFg: `hsl(${h} 26% 80%)`,
   };
 }
 

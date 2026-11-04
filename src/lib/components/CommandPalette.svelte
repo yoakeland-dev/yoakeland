@@ -865,7 +865,7 @@
     background: var(--sidebar-hover);
   }
   :global(.palette-item[data-selected] .icon) {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   :global(.palette-item) .label {
     white-space: nowrap;

@@ -194,7 +194,7 @@
     flex: none;
     width: 1rem;
     height: 1rem;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .icon > span {
     position: absolute;

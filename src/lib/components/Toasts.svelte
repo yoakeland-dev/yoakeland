@@ -405,7 +405,7 @@
     align-self: center;
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-size: var(--text-label-size);
     font-weight: 600;

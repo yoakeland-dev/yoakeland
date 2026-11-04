@@ -147,6 +147,6 @@
     color: var(--text-dim);
   }
   .counts .behind {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
 </style>

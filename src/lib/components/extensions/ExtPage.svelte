@@ -160,7 +160,7 @@
     padding: 0;
     border: none;
     background: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-size: var(--text-label-size);
     cursor: pointer;

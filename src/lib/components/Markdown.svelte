@@ -384,7 +384,7 @@
     margin: 0.2em 0;
   }
   .markdown :global(a) {
-    color: var(--accent);
+    color: var(--accent-ink);
     text-decoration: underline;
     text-underline-offset: 2px;
     cursor: pointer;

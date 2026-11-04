@@ -104,7 +104,7 @@
     background: color-mix(in srgb, var(--text) 10%, transparent);
   }
   .btn.on {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .title {
     flex: 1;

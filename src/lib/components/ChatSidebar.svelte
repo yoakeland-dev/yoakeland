@@ -372,7 +372,7 @@
     color: var(--text);
   }
   .tab.active {
-    color: var(--accent);
+    color: var(--accent-ink);
     background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .tab-title {
@@ -448,7 +448,7 @@
     height: 2rem;
     margin-bottom: 0.21rem;
     border-radius: var(--radius-sm);
-    color: var(--accent);
+    color: var(--accent-ink);
     background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .card-label {

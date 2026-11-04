@@ -138,7 +138,7 @@
     opacity: 0.6;
   }
   .in_progress {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .in_progress .mark :global(svg) {
     animation: todo-spin 1.2s linear infinite;

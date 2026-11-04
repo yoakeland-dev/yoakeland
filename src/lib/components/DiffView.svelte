@@ -133,7 +133,7 @@
     background: var(--wash-1);
     border: none;
     border-top: 1px solid var(--panel-border);
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     cursor: pointer;
   }

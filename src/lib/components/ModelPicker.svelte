@@ -662,7 +662,7 @@
   }
   .tab.active {
     background: var(--accent-dim);
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .tab.settings {
     margin-top: auto;
@@ -721,7 +721,7 @@
   .acct-chip.active {
     background: var(--accent-dim);
     border-color: transparent;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .acct-pop {
     position: absolute;
@@ -755,7 +755,7 @@
   .acct-check {
     width: 0.86rem;
     flex-shrink: 0;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .acct-name {
     flex: 1;

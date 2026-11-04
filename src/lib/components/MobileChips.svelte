@@ -142,7 +142,7 @@
   .chip.on {
     background: color-mix(in srgb, var(--accent) 22%, var(--bg));
     border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .n {
     font-size: 0.8em;

@@ -324,7 +324,7 @@
     height: 1.9rem;
     border-radius: 50%;
     background: var(--accent-dim);
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   :global(.pair-hint) {
     margin: 0;

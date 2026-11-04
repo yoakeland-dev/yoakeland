@@ -207,7 +207,7 @@
   .plan-chip.on {
     background: var(--accent-dim);
     border-color: transparent;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .line {
     display: flex;

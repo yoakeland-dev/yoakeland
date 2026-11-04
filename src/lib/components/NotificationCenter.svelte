@@ -502,7 +502,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     background: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-weight: 600;
   }

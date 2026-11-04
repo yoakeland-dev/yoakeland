@@ -677,7 +677,7 @@
   }
   .dot {
     margin-left: 0.36rem;
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: 0.7em;
   }
   .btn {
@@ -827,7 +827,7 @@
     animation: floatIn var(--float-enter-duration, 0.12s) ease-out;
   }
   .ask-pill:hover {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .status {
     display: flex;

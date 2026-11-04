@@ -113,6 +113,7 @@
   // One kind of tool shows its own glyph; a mixed step keeps the wrench.
   const restIcon = $derived.by(() => {
     const icons = new Set(calls.map((c) => metaFor(c).icon));
+    if (isRunning && latest) return metaFor(latest).icon;
     return icons.size === 1 ? [...icons][0] : "tool";
   });
   const secs = $derived(durationMs ? `${Math.max(1, Math.round(durationMs / 1000))}s` : "");

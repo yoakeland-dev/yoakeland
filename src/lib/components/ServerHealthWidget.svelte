@@ -256,7 +256,7 @@
     gap: 0.21rem;
   }
   .busy {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .meters {
     flex-shrink: 0;

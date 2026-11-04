@@ -187,7 +187,7 @@
     cursor: pointer;
   }
   .restore:hover:not(:disabled) {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .restore:disabled {
     opacity: 0.5;

@@ -86,7 +86,7 @@
   button {
     border: 0;
     background: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     cursor: pointer;
   }
   button:disabled {

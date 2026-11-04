@@ -210,7 +210,7 @@
     white-space: nowrap;
   }
   .old {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .ver {
     color: var(--text-dim);
@@ -263,7 +263,7 @@
   .app-update {
     margin: 0.5rem 0 0;
     font-size: var(--text-label-size);
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .app-update button {
     background: none;

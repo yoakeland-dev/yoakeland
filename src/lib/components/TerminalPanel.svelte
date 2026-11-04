@@ -504,7 +504,7 @@
     color: var(--danger);
   }
   .bar-btn.on {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .bar-btn:disabled {
     opacity: 0.35;
@@ -634,7 +634,7 @@
   }
   .split-mark {
     display: flex;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .rename {
     flex: 1;

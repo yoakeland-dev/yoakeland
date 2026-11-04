@@ -316,7 +316,7 @@
     padding: 0.1rem 0.5rem;
     border-radius: var(--radius-xs);
     background: var(--accent-dim);
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: 0.79rem;
     font-weight: 500;
     text-transform: uppercase;

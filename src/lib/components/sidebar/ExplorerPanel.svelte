@@ -678,7 +678,7 @@
   .tab-x .dot {
     display: none;
     font-size: 0.79rem;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .tab-x.dirty:not(:hover) .dot {
     display: block;
@@ -780,7 +780,7 @@
     color: var(--text);
   }
   .row.current .label {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .row :global(.icon) {
     color: var(--text-dim);

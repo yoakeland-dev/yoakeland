@@ -358,7 +358,7 @@
     border: none;
     padding: 0;
     font: inherit;
-    color: var(--accent);
+    color: var(--accent-ink);
     cursor: pointer;
   }
   .link:hover {

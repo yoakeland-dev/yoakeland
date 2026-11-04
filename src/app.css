@@ -63,6 +63,8 @@
      the whole UI recolors, not just the accent swatch. */
   --accent: #7c9bff;
   --accent-dim: color-mix(in srgb, var(--accent) 15%, transparent);
+  /* The accent as text. A pale accent is fine on a dark panel; on light it needs to go deep enough to read. */
+  --accent-ink: var(--accent);
   --danger-base: #ff6b6b;
   --danger: var(--danger-base);
   --danger-dim: rgba(255, 107, 107, 0.15);
@@ -83,13 +85,14 @@
   --statusbar-bg: #10141c;
   --statusbar-fg: #9498a8;
 
-  /* Washes: the four tints a surface takes at rest, hover, active and edge. Mixed from --text
+  /* Washes: the four tints a surface takes at rest, hover, active and edge. Mixed from text and accent
      rather than white, so they follow whichever theme, accent hue or light/dark mode is on and
      the Quiet Room dimming. Never write rgba(255,255,255,x) in a component. */
-  --wash-1: color-mix(in srgb, var(--text) 4%, transparent);
-  --wash-2: color-mix(in srgb, var(--text) 6%, transparent);
-  --wash-3: color-mix(in srgb, var(--text) 9%, transparent);
-  --wash-4: color-mix(in srgb, var(--text) 14%, transparent);
+  --wash-ink: color-mix(in srgb, var(--accent) 35%, var(--text));
+  --wash-1: color-mix(in srgb, var(--wash-ink) 5%, transparent);
+  --wash-2: color-mix(in srgb, var(--wash-ink) 8%, transparent);
+  --wash-3: color-mix(in srgb, var(--wash-ink) 11%, transparent);
+  --wash-4: color-mix(in srgb, var(--wash-ink) 17%, transparent);
 
   /* Radii follow the inset rule: a child's radius is its container's radius
      minus the gap between their edges (padding + border), so the curves stay
@@ -262,16 +265,17 @@
      --float-hover-bg is the resting wash the pills use when they light up,
      which has to be a solid-ish tone of its own (a translucent pill only
      frosts once it's hovered). */
-  --float-bg: var(--panel-bg);
+  /* One clear step above the panel, so a question or menu reads as lifted. */
+  --float-bg: oklch(from var(--panel-bg) calc(l + 0.035) c h);
   --float-hover-bg: var(--wash-2);
   --float-blur: none;
   /* The outline of a floating surface, split into the same two halves
      --panel-border is (see above) — an exact alias of it in opaque mode, and a
      little stronger once the surface is translucent: a blurred backdrop behind
      the edge costs the hairline the contrast an opaque panel gets for free. */
-  --float-border: var(--wash-3);
-  --float-border-top: var(--wash-3);
-  --float-border-bottom: var(--wash-3);
+  --float-border: var(--wash-4);
+  --float-border-top: var(--wash-4);
+  --float-border-bottom: var(--wash-4);
 
   /* One in/out animation for every floating surface in the app (popovers,
      dropdowns, the context menu, dialogs, the @mention list) — see the
@@ -437,7 +441,7 @@
 }
 
 .chrome-surface .chrome-btn.active {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* The lamp: a chat is waiting on you. One dot, used on its sidebar row, its tab and its hover card. */
@@ -494,6 +498,8 @@ pre {
 
 /* Signal colors are tuned for dark surfaces; on a light one they need to be deeper to stay readable as text. */
 :root[data-scheme="light"] {
+  --accent-ink: oklch(from var(--accent) min(l, 0.48) c h);
+  --float-bg: var(--panel-bg);
   --lamp: #e08a00;
   --shadow-pop: 0 8px 24px rgba(20, 22, 30, 0.12);
   --shadow-dialog: 0 16px 48px rgba(20, 22, 30, 0.16);

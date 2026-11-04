@@ -1297,7 +1297,7 @@
     background: var(--sidebar-hover);
   }
   .tab.on :global(.icon) {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .quick-row {
     display: flex;
@@ -1322,7 +1322,7 @@
     background: var(--sidebar-hover);
   }
   .new-chat :global(.icon) {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   /* Always mounted and eased shut, rather than unmounted with `slide`: the sidebar's flex gap
      after it only goes when the node does, which made the list jump by a gap at the end. Shut,
@@ -1567,7 +1567,7 @@
   }
   .starter :global(.icon) {
     flex-shrink: 0;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .starter:hover {
     background: var(--sidebar-hover);
@@ -1590,7 +1590,7 @@
     border: none;
     padding: 0;
     font: inherit;
-    color: var(--accent);
+    color: var(--accent-ink);
     cursor: pointer;
   }
   .link:hover {
@@ -1616,7 +1616,7 @@
     background: var(--sidebar-hover);
   }
   :global(.filter-btn.on) {
-    color: var(--accent);
+    color: var(--accent-ink);
     background: var(--sidebar-active);
   }
   .filter-dot {

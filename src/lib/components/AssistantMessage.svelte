@@ -531,7 +531,7 @@
     background: none;
     border: none;
     padding: 0;
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: inherit;
     cursor: pointer;
     text-decoration: underline;

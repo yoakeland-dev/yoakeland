@@ -939,7 +939,7 @@
     table-layout: fixed;
     font-size: var(--text-label-size);
   }
-    th {
+  th {
     white-space: nowrap;
     text-align: left;
     font-size: var(--text-label-size);
@@ -953,7 +953,6 @@
   td.pad-l {
     padding-left: 0.9rem;
   }
-  /* Alternating rows, so a long line is easy to follow across the table. */
   tbody tr:hover {
     background: var(--wash-2);
   }
