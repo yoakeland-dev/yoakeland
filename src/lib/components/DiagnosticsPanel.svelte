@@ -382,7 +382,7 @@
                     <tr>
                       <td class="pad-l"><span class="label" {@attach tip(p.path)}>{p.name}</span></td>
                       <td class="n dim">{p.chats}</td>
-                      <td class="n" class:bad-text={p.down > 0} {@attach tip(p.down ? `${p.down} not connected` : "")}>{p.mcp ? (p.down ? `${p.mcp - p.down}/${p.mcp}` : p.mcp) : "–"}</td>
+                      <td class="n" {@attach tip(p.down ? `${p.down} not connected` : "")}>{p.mcp ? (p.down ? `${p.mcp - p.down}/${p.mcp}` : p.mcp) : "–"}</td>
                       <td class="n dim">{p.terminals || "–"}</td>
                     </tr>
                   {/each}
@@ -739,8 +739,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .stat.danger .v,
-  .bad-text {
+  .stat.danger .v {
     color: var(--danger);
   }
   .stat.warning .v {
@@ -815,8 +814,10 @@
   .s {
     width: 6rem;
   }
-  .act {
+  .proc .act {
     width: 9rem;
+  }
+  .act {
     text-align: right;
     white-space: nowrap;
   }
@@ -833,6 +834,15 @@
   }
   .kill:hover:not(:disabled) {
     background: var(--wash-3);
+  }
+  @media (hover: hover) {
+    .proc .kill {
+      opacity: 0;
+    }
+    .proc tr:hover .kill,
+    .proc tr:focus-within .kill {
+      opacity: 1;
+    }
   }
   .kill.danger:hover:not(:disabled) {
     color: var(--danger);

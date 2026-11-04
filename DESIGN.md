@@ -3,10 +3,10 @@ name: Yoake
 description: A calm, dark, hue-agnostic client for supervising many agent chats. One accent drives every color.
 colors:
   accent: "#7c9bff"
-  ground: "hsl(226 15% 5%)"
-  panel: "hsl(226 12% 7%)"
+  ground: "hsl(226 12% 6%)"
+  panel: "hsl(226 10% 9%)"
   text: "hsl(226 10% 92%)"
-  text-dim: "hsl(226 6% 62%)"
+  text-dim: "hsl(226 7% 68%)"
   edge: "hsla(226 20% 95% / 0.08)"
   danger: "#ff6b6b"
   success: "#58d68d"
@@ -14,21 +14,21 @@ colors:
   info: "#5b9bff"
 typography:
   title:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "1.05rem"
-    fontWeight: 700
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "1.14rem"
+    fontWeight: 600
   body:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "0.85rem"
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "0.93rem"
     fontWeight: 400
   label:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "0.78rem"
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "0.86rem"
     fontWeight: 500
   heading:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "0.72rem"
-    fontWeight: 700
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "0.79rem"
+    fontWeight: 600
 rounded:
   xs: "4px"
   sm: "6px"
@@ -79,14 +79,14 @@ Low-saturation surfaces so the accent (often 60 to 90% saturation) is the only l
 - **Accent** (default `#7c9bff`, user-chosen): on-state, focus ring, selection, active tab, links, caret. Used on a small share of any screen.
 
 ### Neutral
-- **Ground** (`hsl(h 15% 5%)`): the window behind panels.
-- **Panel** (`hsl(h 12% 7%)`): the chat, sidebars, drawers.
-- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 6% 62%)`): body and secondary.
+- **Ground** (`hsl(h 12% 6%)`): the window behind panels.
+- **Panel** (`hsl(h 10% 9%)`): the chat, sidebars, drawers.
+- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 7% 68%)`, 7.8:1 on panel): body and secondary.
 - **Edge** (`hsla(h 20% 95% / 0.08)`): the one hairline. Same value on all four sides.
 - **Washes** (`--wash-1..4`, 4/6/9/14% of text): rest, hover, active, strong edge. Always these four, never white or black literals.
 
 ### Semantic
-Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room.
+Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure and for destructive intent (hover); a warning that's standing state stays quiet: dim text, a warning-colored icon.
 
 ### Named Rules
 **The One Hue Rule.** Every neutral is derived from the accent hue. A component that hard-codes a gray or a white alpha breaks on light themes and on sampled accents.
@@ -95,17 +95,17 @@ Danger, success, warning, info are fixed signal colors, cooled together by Quiet
 
 ## Typography
 
-**UI Font:** a neutral UI sans (default `Inter`, falling back to the system face). Questrial is only the bundled fallback. **Mono:** Departure Mono for the brand mark, system mono for code. Fonts are changeable in settings and not binding.
+**UI Font:** Inter, bundled. **Mono:** JetBrains Mono, bundled, for code, commands and paths only; status lines and titles are prose and stay in the UI font. Fonts are changeable in settings and not binding.
 
 **Character:** Plain and professional; hierarchy comes from weight jumps, not size sprawl. Numerals that line up (times, counts, costs) use tabular figures.
 
 ### Hierarchy
-- **Title** (700, 1.05rem): dialog and page titles.
-- **Body** (400, 0.85rem): chat and content.
-- **Label** (500, 0.78rem): controls, rows, metadata.
-- **Heading** (700, 0.72rem, uppercase tracking): group headers like NEEDS YOU.
+- **Title** (600, 1.14rem): dialog and page titles.
+- **Body** (400, 0.93rem): chat and content.
+- **Label** (500, 0.86rem): controls, rows, metadata.
+- **Heading** (600, 0.79rem, uppercase tracking): group headers like NEEDS YOU.
 
-Four sizes only, in rem so the UI-size setting scales everything.
+Four sizes only, in rem so the UI-size setting scales everything. Nothing is set below 0.79rem (11px at the default size).
 
 ## Layout
 
@@ -148,10 +148,10 @@ Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a faint a
 `--float-bg`, lg radius, pop or dialog shadow, shared float-in/out motion (0.16s in, 0.12s out).
 
 ### Sidebar tiers
-Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab.
+Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab and a work row waiting on the user (`.status-lamp`).
 
 ### Composer and ask
-One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards.
+One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. A standing notice (no sandbox) is the same width as the composer and tucks under its top corners. In an approval, Reject has a fill like any button and reddens on hover; it's the safe choice, so it's never weaker than Allow.
 
 ## Do's and Don'ts
 

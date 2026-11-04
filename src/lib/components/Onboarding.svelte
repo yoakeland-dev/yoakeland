@@ -717,7 +717,7 @@
   .avatar-block {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-1);
     margin-top: var(--space-1);
   }

@@ -611,7 +611,7 @@
     cursor: pointer;
   }
   .options button.hl {
-    background: var(--sidebar-active);
+    background: var(--accent-dim);
   }
   /* A question already answered, revisited with Back. */
   .options button.chosen {

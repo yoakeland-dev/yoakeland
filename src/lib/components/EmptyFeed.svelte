@@ -256,7 +256,12 @@
   /* The composer's surface (--float-* tokens, app.css): translucent over a blur when Settings >
      Surfaces is frosted, the plain panel fill otherwise. */
   .card,
-  .stat,
+  .stat {
+    background: var(--float-bg);
+    backdrop-filter: var(--float-blur);
+    border: 1px solid var(--float-border);
+    border-block-color: var(--float-border-top) var(--float-border-bottom);
+  }
   h3 {
     margin: 0 0 0.14rem 0.14rem;
     font-size: var(--text-label-size);
