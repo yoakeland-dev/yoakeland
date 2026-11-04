@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import { askLine } from "../chatBrief";
   import { callActivity } from "../activity.svelte";
   import { IN_FLIGHT } from "../subagents";
   import type { ServerState } from "../state.svelte";
@@ -6,7 +7,7 @@
   /** One line on what a chat is doing: the ask it's blocked on, the call in flight, or how its last reply started. */
   export function chatActivity(server: ServerState | undefined, sessionId: string): string {
     const ask = server?.pendingAsks.find((a) => a.sessionId === sessionId);
-    if (ask) return ask.kind === "question" ? ask.question : ask.description || "Needs your approval";
+    if (ask) return ask.kind === "question" ? ask.question : askLine(ask.description) || "Needs your approval";
     const last = (server?.messagesBySession[sessionId] ?? []).findLast((m) => m.role === "assistant");
     // Any call still going, not just the last: parallel subagents outlast the calls after them.
     const going = last?.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));

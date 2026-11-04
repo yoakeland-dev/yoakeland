@@ -939,14 +939,11 @@
     table-layout: fixed;
     font-size: var(--text-label-size);
   }
-  /* The heading style from DESIGN.md: small, uppercase, tracked. */
-  th {
+    th {
     white-space: nowrap;
     text-align: left;
-    font-size: 0.79rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-size: var(--text-label-size);
+    font-weight: 500;
     color: var(--text-dim);
     padding: 0.5rem 0.6rem;
     border-bottom: 1px solid var(--panel-border);
@@ -957,9 +954,6 @@
     padding-left: 0.9rem;
   }
   /* Alternating rows, so a long line is easy to follow across the table. */
-  tbody tr:nth-child(even) {
-    background: var(--wash-1);
-  }
   tbody tr:hover {
     background: var(--wash-2);
   }

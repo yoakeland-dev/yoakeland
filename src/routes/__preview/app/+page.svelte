@@ -494,6 +494,8 @@
           const wave = 1 + Math.sin(i / 4) * 0.7;
           return { h: hour - i * 8 * 3600, s: i % 3, p: 0, m: i % 2, n: 3 + (i % 6), in: Math.round(470_000 * wave), cached: Math.round(400_000 * wave), out: Math.round(12_000 * wave), usd: 0.4 * wave + (i % 5) * 0.1, ms: 90_000 };
         });
+        // The other mock servers never answer either, and a pending fetch would dim the page.
+        for (const srv of Object.values(app.servers)) if (srv.serverId) fetched[srv.serverId] = { loading: false };
         fetched[local.serverId!] = {
           loading: false,
           report: {

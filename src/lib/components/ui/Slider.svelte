@@ -297,7 +297,7 @@
     outline: none;
   }
   .track:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   .slider.disabled .track {
@@ -443,7 +443,7 @@
     color: rgb(var(--lamp));
   }
   .stop:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
   .stop:disabled {

@@ -766,7 +766,7 @@
     background: var(--accent-dim);
   }
   .avatar:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 

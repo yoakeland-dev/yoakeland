@@ -51,7 +51,7 @@
       background calc(0.18s * var(--anim-speed, 1)) ease,
       border-color calc(0.18s * var(--anim-speed, 1)) ease;
   }
-  input:hover:not(:disabled) {
+  input:hover:not(:disabled, :checked) {
     background: var(--sidebar-active);
   }
   input::before {
@@ -74,7 +74,7 @@
     opacity: 0.5;
   }
   input:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 </style>

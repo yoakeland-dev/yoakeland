@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { askLine } from "$lib/chatBrief";
   import { tip } from "../tooltip.svelte";
   // The oldest pending ask (permission or question) as a card that rises out of the composer's
   // top edge; any others stack behind it. Its own buttons answer just this one ask. The composer
@@ -286,7 +287,7 @@
         {:else if command}
           <pre class="command selectable"><span class="prompt">$</span> {command}</pre>
         {:else if permission.description}
-          <p class="desc">{permission.description}</p>
+          <p class="desc">{askLine(permission.description)}</p>
         {/if}
         <div class="actions">
           <button type="button" class="btn danger" onclick={reject}>Reject <kbd>Esc</kbd></button>
@@ -567,11 +568,12 @@
     color: var(--danger);
   }
   .btn.primary {
-    background: color-mix(in srgb, var(--accent) 72%, var(--panel-bg));
+    background: var(--accent);
     color: #0d1020;
+    font-weight: 600;
   }
   .btn.primary:hover {
-    background: var(--accent);
+    background: color-mix(in srgb, var(--accent) 88%, #fff);
   }
   kbd {
     padding: 0.05rem 0.3rem;

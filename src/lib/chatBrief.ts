@@ -78,3 +78,16 @@ export function projectStarters(files: string[] | undefined, dirty: number): Sta
   }
   return out.slice(0, 4);
 }
+
+/** A permission's description arrives as `<tool> on <args JSON>` from the server; keep the JSON out of list rows. */
+export function askLine(description: string): string {
+  const m = /^(\S+) on (\{.*\})$/s.exec(description);
+  if (!m) return description;
+  try {
+    const a = JSON.parse(m[2]);
+    const what = a.command ?? a.file_path ?? a.path ?? a.url ?? a.query ?? a.pattern;
+    return typeof what === "string" ? `${m[1]}: ${what}` : m[1];
+  } catch {
+    return description;
+  }
+}

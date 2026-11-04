@@ -84,7 +84,7 @@
     scale: 0.96;
   }
   .btn:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   .btn:disabled {

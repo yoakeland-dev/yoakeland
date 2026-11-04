@@ -50,42 +50,42 @@ export function deriveTheme(accentHex: string, mode: "dark" | "light"): ThemeTok
   const h = Math.round(hexToHue(accentHex));
   if (mode === "light") {
     return {
-      bg: `hsl(${h} 12% 95%)`,
-      panelBg: `hsl(${h} 20% 100%)`,
-      panelBorder: `hsla(${h} 30% 10% / 0.09)`,
-      panelBorderTop: `hsla(${h} 30% 10% / 0.09)`,
-      panelBorderBottom: `hsla(${h} 30% 10% / 0.09)`,
-      sidebarFg: `hsl(${h} 20% 15%)`,
-      sidebarFgDim: `hsl(${h} 10% 34%)`,
-      sidebarHover: `hsla(${h} 30% 10% / 0.05)`,
-      sidebarActive: `hsla(${h} 30% 10% / 0.11)`,
-      text: `hsl(${h} 20% 9%)`,
-      textDim: `hsl(${h} 10% 34%)`,
+      bg: `hsl(${h} 38% 93%)`,
+      panelBg: `hsl(${h} 60% 99%)`,
+      panelBorder: `hsla(${h} 40% 20% / 0.12)`,
+      panelBorderTop: `hsla(${h} 40% 20% / 0.12)`,
+      panelBorderBottom: `hsla(${h} 40% 20% / 0.12)`,
+      sidebarFg: `hsl(${h} 30% 16%)`,
+      sidebarFgDim: `hsl(${h} 16% 36%)`,
+      sidebarHover: `hsla(${h} 70% 45% / 0.07)`,
+      sidebarActive: `hsla(${h} 80% 50% / 0.14)`,
+      text: `hsl(${h} 35% 12%)`,
+      textDim: `hsl(${h} 16% 36%)`,
       accent: accentHex,
-      bubbleUserBg: `hsl(${h} 18% 93%)`,
-      bubbleBorder: `hsla(${h} 30% 10% / 0.08)`,
-      statusbarBg: `hsl(${h} 12% 95%)`,
-      statusbarFg: `hsl(${h} 10% 34%)`,
+      bubbleUserBg: `hsl(${h} 55% 92%)`,
+      bubbleBorder: `hsla(${h} 40% 20% / 0.1)`,
+      statusbarBg: `hsl(${h} 38% 93%)`,
+      statusbarFg: `hsl(${h} 16% 36%)`,
     };
   }
   return {
-    // Surfaces stay low-saturation so the accent (often 60-90%) pops instead of blending in.
-    bg: `hsl(${h} 12% 6%)`,
-    panelBg: `hsl(${h} 10% 9%)`,
-    panelBorder: `hsla(${h} 20% 95% / 0.08)`,
-    panelBorderTop: `hsla(${h} 20% 95% / 0.08)`,
-    panelBorderBottom: `hsla(${h} 20% 95% / 0.08)`,
-    sidebarFg: `hsl(${h} 10% 85%)`,
-    sidebarFgDim: `hsl(${h} 7% 72%)`,
-    sidebarHover: `hsla(${h} 20% 95% / 0.06)`,
-    sidebarActive: `hsla(${h} 20% 95% / 0.1)`,
-    text: `hsl(${h} 10% 92%)`,
-    textDim: `hsl(${h} 7% 72%)`,
+    // Surfaces carry the hue visibly, like a sky an hour before dawn, and stay dark enough for the accent to lead.
+    bg: `hsl(${h} 34% 8%)`,
+    panelBg: `hsl(${h} 30% 12%)`,
+    panelBorder: `hsla(${h} 50% 85% / 0.11)`,
+    panelBorderTop: `hsla(${h} 50% 85% / 0.11)`,
+    panelBorderBottom: `hsla(${h} 50% 85% / 0.11)`,
+    sidebarFg: `hsl(${h} 30% 88%)`,
+    sidebarFgDim: `hsl(${h} 22% 76%)`,
+    sidebarHover: `hsla(${h} 70% 78% / 0.09)`,
+    sidebarActive: `hsla(${h} 80% 72% / 0.2)`,
+    text: `hsl(${h} 40% 95%)`,
+    textDim: `hsl(${h} 22% 76%)`,
     accent: accentHex,
-    bubbleUserBg: `hsl(${h} 13% 16%)`,
-    bubbleBorder: `hsla(${h} 20% 95% / 0.08)`,
-    statusbarBg: `hsl(${h} 12% 6%)`,
-    statusbarFg: `hsl(${h} 7% 72%)`,
+    bubbleUserBg: `hsl(${h} 38% 21%)`,
+    bubbleBorder: `hsla(${h} 50% 85% / 0.11)`,
+    statusbarBg: `hsl(${h} 34% 8%)`,
+    statusbarFg: `hsl(${h} 22% 76%)`,
   };
 }
 
@@ -123,10 +123,10 @@ export function deriveTerminalTheme(accentHex: string, mode: "dark" | "light"): 
   const h = Math.round(hexToHue(accentHex));
   if (mode === "light") {
     return {
-      background: `hsl(${h} 20% 100%)`,
-      foreground: `hsl(${h} 20% 9%)`,
+      background: `hsl(${h} 60% 99%)`,
+      foreground: `hsl(${h} 35% 12%)`,
       cursor: accentHex,
-      cursorAccent: `hsl(${h} 20% 100%)`,
+      cursorAccent: `hsl(${h} 60% 99%)`,
       selectionBackground: `hsla(${h} 30% 10% / 0.15)`,
       black: "#3f4451",
       red: "#c91b1b",
@@ -147,10 +147,10 @@ export function deriveTerminalTheme(accentHex: string, mode: "dark" | "light"): 
     };
   }
   return {
-    background: `hsl(${h} 12% 7%)`,
-    foreground: `hsl(${h} 10% 92%)`,
+    background: `hsl(${h} 32% 9%)`,
+    foreground: `hsl(${h} 40% 95%)`,
     cursor: accentHex,
-    cursorAccent: `hsl(${h} 12% 7%)`,
+    cursorAccent: `hsl(${h} 32% 9%)`,
     selectionBackground: `hsla(${h} 20% 95% / 0.18)`,
     black: "#3b3f4c",
     red: "#e06c75",
