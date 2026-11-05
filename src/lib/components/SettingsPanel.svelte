@@ -2433,7 +2433,7 @@
                   </Button>
                 {/if}
               </div>
-              <p class="hint">Each person gets their own token. Their chats and git commits carry its name. Names can't change once registered; revoke and re-register to rename.</p>
+              <p class="hint">Each person has their own chats, name and picture, and every device they pair signs in as them. Revoking a device or removing a person disconnects them at once.</p>
               <div class="card">
 
               {#if server?.justRegisteredToken}
