@@ -15,6 +15,10 @@ import type {
   ProjectOpenedData,
   PendingAsksData,
   PeerListData,
+  PeopleData,
+  Profile,
+  Tier,
+  Caps,
   ServerIcon,
   ServerIdentityData,
   SessionHistoryData,
@@ -676,10 +680,43 @@ export class ServerState {
   selfPeerId = $state<string | null>(null);
   /** server_identity's word on this connection's tier; follows peer_list once that names us. */
   tierRestricted = $state(false);
+  /** This connection's tier and caps (server_identity). Null from a server that predates tiers. */
+  tier = $state<Tier | null>(null);
+  caps = $state<Caps | null>(null);
+  /** The person this connection acts as (server_identity). Null from a server that predates people. */
+  user = $state<Profile | null>(null);
+  /** Authors in the chats seen so far, by person id, kept current by `profile_updated`. */
+  profiles = $state<Record<string, Profile>>({});
+  /** Everyone this connection may manage (`people`); null until asked or when it isn't allowed. */
+  people = $state<PeopleData | null>(null);
+  /** Trusted or Full; always true on the local socket and on a server that predates tiers. */
+  get canAdmin(): boolean {
+    if (this.connectionMode === "local") return true;
+    if (this.tier) return this.tier !== "limited";
+    return !this.limited;
+  }
+  get isFull(): boolean {
+    return this.connectionMode === "local" || (this.tier ? this.tier === "full" : !this.limited);
+  }
+  /** The tier to show: what the server said, else full/limited from `restricted`. */
+  get tierName(): Tier {
+    if (this.connectionMode === "local") return "full";
+    return this.tier ?? (this.limited ? "limited" : "full");
+  }
+  /** My name and picture: the server's word for me, else this device's local profile (old server). */
+  get me(): Profile {
+    return this.user ?? { name: this.app.settings.profileName, avatar: this.app.settings.profileAvatar };
+  }
+  /** Name and picture to draw for a message: the person's current profile, else what was stored. */
+  profileOf(m: { authorId?: string; author?: string; authorAvatar?: string }): Profile {
+    const p = m.authorId ? (m.authorId === this.user?.id ? this.user : this.profiles[m.authorId]) : undefined;
+    return { name: p?.name ?? m.author ?? "", avatar: p?.avatar || m.authorAvatar };
+  }
   /** True when the server holds this connection to the paired-device scope (a phone's code). The
    * local socket and full-access credentials are never limited. */
   get limited(): boolean {
     if (this.connectionMode === "local") return false;
+    if (this.tier) return this.tier !== "full";
     const me = this.peers.find((p) => p.peerId === this.selfPeerId);
     return me ? !!me.restricted : this.tierRestricted;
   }
@@ -721,7 +758,7 @@ export class ServerState {
   // `justRegisteredToken` holds the one-time raw token so Settings can show a "copy this now" reveal.
   tokens = $state<TokenInfo[]>([]);
   /** Devices that scanned a pairing QR code and are waiting for this (local) client to let them in. */
-  pairingRequests = $state<{ credential: string; name?: string; deviceType?: string; ip?: string }[]>([]);
+  pairingRequests = $state<{ credential: string; name?: string; deviceType?: string; ip?: string; userName?: string; tier?: Tier }[]>([]);
   /** Set on a connection that is itself waiting to be let in by the desktop it scanned. */
   awaitingApproval = $state(false);
   justRegisteredToken = $state<{ name: string; token: string; caPem?: string; rtcFp?: string } | null>(null);
@@ -1501,8 +1538,9 @@ export class ServerState {
     if (!onlyNew || !files[path]) files[path] = t;
   }
 
-  applySessionHistory(sessionId: string, messages: HistoryMessage[]) {
+  applySessionHistory(sessionId: string, messages: HistoryMessage[], profiles?: Record<string, Profile>) {
     if (this.activeTurnBySession[sessionId]) return;
+    if (profiles) this.profiles = { ...this.profiles, ...profiles };
     const toolResults = new Map<string, { content: string; diffs?: FileDiff[]; images?: ToolImage[]; error?: string }>();
     for (const m of messages) {
       if (m.role === "tool" && m.toolCallId) toolResults.set(m.toolCallId, { content: m.content, diffs: m.diffs, images: m.images, error: m.error });
@@ -1576,6 +1614,8 @@ export class ServerState {
         // No stored author means it predates the server persisting one, or came from a client
         // that doesn't send it; fall back to this client's own profile to match the live bubble.
         const storedAuthor = m.author;
+        // With a person on the server, only the owner's device owns an unsigned message.
+        const mine = this.user && this.user.id !== "owner" ? undefined : this.me;
         out.push({
           // Falls back to a synthetic key for a message persisted before ids existed (§3.2:
           // "treat absence as not addressable"), rather than something edit/retry could target.
@@ -1586,10 +1626,9 @@ export class ServerState {
           toolCalls: [],
           streaming: false,
           createdAt,
-          author: storedAuthor ?? (this.app.settings.profileName || undefined),
-          authorAvatar: storedAuthor
-            ? m.authorAvatar
-            : this.app.settings.profileAvatar || undefined,
+          author: storedAuthor ?? (mine?.name || undefined),
+          authorAvatar: storedAuthor ? m.authorAvatar : mine?.avatar || undefined,
+          authorId: m.authorId ?? (storedAuthor || !mine ? undefined : this.user?.id),
           attachments: m.attachments,
           origin: m.origin,
         });
@@ -1856,7 +1895,7 @@ export class ServerState {
     this.forgetSessionState(sessionId);
   }
 
-  addUserMessage(sessionId: string, turnId: string, text: string, attachments?: string[], by?: { author?: string; avatar?: string; origin?: Origin }) {
+  addUserMessage(sessionId: string, turnId: string, text: string, attachments?: string[], by?: { author?: string; avatar?: string; id?: string; origin?: Origin }) {
     this.ensureSession(sessionId);
     const msg: ChatMessage = {
       id: turnId,
@@ -1867,8 +1906,9 @@ export class ServerState {
       toolCalls: [],
       streaming: false,
       createdAt: Date.now(),
-      author: by ? by.author : this.app.settings.profileName || undefined,
-      authorAvatar: by ? by.avatar : this.app.settings.profileAvatar || undefined,
+      author: by ? by.author : this.me.name || undefined,
+      authorAvatar: by ? by.avatar : this.me.avatar || undefined,
+      authorId: by ? by.id : this.user?.id,
       origin: by?.origin,
     };
     this.messagesBySession[sessionId] = [...this.messagesBySession[sessionId], msg];
@@ -2289,8 +2329,9 @@ export class ServerState {
             toolCalls: [],
             streaming: false,
             createdAt: Date.now(),
-            author: this.app.settings.profileName || undefined,
-            authorAvatar: this.app.settings.profileAvatar || undefined,
+            author: this.me.name || undefined,
+            authorAvatar: this.me.avatar || undefined,
+            authorId: this.user?.id,
           },
           {
             id: `${turnId}-reply-${n + 1}`,
@@ -2314,9 +2355,9 @@ export class ServerState {
       }
       case "user_message": {
         // Sent to every watcher; the device that sent the prompt already has it.
-        const data = env.data as { messageId: string; content: string; attachments?: string[]; author?: string; authorAvatar?: string; origin?: Origin };
+        const data = env.data as { messageId: string; content: string; attachments?: string[]; author?: string; authorAvatar?: string; authorId?: string; origin?: Origin };
         const have = this.messagesBySession[sessionId]?.some((m) => m.id === data.messageId || (m.turnId === env.turnId && m.role === "user"));
-        if (!have && env.turnId) this.addUserMessage(sessionId, env.turnId, data.content, data.attachments, { author: data.author, avatar: data.authorAvatar, origin: data.origin });
+        if (!have && env.turnId) this.addUserMessage(sessionId, env.turnId, data.content, data.attachments, { author: data.author, avatar: data.authorAvatar, id: data.authorId, origin: data.origin });
         break;
       }
       case "turn_started": {
@@ -2733,6 +2774,17 @@ export class ServerState {
         this.selfPeerId = data.you ?? null;
         break;
       }
+      case "profile_updated": {
+        const data = env.data as unknown as Profile;
+        if (!data.id) break;
+        this.profiles[data.id] = { name: data.name, avatar: data.avatar };
+        if (this.user?.id === data.id) this.user = { id: data.id, name: data.name, avatar: data.avatar };
+        break;
+      }
+      case "people": {
+        this.people = env.data as unknown as PeopleData;
+        break;
+      }
       case "server_identity": {
         const data = env.data as unknown as ServerIdentityData;
         if (this.serverIdentity != null && this.serverIdentity !== data.identity) {
@@ -2741,6 +2793,11 @@ export class ServerState {
         this.serverIdentity = data.identity;
         this.serverIcon = data.icon ?? null;
         this.tierRestricted = !!data.restricted;
+        this.tier = data.tier ?? null;
+        this.caps = data.caps ?? null;
+        this.user = data.user ?? null;
+        if (data.user?.id) this.profiles[data.user.id] = data.user;
+        if (!this.canAdmin) this.people = null;
         this.awaitingApproval = false;
         this.version = data.version ?? null;
         if (!this.aheadToasted && serverAhead(this.version, __APP_VERSION__)) {
@@ -2783,7 +2840,7 @@ export class ServerState {
       }
       case "session_history": {
         const data = env.data as unknown as SessionHistoryData;
-        this.applySessionHistory(data.sessionId, data.messages ?? []);
+        this.applySessionHistory(data.sessionId, data.messages ?? [], data.profiles);
         if (data.context) this.setContext(data.sessionId, data.context);
         if (data.spend) this.spendBySession[data.sessionId] = data.spend;
         // Server is the source of truth for mode (§4c): adopt it, don't replay a cached value.
