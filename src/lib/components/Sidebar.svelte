@@ -1056,16 +1056,16 @@
         >
           <span class="avatar-wrap">
             <span class="avatar">
-              {#if isPhotoAvatar(app.settings.profileAvatar)}
-                <img src={app.settings.profileAvatar} alt="" />
+              {#if isPhotoAvatar(app.myProfile.avatar)}
+                <img src={app.myProfile.avatar} alt="" />
               {:else}
-                {app.settings.profileAvatar || "🐣"}
+                {app.myProfile.avatar || "🐣"}
               {/if}
             </span>
             <span class="presence" class:online={connectedServers.length > 0}></span>
           </span>
           <span class="profile-text">
-            <span class="profile-name">{app.settings.profileName || "anonymous"}</span>
+            <span class="profile-name">{app.myProfile.name || "anonymous"}</span>
             <span class="profile-status">{presence}</span>
           </span>
           <Icon name="selector" size={14} />

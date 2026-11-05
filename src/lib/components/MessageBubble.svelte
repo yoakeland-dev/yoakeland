@@ -52,8 +52,10 @@
     } catch { /* not JSON: show what the page sent as it is */ }
     return { text: body || text };
   });
-  const author = $derived(originLabel ? undefined : message.author);
-  const authorAvatar = $derived(message.authorAvatar);
+  // The person's profile now, falling back to what was stored with the message.
+  const profile = $derived(app.active?.profileOf(message) ?? { name: message.author ?? "", avatar: message.authorAvatar });
+  const author = $derived(originLabel ? undefined : profile.name || undefined);
+  const authorAvatar = $derived(profile.avatar)
 
   // SPEC.md §4d: editing archives everything generated after this message,
   // which may have run tool calls; the tooltip states that unconditionally

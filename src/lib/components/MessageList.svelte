@@ -265,7 +265,7 @@
         <MessageBubble
           {sessionId}
           steering
-          message={{ id: `steering-${i}`, role: "user", text, toolCalls: [], streaming: false, createdAt: 0, author: app.settings.profileName || undefined, authorAvatar: app.settings.profileAvatar || undefined }}
+          message={{ id: `steering-${i}`, role: "user", text, toolCalls: [], streaming: false, createdAt: 0, author: app.myProfile.name || undefined, authorAvatar: app.myProfile.avatar || undefined, authorId: app.active?.user?.id }}
         />
       </div>
     {/each}
@@ -275,7 +275,7 @@
           {sessionId}
           queued
           withdrawing={q.withdrawing}
-          message={{ id: q.turnId, turnId: q.turnId, role: "user", text: q.append ? `${q.text}\n\n${q.append.text}` : q.text, attachments: [...(q.attachments ?? []), ...(q.append?.attachments ?? [])], toolCalls: [], streaming: false, createdAt: 0, author: app.settings.profileName || undefined, authorAvatar: app.settings.profileAvatar || undefined }}
+          message={{ id: q.turnId, turnId: q.turnId, role: "user", text: q.append ? `${q.text}\n\n${q.append.text}` : q.text, attachments: [...(q.attachments ?? []), ...(q.append?.attachments ?? [])], toolCalls: [], streaming: false, createdAt: 0, author: app.myProfile.name || undefined, authorAvatar: app.myProfile.avatar || undefined, authorId: app.active?.user?.id }}
         />
       </div>
     {/each}

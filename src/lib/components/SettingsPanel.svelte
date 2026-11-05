@@ -25,6 +25,7 @@
     detectCli,
     setPeerAvatar,
     disconnectPeer,
+    setProfile,
     removeServer,
     setRemoteAccess,
     setRuntimeSettings,
@@ -327,19 +328,38 @@
   // The profile is one identity on every server, so a change goes to all of them, not just the open one.
   const connectedIds = () => Object.values(app.servers).filter((v) => v.connectionStatus === "connected").map((v) => v.connectionId);
 
-  function onProfileNameChange() {
+  // What this page shows and edits: the person the open server knows me as, else this device's profile.
+  const me = $derived(app.myProfile);
+  let nameDraft = $state("");
+  $effect(() => {
+    nameDraft = me.name;
+  });
+  // A server with people takes the edit as set_profile on the open server only; the local copy
+  // is kept to seed servers where I have no profile yet. Servers without people get the old device label.
+  function saveProfile(change: { name?: string; avatar?: string }) {
+    if (change.name !== undefined) app.settings.profileName = change.name;
+    if (change.avatar !== undefined) app.settings.profileAvatar = change.avatar;
     apply();
-    for (const id of connectedIds()) setPeerName(id, app.settings.profileName || "anonymous");
+    if (server?.user) setProfile(server.connectionId, change);
+    for (const id of connectedIds()) {
+      if (app.servers[id]?.user) continue;
+      if (change.name !== undefined) setPeerName(id, change.name || "anonymous");
+      if (change.avatar !== undefined) setPeerAvatar(id, change.avatar);
+    }
   }
 
-  function pushAvatar() {
-    apply();
-    for (const id of connectedIds()) setPeerAvatar(id, app.settings.profileAvatar);
+  function onProfileNameChange() {
+    const name = nameDraft.trim();
+    if (name) saveProfile({ name });
+    else nameDraft = me.name;
+  }
+
+  function pushAvatar(avatar: string) {
+    saveProfile({ avatar });
   }
 
   function setEmojiAvatar(emoji: string) {
-    app.settings.profileAvatar = emoji;
-    pushAvatar();
+    pushAvatar(emoji);
   }
 
   let avatarInput: HTMLInputElement;
@@ -355,8 +375,7 @@
     if (!file) return;
     uploadingAvatar = true;
     try {
-      app.settings.profileAvatar = await photoAvatarDataUrl(file);
-      pushAvatar();
+      pushAvatar(await photoAvatarDataUrl(file));
     } finally {
       uploadingAvatar = false;
       (e.target as HTMLInputElement).value = "";
@@ -893,10 +912,10 @@
 
 {#snippet face(size: number)}
   <span class="face" style="width: {size}px; height: {size}px; font-size: {size * 0.55}px">
-    {#if isPhotoAvatar(app.settings.profileAvatar)}
-      <img src={app.settings.profileAvatar} alt="" />
+    {#if isPhotoAvatar(me.avatar)}
+      <img src={me.avatar} alt="" />
     {:else}
-      {app.settings.profileAvatar || "🐣"}
+      {me.avatar || "🐣"}
     {/if}
   </span>
 {/snippet}
@@ -1109,15 +1128,15 @@
 
           <button type="button" class="profile-tile" onclick={() => void nav.push("profile")}>
             <span class="pt-avatar">
-              {#if isPhotoAvatar(app.settings.profileAvatar)}
-                <img src={app.settings.profileAvatar} alt="" />
+              {#if isPhotoAvatar(me.avatar)}
+                <img src={me.avatar} alt="" />
               {:else}
-                <span class="emoji">{app.settings.profileAvatar || "🐣"}</span>
+                <span class="emoji">{me.avatar || "🐣"}</span>
               {/if}
               <span class="pt-badge"><Icon name="pencil" size={12} /></span>
             </span>
             <span class="pt-who">
-              <b>{app.settings.profileName || "anonymous"}</b>
+              <b>{me.name || "anonymous"}</b>
               <small>{connectedCount} of {serverCount} server{serverCount === 1 ? "" : "s"} connected</small>
             </span>
           </button>
@@ -1158,15 +1177,15 @@
                     {@render face(96)}
                     <span class="hero-badge"><Icon name="pencil" size={14} /></span>
                   </button>
-                  <b>{app.settings.profileName || "anonymous"}</b>
+                  <b>{me.name || "anonymous"}</b>
                   <small>This device</small>
                 </div>
                 <section class="settings-section">
                   <h3 class="section-heading"><Icon name="id" size={15} />Display name</h3>
                   <div class="card">
                     <div class="field">
-                      <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
-                      <span class="hint">Shown to other people on the servers you connect to.</span>
+                      <TextField type="text" placeholder="anonymous" bind:value={nameDraft} onchange={onProfileNameChange} />
+                      <span class="hint">{server?.user ? `Shown to other people on ${server.label}.` : "Shown to other people on the servers you connect to."}</span>
                     </div>
                   </div>
                 </section>
@@ -1186,7 +1205,7 @@
                     <div class="setting-row seen">
                       {@render face(36)}
                       <div class="setting-text">
-                        <span class="row-label">{app.settings.profileName || "anonymous"}</span>
+                        <span class="row-label">{me.name || "anonymous"}</span>
                         <span class="hint">This device · online now</span>
                       </div>
                     </div>
@@ -1214,12 +1233,11 @@
                 <AvatarEditor
                   bind:this={editor}
                   bare
-                  current={app.settings.profileAvatar}
+                  current={me.avatar}
                   emojis={QUICK_AVATARS}
                   oncancel={() => void nav.pop()}
                   onsave={(v) => {
-                    app.settings.profileAvatar = v;
-                    pushAvatar();
+                    pushAvatar(v);
                     void nav.pop();
                   }}
                 />
@@ -1236,25 +1254,25 @@
                   {@attach tip("Choose a picture")}
                   disabled={uploadingAvatar}
                 >
-                  {#if isPhotoAvatar(app.settings.profileAvatar)}
-                    <img src={app.settings.profileAvatar} alt="" />
+                  {#if isPhotoAvatar(me.avatar)}
+                    <img src={me.avatar} alt="" />
                   {:else}
-                    <span class="emoji">{app.settings.profileAvatar || "🐣"}</span>
+                    <span class="emoji">{me.avatar || "🐣"}</span>
                   {/if}
                   <span class="avatar-edit"><Icon name="media-image" size={13} /></span>
                 </button>
                 <div class="profile-fields">
                   <label class="profile-name">
                     <span class="row-label">Display name</span>
-                    <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
-                    <span class="hint">Shown to other people on the servers you connect to.</span>
+                    <TextField type="text" placeholder="anonymous" bind:value={nameDraft} onchange={onProfileNameChange} />
+                    <span class="hint">{server?.user ? `Shown to other people on ${server.label}.` : "Shown to other people on the servers you connect to."}</span>
                   </label>
                   <div class="btn-row">
                     <Button type="button" onclick={onAvatarTap} disabled={uploadingAvatar}>
                       <Icon name="media-image" size={13} />
-                      {uploadingAvatar ? "Reading…" : isPhotoAvatar(app.settings.profileAvatar) ? "Replace picture" : "Choose picture"}
+                      {uploadingAvatar ? "Reading…" : isPhotoAvatar(me.avatar) ? "Replace picture" : "Choose picture"}
                     </Button>
-                    {#if isPhotoAvatar(app.settings.profileAvatar)}
+                    {#if isPhotoAvatar(me.avatar)}
                       <Button type="button" variant="ghost" onclick={() => setEmojiAvatar(QUICK_AVATARS[0])}>Remove</Button>
                     {/if}
                   </div>
@@ -1266,7 +1284,7 @@
                   <button
                     type="button"
                     class="quick-avatar"
-                    class:active={app.settings.profileAvatar === emoji}
+                    class:active={me.avatar === emoji}
                     {@attach tip(`Use ${emoji} instead of a picture`)}
                     onclick={() => setEmojiAvatar(emoji)}
                   >

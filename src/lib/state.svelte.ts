@@ -704,8 +704,8 @@ export class ServerState {
     return this.tier ?? (this.limited ? "limited" : "full");
   }
   /** My name and picture: the server's word for me, else this device's local profile (old server). */
-  get me(): Profile {
-    return this.user ?? { name: this.app.settings.profileName, avatar: this.app.settings.profileAvatar };
+  get me(): { name: string; avatar: string } {
+    return { name: this.user?.name ?? this.app.settings.profileName, avatar: (this.user ? this.user.avatar : this.app.settings.profileAvatar) ?? "" };
   }
   /** Name and picture to draw for a message: the person's current profile, else what was stored. */
   profileOf(m: { authorId?: string; author?: string; authorAvatar?: string }): Profile {
@@ -3131,6 +3131,10 @@ class AppState {
   /** Set by ipc.ts: refetches one chat's server-persisted transcript (get_session_history). */
   refreshChatHistory: ((connectionId: ConnectionId, sessionId: string) => void) | null = null;
 
+  /** My name and picture: the active server's word for me, else this device's profile. */
+  get myProfile(): { name: string; avatar: string } {
+    return this.active?.me ?? { name: this.settings.profileName, avatar: this.settings.profileAvatar };
+  }
   get active(): ServerState | null {
     return this.activeConnectionId ? (this.servers[this.activeConnectionId] ?? null) : null;
   }

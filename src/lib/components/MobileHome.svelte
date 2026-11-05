@@ -181,14 +181,14 @@
     <DropdownMenu.Root bind:open={menuOpen}>
       <DropdownMenu.Trigger class="avatar-btn" aria-label="Profile and settings">
         <span class="avatar">
-          {#if isPhotoAvatar(app.settings.profileAvatar)}<img src={app.settings.profileAvatar} alt="" />{:else}{app.settings.profileAvatar || "🐣"}{/if}
+          {#if isPhotoAvatar(app.myProfile.avatar)}<img src={app.myProfile.avatar} alt="" />{:else}{app.myProfile.avatar || "🐣"}{/if}
         </span>
         <span class="presence" class:online={connected.length > 0}></span>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <MenuContent class="context-menu user-menu" side="bottom" align="end" sideOffset={6}>
           <div class="who">
-            <strong>{app.settings.profileName || "anonymous"}</strong>
+            <strong>{app.myProfile.name || "anonymous"}</strong>
             <span>{presence}</span>
           </div>
           <DropdownMenu.Item class="context-menu-item" onSelect={openSettings}><Icon name="settings" size={18} /><span>Settings</span></DropdownMenu.Item>
