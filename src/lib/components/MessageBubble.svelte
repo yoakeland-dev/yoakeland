@@ -3,6 +3,7 @@
   import { tip } from "../tooltip.svelte";
   import { fade as fadeTransition } from "svelte/transition";
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import { viewport } from "../viewport.svelte";
   import { app } from "../state.svelte";
   import { startEditingMessage, withdrawPrompt } from "../ipc";
@@ -103,7 +104,7 @@
 
 {#snippet avatarBody()}
   {#if authorAvatar && isPhotoAvatar(authorAvatar)}
-    <img src={authorAvatar} alt="" />
+    <img src={avatarSrc(authorAvatar)} alt="" />
   {:else}
     {authorAvatar || "🐣"}
   {/if}

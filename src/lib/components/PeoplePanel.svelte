@@ -5,6 +5,7 @@
   import { app, type ConnectionId } from "../state.svelte";
   import { askConfirm } from "../confirm.svelte";
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import { relTime } from "../format";
   import { mergeUsers, moveDevice, removeToken, removeUser, setDeviceRestrictions, setLimitedDefaults, setUserPermissions } from "../ipc";
   import type { Caps, Person, PersonDevice, Tier } from "../types";
@@ -154,7 +155,7 @@
 
 {#snippet avatar(p: Person)}
   <span class="avatar">
-    {#if isPhotoAvatar(p.avatar ?? "")}<img src={p.avatar} alt="" />{:else if p.avatar}{p.avatar}{:else}<Icon name="user" size={13} />{/if}
+    {#if isPhotoAvatar(p.avatar ?? "")}<img src={avatarSrc(p.avatar)} alt="" />{:else if p.avatar}{p.avatar}{:else}<Icon name="user" size={13} />{/if}
   </span>
 {/snippet}
 

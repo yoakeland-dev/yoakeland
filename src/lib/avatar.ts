@@ -1,9 +1,12 @@
+import { isUploadAvatar } from "./avatarCache.svelte";
+
 // The backend does zero image processing (SPEC.md §2a), so the client downscales to 96x96 before sending.
 const AVATAR_SIZE = 96;
 
-/** An uploaded avatar is a data URL; an emoji glyph is plain text, rendered into one only when sent. */
+/** An uploaded avatar is a data URL, or an "upload:<sha>" reference to a picture on the server
+ * (draw it with avatarSrc); an emoji glyph is plain text, rendered into one only when sent. */
 export function isPhotoAvatar(avatar: string): boolean {
-  return avatar.startsWith("data:");
+  return avatar.startsWith("data:") || isUploadAvatar(avatar);
 }
 
 export function emojiAvatarDataUrl(emoji: string): string {

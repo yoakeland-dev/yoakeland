@@ -10,6 +10,7 @@
   import { askConfirm } from "../confirm.svelte";
   import { isDesktop } from "../platform";
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import { awaitingApproval } from "../extensions";
   import { pendingWhatsNew } from "../whatsnew";
   import type { ComponentProps } from "svelte";
@@ -181,7 +182,7 @@
     <DropdownMenu.Root bind:open={menuOpen}>
       <DropdownMenu.Trigger class="avatar-btn" aria-label="Profile and settings">
         <span class="avatar">
-          {#if isPhotoAvatar(app.myProfile.avatar)}<img src={app.myProfile.avatar} alt="" />{:else}{app.myProfile.avatar || "🐣"}{/if}
+          {#if isPhotoAvatar(app.myProfile.avatar)}<img src={avatarSrc(app.myProfile.avatar)} alt="" />{:else}{app.myProfile.avatar || "🐣"}{/if}
         </span>
         <span class="presence" class:online={connected.length > 0}></span>
       </DropdownMenu.Trigger>

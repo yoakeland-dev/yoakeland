@@ -48,6 +48,7 @@
   import { encodePairingCode } from "../pairing";
   import { settingsFromFile, settingsToFile } from "../settingsFile";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import type { CliKind, LimitAction, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
   let settingsFileMsg = $state("");
@@ -914,7 +915,7 @@
 {#snippet face(size: number)}
   <span class="face" style="width: {size}px; height: {size}px; font-size: {size * 0.55}px">
     {#if isPhotoAvatar(me.avatar)}
-      <img src={me.avatar} alt="" />
+      <img src={avatarSrc(me.avatar)} alt="" />
     {:else}
       {me.avatar || "🐣"}
     {/if}
@@ -1130,7 +1131,7 @@
           <button type="button" class="profile-tile" onclick={() => void nav.push("profile")}>
             <span class="pt-avatar">
               {#if isPhotoAvatar(me.avatar)}
-                <img src={me.avatar} alt="" />
+                <img src={avatarSrc(me.avatar)} alt="" />
               {:else}
                 <span class="emoji">{me.avatar || "🐣"}</span>
               {/if}
@@ -1256,7 +1257,7 @@
                   disabled={uploadingAvatar}
                 >
                   {#if isPhotoAvatar(me.avatar)}
-                    <img src={me.avatar} alt="" />
+                    <img src={avatarSrc(me.avatar)} alt="" />
                   {:else}
                     <span class="emoji">{me.avatar || "🐣"}</span>
                   {/if}

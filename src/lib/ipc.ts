@@ -12,6 +12,7 @@ import {
   type KnownServer,
 } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
+import { setAvatarFetcher } from "./avatarCache.svelte";
 import { briefOf, continuationDraft } from "./chatBrief";
 import { closeAck, connectedHost, isDesktop, invoke, listen, openUrl, pickFiles, quitApp } from "./platform";
 import { bytesToBase64, base64ToBytes } from "./base64";
@@ -1622,6 +1623,14 @@ export function setPeerAvatar(connectionId: ConnectionId, avatar: string) {
 export function setProfile(connectionId: ConnectionId, profile: { name?: string; avatar?: string }) {
   void send(connectionId, { type: "set_profile", data: profile });
 }
+
+// A person's picture is an "upload:<sha>" reference; the server hands the image over on request.
+setAvatarFetcher((avatar) => {
+  const id = app.active?.connectionId;
+  if (!id) return false;
+  void send(id, { type: "get_avatar", data: { avatar } });
+  return true;
+});
 
 // ---- People & devices (§3.1/§3.2 people), Trusted and Full ----
 

@@ -8,6 +8,7 @@
   import { browseAndAddProject, openChatSession, startChatWith, listSessionsForProjects, newChat as newChatIn, switchServer, disconnect, reconnectServer } from "../ipc";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ProjectGroup from "./ProjectGroup.svelte";
@@ -1057,7 +1058,7 @@
           <span class="avatar-wrap">
             <span class="avatar">
               {#if isPhotoAvatar(app.myProfile.avatar)}
-                <img src={app.myProfile.avatar} alt="" />
+                <img src={avatarSrc(app.myProfile.avatar)} alt="" />
               {:else}
                 {app.myProfile.avatar || "🐣"}
               {/if}

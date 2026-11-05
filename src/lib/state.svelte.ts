@@ -81,6 +81,7 @@ import {
 import { APP_THEME_PRESETS } from "./themePresets";
 import { invoke, setCloseHook, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { viewport } from "./viewport.svelte";
+import { storeAvatar } from "./avatarCache.svelte";
 import { base64ToBytes } from "./base64";
 import { publishTerminalChunk, publishTerminalSnapshot } from "./terminalBus";
 import { scanShellEvents } from "./terminalShellIntegration";
@@ -2784,6 +2785,11 @@ export class ServerState {
         const data = env.data as unknown as PeerListData;
         this.peers = data.peers ?? [];
         this.selfPeerId = data.you ?? null;
+        break;
+      }
+      case "avatar_data": {
+        const data = env.data as unknown as { avatar: string; data?: string };
+        storeAvatar(data.avatar, data.data);
         break;
       }
       case "profile_updated": {
