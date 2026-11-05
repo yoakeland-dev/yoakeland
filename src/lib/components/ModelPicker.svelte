@@ -29,6 +29,8 @@
   let { sessionId }: { sessionId: string } = $props();
 
   let server = $derived(app.active);
+  // A CLI agent this person isn't allowed to use isn't offered; the server would refuse it.
+  const usable = $derived((server?.providers ?? []).filter((p) => server?.canUseProvider(p)));
   let cid = $derived(app.activeConnectionId);
 
   type TabKey =
@@ -59,7 +61,7 @@
 
   const allEntries = $derived.by(() => {
     const entries: Entry[] = [];
-    for (const provider of server?.providers ?? []) {
+    for (const provider of usable) {
       const hidden = app.settings.hiddenModels?.[provider.name] ?? [];
       for (const model of server?.modelsByProvider[provider.name] ?? []) {
         // A hidden model stays listed while it is the chat's own, so the picker never shows a blank.
@@ -93,7 +95,7 @@
 
   // A CLI agent gets a tab even before its models arrive: an ACP agent's
   // list_models opens a throwaway session and takes seconds.
-  const groups = $derived(agentGroups(server?.providers ?? []));
+  const groups = $derived(agentGroups(usable));
   const groupOf = (name: string) => groups.find((g) => g.accounts.some((a) => a.name === name));
 
   // Chosen account per multi-account agent (group key -> provider name); falls back to the

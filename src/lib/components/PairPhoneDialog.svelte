@@ -10,6 +10,10 @@
   import { connectedHost, isDesktop, pairInfo } from "../platform";
   import { pairingUrl } from "../pairing";
   import { isPhotoAvatar } from "../avatar";
+  import { askConfirm } from "../confirm.svelte";
+  import type { Tier } from "../types";
+  import Segmented from "./ui/Segmented.svelte";
+  import TextField from "./ui/TextField.svelte";
   import Button from "./ui/Button.svelte";
   import Icon from "./Icon.svelte";
   import QrCode from "./QrCode.svelte";
@@ -23,7 +27,20 @@
   let hosts = $state<string[]>([]);
   let host = $state("");
   let name = $state("");
-  let phase = $state<"form" | "waiting" | "old" | "scan">("form");
+  let phase = $state<"who" | "form" | "waiting" | "old" | "scan">("form");
+  // Who the device is for. A server without people has no such choice.
+  let forWhom = $state<"me" | "other">("me");
+  let otherName = $state("");
+  let existing = $state(""); // an existing person's id: the computer running the server only
+  let otherTier = $state<Tier>("limited");
+  const canMe = $derived(!!server?.isFull);
+  const canExisting = $derived(server?.connectionMode === "local");
+  const others = $derived((server?.people?.users ?? []).filter((u) => u.id !== server?.user?.id));
+  const tierOptions = $derived([
+    { value: "limited", label: "Limited" },
+    ...(server?.isFull ? [{ value: "trusted", label: "Trusted" }, { value: "full", label: "Full" }] : []),
+  ]);
+  const whoReady = $derived(forWhom === "me" || !!existing || !!otherName.trim());
   let token = $state("");
   let rtcFp = $state("");
   let error = $state("");
@@ -38,7 +55,11 @@
     token = "";
     error = "";
     blocked = false;
-    const mine = app.settings.profileName;
+    forWhom = server?.isFull ? "me" : "other";
+    otherName = "";
+    existing = "";
+    otherTier = "limited";
+    const mine = server?.me.name;
     name = mine ? `${mine}'s device` : "Device";
     // In a browser the server names its own addresses (the address this page connected to first); it
     // is already reachable, and only the desktop may change remote access.
@@ -62,7 +83,8 @@
           if (info.webRoot) setRemoteAccess(cid, true, { webRoot: info.webRoot });
           else setRemoteAccess(cid, true);
         }
-        create();
+        if (server?.user) phase = "who";
+        else create();
       },
       (e) => ((error = String(e)), (blocked = true), (phase = "form")),
     );
@@ -93,13 +115,25 @@
   let full = $state(false);
   const joined = $derived(phase === "scan" ? server?.peers.find((p) => p.credential === name) : undefined);
 
+  async function chooseWho() {
+    if (forWhom === "other" && !existing && otherTier === "full" && !(await askConfirm("Full access can do anything you can on this computer. Give it?"))) return;
+    if (forWhom === "other") {
+      const who = existing ? others.find((u) => u.id === existing)?.name : otherName.trim();
+      name = `${who}'s device`;
+    }
+    create();
+  }
+
   function create() {
     const taken = new Set(server?.tokens.map((t) => t.name));
     let n = name.trim();
     for (let i = 2; taken.has(n); i++) n = `${name.trim()} ${i}`;
     name = n;
     phase = "waiting";
-    registerToken(cid, n, undefined, true);
+    registerToken(cid, n, undefined, true, !server?.user ? undefined
+      : forWhom === "me" ? { user: "me" }
+      : existing ? { user: existing }
+      : { user: "new", newUserName: otherName.trim(), tier: otherTier });
     timer = setTimeout(() => {
       phase = "form";
       error = "No answer from the server. Is remote access on?";
@@ -136,7 +170,45 @@
         <div class="pair-main">
           <Dialog.Title class="pair-title"><span class="pair-badge"><Icon name="device-mobile" size={16} /></span> Pair a device</Dialog.Title>
 
-          {#if phase === "form" || phase === "waiting"}
+          {#if phase === "who"}
+            <Dialog.Description class="pair-hint">Who is this device for? A device that's yours gets your chats.</Dialog.Description>
+            {#if canMe}
+              <Segmented
+                options={[{ value: "me", label: "Me" }, { value: "other", label: "Someone else" }]}
+                bind:value={forWhom as string}
+                label="Who is this device for?"
+              />
+            {/if}
+            {#if forWhom === "other"}
+              {#if canExisting && others.length}
+                <label class="pair-field">
+                  Person
+                  <select class="pair-host" bind:value={existing}>
+                    <option value="">Someone new</option>
+                    {#each others as u (u.id)}<option value={u.id}>{u.name || "Unnamed"}</option>{/each}
+                  </select>
+                </label>
+              {/if}
+              {#if !existing}
+                <label class="pair-field">Name <TextField type="text" placeholder="Their name" bind:value={otherName} /></label>
+                {#if tierOptions.length > 1}
+                  <div class="pair-field">
+                    Access
+                    <Segmented options={tierOptions} bind:value={otherTier as string} label="Access" />
+                  </div>
+                  <p class="pair-hint">
+                    {#if otherTier === "full"}Full access can do anything you can on this computer. Most people should have Limited or Trusted.
+                    {:else if otherTier === "trusted"}Works in projects and helps run the server, without access to the machine.
+                    {:else}Works in projects already on this server.{/if}
+                  </p>
+                {/if}
+              {/if}
+            {/if}
+            <div class="pair-foot">
+              <Button type="button" variant="ghost" onclick={() => (open = false)}>Cancel</Button>
+              <Button type="button" variant="primary" disabled={!whoReady} onclick={chooseWho}>Continue</Button>
+            </div>
+          {:else if phase === "form" || phase === "waiting"}
             <Dialog.Description class="pair-hint">
               A phone or another computer opens yoakeland in its browser and connects to this server directly. Each device gets its own token. Revoke it under People if the device is lost.
             </Dialog.Description>
@@ -165,8 +237,12 @@
             </ol>
             {#if request}
               <div class="pair-request">
-                <p><strong>{request.name || "A device"}</strong> scanned this{request.ip ? ` from ${request.ip}` : ""}. Let it in?</p>
-                <label class="pair-full"><input type="checkbox" bind:checked={full} /> Give it full access</label>
+                <p>
+                  <strong>{request.name || "A device"}</strong> scanned this{request.ip ? ` from ${request.ip}` : ""}.
+                  {#if request.userName}It joins as <strong>{request.userName}</strong>{request.tier ? ` with ${request.tier} access` : ""}.{/if}
+                  Let it in?
+                </p>
+                {#if server?.isFull && request.tier !== "full"}<label class="pair-full"><input type="checkbox" bind:checked={full} /> Give it full access</label>{/if}
                 <div class="pair-actions">
                   <Button type="button" variant="ghost" onclick={() => answerPairing(cid, request.credential, false)}>Decline</Button>
                   <Button type="button" variant="primary" onclick={() => answerPairing(cid, request.credential, true, full)}>Allow</Button>
@@ -201,6 +277,13 @@
 </Dialog.Root>
 
 <style>
+  .pair-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.29rem;
+    font-size: var(--text-label-size);
+    color: var(--text-dim);
+  }
   :global(.dialog-content.pair) {
     width: min(23rem, 92vw);
     padding: 0;

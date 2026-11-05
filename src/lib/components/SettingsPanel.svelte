@@ -110,6 +110,7 @@
   import ConnectForm from "./ConnectForm.svelte";
   import Markdown from "./Markdown.svelte";
   import PermissionRules from "./PermissionRules.svelte";
+  import PeoplePanel from "./PeoplePanel.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import ServerIconEditor from "./ServerIconEditor.svelte";
   import Kbd from "./Kbd.svelte";
@@ -319,7 +320,7 @@
   const isLocalConnection = $derived(connected && server?.connectionMode === "local");
   // People (tokens) can be managed from the server's own machine or by a full-access device; only
   // the remote listener and shared password stay local-only. A phone's pairing code is limited.
-  const canManagePeople = $derived(connected && (isLocalConnection || !server?.limited));
+  const canManagePeople = $derived(connected && (isLocalConnection || !!server?.canAdmin));
   $effect(() => {
     if (canManagePeople && server && !isLocalConnection) listTokens(server.connectionId);
   });
@@ -496,14 +497,14 @@
   function submitToken(e: Event) {
     e.preventDefault();
     if (!cid || !tokenNameInput.trim()) return;
-    registerToken(cid, tokenNameInput.trim(), tokenEmailInput.trim() || undefined);
+    registerToken(cid, tokenNameInput.trim(), tokenEmailInput.trim() || undefined, false, server?.user ? { user: "new", newUserName: tokenNameInput.trim(), tier: "limited" } : undefined);
     tokenNameInput = "";
     tokenEmailInput = "";
     addingPerson = false;
   }
 
   async function onRemoveToken(name: string) {
-    if (cid && (await askConfirm(`Revoke "${name}"'s access? They'll be logged out on their next reconnect.`))) {
+    if (cid && (await askConfirm(`Revoke "${name}"'s access? They're disconnected right away.`))) {
       removeToken(cid, name);
     }
   }
@@ -2384,6 +2385,8 @@
                 <Icon name={limitedHere ? "warning" : "check"} size={13} />
                 {#if isLocalConnection}
                   <strong>This computer.</strong> Full access to this server.
+                {:else if server?.tierName === "trusted"}
+                  <strong>Trusted access.</strong> You can work in projects already here, add Limited people and help run this server, but not reach the machine itself: no new folders, terminals, CLI agents, MCP servers or runtime settings unless the owner allows them.
                 {:else if limitedHere}
                   <strong>Limited access.</strong> This device paired with a phone's code, so it can chat and edit files in projects already open here, but not add folders, providers, MCP servers or settings, open terminals or manage people. Ask the server's owner for full access (the device list marks each device's tier), or pair again with a full-access code (<code>yoakeland pair</code> on the server).
                 {:else}
@@ -2480,6 +2483,9 @@
                 </form>
               {/if}
 
+              {#if server?.people && cid}
+                <PeoplePanel {cid} />
+              {:else}
               <ul class="list">
                 {#each (server?.tokens ?? []) as token (token.name)}
                   <li>
@@ -2501,10 +2507,11 @@
                   <li class="empty">No one yet.</li>
                 {/each}
               </ul>
+              {/if}
               </div>
             </section>
             </SubPage>
-            {#if server?.connectionStatus === "connected"}
+            {#if server?.connectionStatus === "connected" && !server?.people}
               <SubPage id="peers" title="Connected now" inCard link={{ value: String((server?.peers ?? []).filter((p) => p.peerId !== server?.selfPeerId).length), hint: "Devices on this server" }}>
               <section class="settings-section">
                 <h3 class="section-heading"><Icon name="plug-connected" size={15} />Connected now</h3>

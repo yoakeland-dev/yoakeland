@@ -698,6 +698,18 @@ export class ServerState {
   get isFull(): boolean {
     return this.connectionMode === "local" || (this.tier ? this.tier === "full" : !this.limited);
   }
+  /** A CLI agent runs under the owner's login, so below Full it must be allowed by name. */
+  canUseProvider(p: { name: string; kind?: string }): boolean {
+    if (this.isFull || !this.caps) return true;
+    return !p.kind?.startsWith("cli_") || !!this.caps.cli?.includes(p.name);
+  }
+  /** Modes the server accepts from this person on this project (it re-checks them at every turn). */
+  canUseMode(mode: string, projectPath?: string): boolean {
+    if (this.isFull || !this.caps) return true;
+    if (!this.caps.files_edit && mode !== "read_only" && mode !== "plan") return false;
+    if (mode === "autonomous" || mode === "auto") return !!this.caps.autonomous && !this.isUnsandboxed(projectPath);
+    return true;
+  }
   /** The tier to show: what the server said, else full/limited from `restricted`. */
   get tierName(): Tier {
     if (this.connectionMode === "local") return "full";
@@ -2974,10 +2986,12 @@ export class ServerState {
         this.app.log(`error: ${data.message}`);
         // A limited device is refused some requests outright. Say so, and end a folder browse that
         // would otherwise wait for a listing that is never coming.
-        if (/isn't available from a paired device/.test(data.message)) {
-          this.app.toastAction(this.connectionId, "This device has limited access to the server. Ask its owner for full access (Settings → Access).");
+        if (/isn't available from a paired device|needs (Trusted|Full) access|isn't allowed for this person/.test(data.message)) {
+          const need = /needs Trusted access/.test(data.message) ? "Trusted" : /needs Full access/.test(data.message) ? "Full" : "";
+          const notTheirs = /it isn't their chat/.test(data.message);
+          this.app.toastAction(this.connectionId, notTheirs ? "This chat belongs to someone else." : need ? `That needs ${need} access. Ask the server's owner (Settings → Access).` : "Your access to this server doesn't allow that. Ask its owner (Settings → Access).");
           if (data.message.startsWith("list_directory") && this.app.browsingConnectionId === this.connectionId) {
-            this.app.directoryListing = { path: this.app.directoryListing?.path ?? "", entries: [], error: "This device has limited access, so it can't browse folders on the server." };
+            this.app.directoryListing = { path: this.app.directoryListing?.path ?? "", entries: [], error: "Your access to this server doesn't include browsing its folders." };
           }
         }
         if (sessionId && this.syncingSessions[sessionId]) this.setSessionSyncing(sessionId, false);
@@ -3340,7 +3354,7 @@ class AppState {
 
   /** A device asking to pair, answered with Allow or Deny right here. It stays up until answered
    * (answerPairing drops it) or until the server stops waiting, 60 s on (SPEC.md §2a). */
-  pairingToast(connectionId: ConnectionId, request: { credential: string; name?: string; ip?: string }, answer: (allow: boolean) => void) {
+  pairingToast(connectionId: ConnectionId, request: { credential: string; name?: string; ip?: string; userName?: string; tier?: string }, answer: (allow: boolean) => void) {
     const id = `pair-${request.credential}`;
     this.toasts = [
       ...this.toasts.slice(-5),
@@ -3348,7 +3362,7 @@ class AppState {
         id,
         level: "info",
         kind: "local",
-        title: `${request.name || "A device"} wants to pair${request.ip ? ` from ${request.ip}` : ""}`,
+        title: `${request.name || "A device"} wants to pair${request.ip ? ` from ${request.ip}` : ""}${request.userName ? ` as ${request.userName}${request.tier ? ` (${request.tier})` : ""}` : ""}`,
         createdAt: new Date().toISOString(),
         connectionId,
         action: { label: "Allow", run: () => answer(true) },

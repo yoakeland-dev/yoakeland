@@ -70,7 +70,7 @@
   // a device that came in on a credential has one.
   function canScope(c: Conn): boolean {
     const mine = c.srv.peers.find((x) => x.peerId === c.srv.selfPeerId);
-    return !mine?.restricted && !!c.p.credential;
+    return !mine?.restricted && !!c.p.credential && c.srv.isFull;
   }
   function scopable(d: Device): Conn[] {
     return d.conns.filter(canScope);
@@ -82,7 +82,7 @@
   async function kick(d: Device) {
     const where = d.conns.length > 1 ? `${d.conns.length} servers` : d.conns[0].srv.label;
     if (!(await askConfirm(`Disconnect "${d.p.name}" from ${where}?`))) return;
-    for (const c of d.conns) disconnectPeer(c.cid, c.p.peerId);
+    for (const c of d.conns) if (c.srv.isFull) disconnectPeer(c.cid, c.p.peerId);
   }
 </script>
 
@@ -141,16 +141,16 @@
                   type="button"
                   class="sb-row-action"
                   class:on={!d.p.restricted}
-                  {@attach tip(d.p.restricted ? "Limited. Give full access" : "Full access. Limit it")}
+                  {@attach tip(d.p.restricted ? `${d.p.tier === "trusted" ? "Trusted" : "Limited"}. Give full access` : "Full access. Limit it")}
                   aria-label={d.p.restricted ? "Give full access" : "Limit access"}
                   onclick={() => toggleScope(d)}
                 >
                   <Icon name="shield-check" size={12} />
                 </button>
               {/if}
-              <button type="button" class="sb-row-action danger" {@attach tip("Disconnect")} aria-label="Disconnect" onclick={() => kick(d)}>
+              {#if d.conns.some((c) => c.srv.isFull)}<button type="button" class="sb-row-action danger" {@attach tip("Disconnect")} aria-label="Disconnect" onclick={() => kick(d)}>
                 <Icon name="unlink" size={12} />
-              </button>
+              </button>{/if}
             </li>
           {/each}
         </ul>
