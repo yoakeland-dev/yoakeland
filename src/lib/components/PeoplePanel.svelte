@@ -110,6 +110,8 @@
     ];
   }
 
+  // Keeps MCP and CLI capitals: "Use MCP tools" reads "use MCP tools".
+  const lower = (label: string) => label[0].toLowerCase() + label.slice(1);
   const others = (p: Person) => (people?.users ?? []).filter((u) => u.id !== p.id);
   const nameOf = (id?: string) => (id ? (people?.users.find((u) => u.id === id)?.name ?? "") : "");
   const deviceName = (d: PersonDevice) => d.deviceName || d.credential;
@@ -121,7 +123,7 @@
     if (RANK[d.maxTier || p.tier] < RANK.full) {
       for (const key of d.deny) {
         const t = TOGGLES.find((x) => x.key === key);
-        notes.push(`No ${(t?.label ?? key).toLowerCase()} here`);
+        notes.push(`Can't ${t ? lower(t.label) : key === "browser" ? "use the server's browser" : key === "cli" ? "use CLI agents" : key} here`);
       }
     }
     return notes;
@@ -272,19 +274,19 @@
                         {#each TOGGLES.filter((t) => p.effectiveCaps[t.key]) as t (t.key)}
                           <label class="cli-item">
                             <Checkbox checked={d.deny.includes(t.key)} onchange={(v) => setDeny(d, t.key, v)} />
-                            No {t.label.toLowerCase()}
+                            Can't {lower(t.label)}
                           </label>
                         {/each}
                         {#if p.effectiveCaps.browser && p.effectiveCaps.browser !== "off"}
                           <label class="cli-item">
                             <Checkbox checked={d.deny.includes("browser")} onchange={(v) => setDeny(d, "browser", v)} />
-                            No server browser
+                            Can't use the server's browser
                           </label>
                         {/if}
                         {#if p.effectiveCaps.cli?.length}
                           <label class="cli-item">
                             <Checkbox checked={d.deny.includes("cli")} onchange={(v) => setDeny(d, "cli", v)} />
-                            No CLI agents
+                            Can't use CLI agents
                           </label>
                         {/if}
                       </div>

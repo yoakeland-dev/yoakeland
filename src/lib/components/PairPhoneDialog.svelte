@@ -147,8 +147,8 @@
     <Dialog.Overlay class="dialog-overlay" />
     <SheetDialog class="dialog-content pair">
       <Dialog.Close class="dialog-close pair-close"><Icon name="xmark" size={14} /></Dialog.Close>
-      <div class="pair-split" class:single={phase === "old"}>
-        {#if phase !== "old"}
+      <div class="pair-split" class:single={phase === "old" || phase === "who"}>
+        {#if phase !== "old" && phase !== "who"}
           <div class="pair-side">
             <div class="stage">
               <!-- Until the token exists the code is a blurred stand-in; it sharpens once the real one is ready. -->
