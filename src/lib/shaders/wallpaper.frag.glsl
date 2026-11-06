@@ -8,6 +8,7 @@ uniform float u_levels;
 uniform float u_style; // 0=dither, 1=scanlines, 2=mosaic, 4=gameboy, 5=none
 uniform vec3 u_accent;
 uniform vec3 u_panelBg;
+uniform float u_fade; // 1: fades into the panel toward the bottom, behind the composer. 0: keeps its edges.
 
 out vec4 outColor;
 
@@ -144,6 +145,6 @@ void main() {
   }
 
   float fade = smoothstep(0.0, 1.0, 1.0 - uv.y);
-  color = mix(u_panelBg, color, fade);
+  color = mix(u_panelBg, color, mix(1.0, fade, u_fade));
   outColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

@@ -1132,7 +1132,7 @@
     </div>
     <AboutDialog bind:open={showAbout} onWhatsNew={() => (showNew = true)} />
     <WhatsNewDialog bind:open={showNew} />
-    {#if pairCid}<PairPhoneDialog bind:open={showPair} cid={pairCid} />{/if}
+    {#if pairCid}<PairPhoneDialog bind:open={showPair} cid={pairCid} onOpenPeople={() => app.openSettingsTab("access")} />{/if}
 
     {#if viewport.kind === "desktop" && (!app.sidebarCollapsed || resizing)}
       <!-- Also mounted mid-drag while collapsed, since unmounting it here

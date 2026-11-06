@@ -111,6 +111,7 @@
   import ConnectForm from "./ConnectForm.svelte";
   import Markdown from "./Markdown.svelte";
   import PermissionRules from "./PermissionRules.svelte";
+  import PairPhoneDialog from "./PairPhoneDialog.svelte";
   import PeoplePanel from "./PeoplePanel.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import ServerIconEditor from "./ServerIconEditor.svelte";
@@ -492,6 +493,7 @@
   }
 
   let addingPerson = $state(false);
+  let showPairDialog = $state(false);
   let tokenNameInput = $state("");
   let tokenEmailInput = $state("");
 
@@ -2427,14 +2429,23 @@
             <section class="settings-section">
               <div class="section-head">
                 <h3 class="section-heading"><Icon name="users" size={15} />People</h3>
-                {#if !addingPerson}
+                {#if server?.people}
+                  <Button type="button" size="sm" variant="primary" disabled={!canManagePeople} onclick={() => (showPairDialog = true)}>
+                    <Icon name="plus" size={13} /> Add a device
+                  </Button>
+                {:else if !addingPerson}
                   <Button type="button" size="sm" disabled={!canManagePeople} onclick={() => (addingPerson = true)}>
                     <Icon name="plus" size={13} /> Add person
                   </Button>
                 {/if}
               </div>
-              <p class="hint">Each person has their own chats, name and picture, and every device they pair signs in as them. Revoking a device or removing a person disconnects them at once.</p>
-              <div class="card">
+              {#if cid}<PairPhoneDialog bind:open={showPairDialog} {cid} />{/if}
+              <p class="hint">
+                {server?.people
+                  ? "Access belongs to the person. A device can only have less."
+                  : "Each person has their own chats, name and picture, and every device they pair signs in as them. Revoking a device or removing a person disconnects them at once."}
+              </p>
+              <div class:card={!server?.people}>
 
               {#if server?.justRegisteredToken}
                 <div class="warning-card">
@@ -2466,7 +2477,7 @@
                 </div>
               {/if}
 
-              {#if addingPerson}
+              {#if addingPerson && !server?.people}
                 <form class="inset-card" onsubmit={submitToken}>
                   <div class="form-grid">
                     <label>Name <TextField type="text" placeholder="name" bind:value={tokenNameInput} disabled={!canManagePeople} /></label>

@@ -53,3 +53,8 @@ export function sessionTitle(s: { title?: string | null }): string {
 export function terminalTitle(t: { name?: string; title?: string; label: string }): string {
   return t.name || t.title || t.label;
 }
+
+/** What kind of client a connection is, in words. */
+export function deviceTypeLabel(type?: string): string {
+  return type === "desktop" ? "Desktop app" : type === "web" ? "Browser" : "Device";
+}
