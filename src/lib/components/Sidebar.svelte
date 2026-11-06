@@ -8,6 +8,7 @@
   import { browseAndAddProject, openChatSession, startChatWith, listSessionsForProjects, newChat as newChatIn, switchServer, disconnect, reconnectServer } from "../ipc";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ProjectGroup from "./ProjectGroup.svelte";
@@ -1049,16 +1050,16 @@
         >
           <span class="avatar-wrap">
             <span class="avatar">
-              {#if isPhotoAvatar(app.settings.profileAvatar)}
-                <img src={app.settings.profileAvatar} alt="" />
+              {#if isPhotoAvatar(app.myProfile.avatar)}
+                <img src={avatarSrc(app.myProfile.avatar)} alt="" />
               {:else}
-                {app.settings.profileAvatar || "🐣"}
+                {app.myProfile.avatar || "🐣"}
               {/if}
             </span>
             <span class="presence" class:online={connectedServers.length > 0}></span>
           </span>
           <span class="profile-text">
-            <span class="profile-name">{app.settings.profileName || "anonymous"}</span>
+            <span class="profile-name">{app.myProfile.name || "anonymous"}</span>
             <span class="profile-status">{presence}</span>
           </span>
           <Icon name="selector" size={14} />

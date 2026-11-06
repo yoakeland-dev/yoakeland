@@ -25,6 +25,7 @@
     detectCli,
     setPeerAvatar,
     disconnectPeer,
+    setProfile,
     removeServer,
     setRemoteAccess,
     setRuntimeSettings,
@@ -47,6 +48,7 @@
   import { encodePairingCode } from "../pairing";
   import { settingsFromFile, settingsToFile } from "../settingsFile";
   import { isPhotoAvatar, photoAvatarDataUrl } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import type { CliKind, LimitAction, ModelRole, NotifyPrefs, ProviderInfo } from "../types";
   import { effortLevels, effortLabel } from "./EffortPicker.svelte";
   let settingsFileMsg = $state("");
@@ -109,6 +111,7 @@
   import ConnectForm from "./ConnectForm.svelte";
   import Markdown from "./Markdown.svelte";
   import PermissionRules from "./PermissionRules.svelte";
+  import PeoplePanel from "./PeoplePanel.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import ServerIconEditor from "./ServerIconEditor.svelte";
   import Kbd from "./Kbd.svelte";
@@ -318,7 +321,7 @@
   const isLocalConnection = $derived(connected && server?.connectionMode === "local");
   // People (tokens) can be managed from the server's own machine or by a full-access device; only
   // the remote listener and shared password stay local-only. A phone's pairing code is limited.
-  const canManagePeople = $derived(connected && (isLocalConnection || !server?.limited));
+  const canManagePeople = $derived(connected && (isLocalConnection || !!server?.canAdmin));
   $effect(() => {
     if (canManagePeople && server && !isLocalConnection) listTokens(server.connectionId);
   });
@@ -327,19 +330,38 @@
   // The profile is one identity on every server, so a change goes to all of them, not just the open one.
   const connectedIds = () => Object.values(app.servers).filter((v) => v.connectionStatus === "connected").map((v) => v.connectionId);
 
-  function onProfileNameChange() {
+  // What this page shows and edits: the person the open server knows me as, else this device's profile.
+  const me = $derived(app.myProfile);
+  let nameDraft = $state("");
+  $effect(() => {
+    nameDraft = me.name;
+  });
+  // A server with people takes the edit as set_profile on the open server only; the local copy
+  // is kept to seed servers where I have no profile yet. Servers without people get the old device label.
+  function saveProfile(change: { name?: string; avatar?: string }) {
+    if (change.name !== undefined) app.settings.profileName = change.name;
+    if (change.avatar !== undefined) app.settings.profileAvatar = change.avatar;
     apply();
-    for (const id of connectedIds()) setPeerName(id, app.settings.profileName || "anonymous");
+    if (server?.user) setProfile(server.connectionId, change);
+    for (const id of connectedIds()) {
+      if (app.servers[id]?.user) continue;
+      if (change.name !== undefined) setPeerName(id, change.name || "anonymous");
+      if (change.avatar !== undefined) setPeerAvatar(id, change.avatar);
+    }
   }
 
-  function pushAvatar() {
-    apply();
-    for (const id of connectedIds()) setPeerAvatar(id, app.settings.profileAvatar);
+  function onProfileNameChange() {
+    const name = nameDraft.trim();
+    if (name) saveProfile({ name });
+    else nameDraft = me.name;
+  }
+
+  function pushAvatar(avatar: string) {
+    saveProfile({ avatar });
   }
 
   function setEmojiAvatar(emoji: string) {
-    app.settings.profileAvatar = emoji;
-    pushAvatar();
+    pushAvatar(emoji);
   }
 
   let avatarInput: HTMLInputElement;
@@ -355,8 +377,7 @@
     if (!file) return;
     uploadingAvatar = true;
     try {
-      app.settings.profileAvatar = await photoAvatarDataUrl(file);
-      pushAvatar();
+      pushAvatar(await photoAvatarDataUrl(file));
     } finally {
       uploadingAvatar = false;
       (e.target as HTMLInputElement).value = "";
@@ -477,14 +498,14 @@
   function submitToken(e: Event) {
     e.preventDefault();
     if (!cid || !tokenNameInput.trim()) return;
-    registerToken(cid, tokenNameInput.trim(), tokenEmailInput.trim() || undefined);
+    registerToken(cid, tokenNameInput.trim(), tokenEmailInput.trim() || undefined, false, server?.user ? { user: "new", newUserName: tokenNameInput.trim(), tier: "limited" } : undefined);
     tokenNameInput = "";
     tokenEmailInput = "";
     addingPerson = false;
   }
 
   async function onRemoveToken(name: string) {
-    if (cid && (await askConfirm(`Revoke "${name}"'s access? They'll be logged out on their next reconnect.`))) {
+    if (cid && (await askConfirm(`Revoke "${name}"'s access? They're disconnected right away.`))) {
       removeToken(cid, name);
     }
   }
@@ -893,10 +914,10 @@
 
 {#snippet face(size: number)}
   <span class="face" style="width: {size}px; height: {size}px; font-size: {size * 0.55}px">
-    {#if isPhotoAvatar(app.settings.profileAvatar)}
-      <img src={app.settings.profileAvatar} alt="" />
+    {#if isPhotoAvatar(me.avatar)}
+      <img src={avatarSrc(me.avatar)} alt="" />
     {:else}
-      {app.settings.profileAvatar || "🐣"}
+      {me.avatar || "🐣"}
     {/if}
   </span>
 {/snippet}
@@ -1109,15 +1130,15 @@
 
           <button type="button" class="profile-tile" onclick={() => void nav.push("profile")}>
             <span class="pt-avatar">
-              {#if isPhotoAvatar(app.settings.profileAvatar)}
-                <img src={app.settings.profileAvatar} alt="" />
+              {#if isPhotoAvatar(me.avatar)}
+                <img src={avatarSrc(me.avatar)} alt="" />
               {:else}
-                <span class="emoji">{app.settings.profileAvatar || "🐣"}</span>
+                <span class="emoji">{me.avatar || "🐣"}</span>
               {/if}
               <span class="pt-badge"><Icon name="pencil" size={12} /></span>
             </span>
             <span class="pt-who">
-              <b>{app.settings.profileName || "anonymous"}</b>
+              <b>{me.name || "anonymous"}</b>
               <small>{connectedCount} of {serverCount} server{serverCount === 1 ? "" : "s"} connected</small>
             </span>
           </button>
@@ -1158,15 +1179,15 @@
                     {@render face(96)}
                     <span class="hero-badge"><Icon name="pencil" size={14} /></span>
                   </button>
-                  <b>{app.settings.profileName || "anonymous"}</b>
+                  <b>{me.name || "anonymous"}</b>
                   <small>This device</small>
                 </div>
                 <section class="settings-section">
                   <h3 class="section-heading"><Icon name="id" size={15} />Display name</h3>
                   <div class="card">
                     <div class="field">
-                      <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
-                      <span class="hint">Shown to other people on the servers you connect to.</span>
+                      <TextField type="text" placeholder="anonymous" bind:value={nameDraft} onchange={onProfileNameChange} />
+                      <span class="hint">{server?.user ? `Shown to other people on ${server.label}.` : "Shown to other people on the servers you connect to."}</span>
                     </div>
                   </div>
                 </section>
@@ -1186,7 +1207,7 @@
                     <div class="setting-row seen">
                       {@render face(36)}
                       <div class="setting-text">
-                        <span class="row-label">{app.settings.profileName || "anonymous"}</span>
+                        <span class="row-label">{me.name || "anonymous"}</span>
                         <span class="hint">This device · online now</span>
                       </div>
                     </div>
@@ -1214,12 +1235,11 @@
                 <AvatarEditor
                   bind:this={editor}
                   bare
-                  current={app.settings.profileAvatar}
+                  current={me.avatar}
                   emojis={QUICK_AVATARS}
                   oncancel={() => void nav.pop()}
                   onsave={(v) => {
-                    app.settings.profileAvatar = v;
-                    pushAvatar();
+                    pushAvatar(v);
                     void nav.pop();
                   }}
                 />
@@ -1236,25 +1256,25 @@
                   {@attach tip("Choose a picture")}
                   disabled={uploadingAvatar}
                 >
-                  {#if isPhotoAvatar(app.settings.profileAvatar)}
-                    <img src={app.settings.profileAvatar} alt="" />
+                  {#if isPhotoAvatar(me.avatar)}
+                    <img src={avatarSrc(me.avatar)} alt="" />
                   {:else}
-                    <span class="emoji">{app.settings.profileAvatar || "🐣"}</span>
+                    <span class="emoji">{me.avatar || "🐣"}</span>
                   {/if}
                   <span class="avatar-edit"><Icon name="media-image" size={13} /></span>
                 </button>
                 <div class="profile-fields">
                   <label class="profile-name">
                     <span class="row-label">Display name</span>
-                    <TextField type="text" placeholder="anonymous" bind:value={app.settings.profileName} onchange={onProfileNameChange} />
-                    <span class="hint">Shown to other people on the servers you connect to.</span>
+                    <TextField type="text" placeholder="anonymous" bind:value={nameDraft} onchange={onProfileNameChange} />
+                    <span class="hint">{server?.user ? `Shown to other people on ${server.label}.` : "Shown to other people on the servers you connect to."}</span>
                   </label>
                   <div class="btn-row">
                     <Button type="button" onclick={onAvatarTap} disabled={uploadingAvatar}>
                       <Icon name="media-image" size={13} />
-                      {uploadingAvatar ? "Reading…" : isPhotoAvatar(app.settings.profileAvatar) ? "Replace picture" : "Choose picture"}
+                      {uploadingAvatar ? "Reading…" : isPhotoAvatar(me.avatar) ? "Replace picture" : "Choose picture"}
                     </Button>
-                    {#if isPhotoAvatar(app.settings.profileAvatar)}
+                    {#if isPhotoAvatar(me.avatar)}
                       <Button type="button" variant="ghost" onclick={() => setEmojiAvatar(QUICK_AVATARS[0])}>Remove</Button>
                     {/if}
                   </div>
@@ -1266,7 +1286,7 @@
                   <button
                     type="button"
                     class="quick-avatar"
-                    class:active={app.settings.profileAvatar === emoji}
+                    class:active={me.avatar === emoji}
                     {@attach tip(`Use ${emoji} instead of a picture`)}
                     onclick={() => setEmojiAvatar(emoji)}
                   >
@@ -2366,6 +2386,8 @@
                 <Icon name={limitedHere ? "warning" : "check"} size={13} />
                 {#if isLocalConnection}
                   <strong>This computer.</strong> Full access to this server.
+                {:else if server?.tierName === "trusted"}
+                  <strong>Trusted access.</strong> You can work in projects already here, add Limited people and help run this server, but not reach the machine itself: no new folders, terminals, CLI agents, MCP servers or runtime settings unless the owner allows them.
                 {:else if limitedHere}
                   <strong>Limited access.</strong> This device paired with a phone's code, so it can chat and edit files in projects already open here, but not add folders, providers, MCP servers or settings, open terminals or manage people. Ask the server's owner for full access (the device list marks each device's tier), or pair again with a full-access code (<code>yoakeland pair</code> on the server).
                 {:else}
@@ -2411,7 +2433,7 @@
                   </Button>
                 {/if}
               </div>
-              <p class="hint">Each person gets their own token. Their chats and git commits carry its name. Names can't change once registered; revoke and re-register to rename.</p>
+              <p class="hint">Each person has their own chats, name and picture, and every device they pair signs in as them. Revoking a device or removing a person disconnects them at once.</p>
               <div class="card">
 
               {#if server?.justRegisteredToken}
@@ -2462,6 +2484,9 @@
                 </form>
               {/if}
 
+              {#if server?.people && cid}
+                <PeoplePanel {cid} />
+              {:else}
               <ul class="list">
                 {#each (server?.tokens ?? []) as token (token.name)}
                   <li>
@@ -2483,10 +2508,11 @@
                   <li class="empty">No one yet.</li>
                 {/each}
               </ul>
+              {/if}
               </div>
             </section>
             </SubPage>
-            {#if server?.connectionStatus === "connected"}
+            {#if server?.connectionStatus === "connected" && !server?.people}
               <SubPage id="peers" title="Connected now" inCard link={{ value: String((server?.peers ?? []).filter((p) => p.peerId !== server?.selfPeerId).length), hint: "Devices on this server" }}>
               <section class="settings-section">
                 <h3 class="section-heading"><Icon name="plug-connected" size={15} />Connected now</h3>
