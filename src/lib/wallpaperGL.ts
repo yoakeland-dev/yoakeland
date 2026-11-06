@@ -31,7 +31,7 @@ const STYLE_MAP: Record<WallpaperStyle, number> = {
 
 export function wallpaperGL(
   canvas: HTMLCanvasElement,
-  params: string | { src: string; style?: WallpaperStyle; visible?: boolean },
+  params: string | { src: string; style?: WallpaperStyle; visible?: boolean; fade?: boolean },
 ) {
   let src = typeof params === "string" ? params : params.src;
   let style: WallpaperStyle = (typeof params === "string" ? undefined : params.style) ?? "dither";
@@ -61,6 +61,7 @@ export function wallpaperGL(
 
   gl.uniform1f(uLevels, 5.0);
   gl.uniform1f(uStyle, STYLE_MAP[style] ?? 0.0);
+  gl.uniform1f(gl.getUniformLocation(program, "u_fade"), typeof params !== "string" && params.fade === false ? 0.0 : 1.0);
 
   // Theme tokens aren't always hex or rgb() (the quiet room's are oklab()), so resolve them
   // through a 1px 2d canvas, which parses any CSS color and hands back plain rgb.
@@ -151,7 +152,7 @@ export function wallpaperGL(
   load(src);
 
   return {
-    update(newParams: string | { src: string; style?: WallpaperStyle; visible?: boolean }) {
+    update(newParams: string | { src: string; style?: WallpaperStyle; visible?: boolean; fade?: boolean }) {
       const nowVisible = typeof newParams === "string" ? true : (newParams.visible ?? true);
       if (nowVisible !== visible) {
         visible = nowVisible;
