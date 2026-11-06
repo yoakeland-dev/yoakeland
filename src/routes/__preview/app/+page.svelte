@@ -469,6 +469,30 @@
   const params = new URLSearchParams(location.search);
   if (params.has("flat")) app.settings.mainArea = "flat";
   onMount(() => {
+    // People, and what the add-a-device dialog needs: drive it from the console through __yoake.
+    const caps = (on: boolean) => ({ files_edit: true, commands_sandboxed: true, autonomous: true, processes: on, others_chats: on, terminals_watch: false, mcp_tools: on, commands_unsandboxed: false, browser: "off", cli: [] });
+    const g = globalThis as { __pairDemo?: { hosts: string[] }; __yoake?: typeof app };
+    g.__pairDemo = { hosts: ["192.168.1.24", "100.64.0.7"] };
+    g.__yoake = app;
+    local.user = { id: "owner", name: "Aveline" } as typeof local.user;
+    local.people = {
+      users: [
+        { id: "owner", name: "Aveline", tier: "full", effectiveCaps: caps(true), devices: [
+          { credential: "desktop", deviceType: "desktop", deviceName: "Desktop", deny: [], online: true },
+          { credential: "phone", deviceType: "web", deviceName: "Pixel 8", deny: [], online: true, pairedBy: "owner" },
+          { credential: "laptop", deviceType: "desktop", deviceName: "Work laptop", deny: [], online: false, lastSeen: Math.floor(now / 1000) - 172800, pairedBy: "owner" },
+        ] },
+        { id: "u1", name: "Jun Park", tier: "trusted", effectiveCaps: caps(true), devices: [
+          { credential: "jun", deviceType: "web", deviceName: "Jun's iPhone", deny: ["mcp_tools"], online: true, pairedBy: "owner" },
+        ] },
+        { id: "u2", name: "Mara", tier: "limited", effectiveCaps: caps(false), devices: [
+          { credential: "mara", deviceType: "web", deny: [], online: false, pairedBy: "u1" },
+        ] },
+      ],
+      limitedDefaults: {},
+      tierDefaults: { limited: caps(false), trusted: caps(true), full: caps(true) },
+      cliProviders: ["claude", "codex"],
+    } as typeof local.people;
     app.applySettings();
     if (params.get("ext")) app.openExtensions();
     if (params.has("diag")) {
