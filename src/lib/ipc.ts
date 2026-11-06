@@ -1048,7 +1048,8 @@ export function setSessionArchived(connectionId: ConnectionId, sessionId: string
   void send(connectionId, { type: "set_session_archived", data: { sessionId, archived, projectPath: project } });
 }
 
-/** Pairs (or, with `null`, unpairs) `sessionId`'s split/sidebar layout (§3.1), server-persisted * so it survives a reload or shows on another device. Optimistic, like setSessionArchived. */
+/** Pairs (or, with `null`, unpairs) `sessionId`'s split/sidebar layout (§3.1), server-persisted
+ * so it survives a reload or shows on another device. Optimistic, like setSessionArchived. */
 export function setSessionLayout(connectionId: ConnectionId, sessionId: string, linkedSessionId: string | null) {
   const server = app.servers[connectionId];
   const project = server?.projectBySession[sessionId];

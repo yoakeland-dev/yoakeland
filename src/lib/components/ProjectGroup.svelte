@@ -75,12 +75,15 @@
     renaming = false;
   }
 
-  /** Archive every chat in this group that isn't working or waiting on you. One click for the
-   * "eight chats open, work's done" case — several chats can finish one task. */
+  /** Archive the chats in this group that are done with: not working, not waiting on you, not
+   * the one you're in, and not holding a result you haven't read. One click for the "eight chats
+   * open, work's done" case — several chats can finish one task. */
   async function archiveIdle() {
-    const idle = sessions.filter((s) => !server?.activeTurnBySession[s.sessionId] && !server?.pendingAsks.some((a) => a.sessionId === s.sessionId));
-    const running = sessions.length - idle.length;
-    const tail = running ? ` ${running} still running ${running === 1 ? "stays" : "stay"} open.` : "";
+    const busy = (s: SessionSummary) =>
+      !!server?.activeTurnBySession[s.sessionId] || !!server?.pendingAsks.some((a) => a.sessionId === s.sessionId);
+    const idle = sessions.filter((s) => !busy(s) && s.sessionId !== server?.currentSessionId && !server?.isUnread(s));
+    const kept = sessions.length - idle.length;
+    const tail = kept ? ` ${kept} still in use ${kept === 1 ? "stays" : "stay"} open.` : "";
     if (!idle.length || !(await askConfirm(`Archive ${idle.length} chat${idle.length === 1 ? "" : "s"} in ${projectName}?${tail}`))) return;
     for (const s of idle) setSessionArchived(connectionId, s.sessionId, true);
   }
