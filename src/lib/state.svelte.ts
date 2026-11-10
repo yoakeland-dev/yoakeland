@@ -2,6 +2,7 @@ import { applyQuietTokens } from "./quietRoom";
 import { fmtVersion, isOlder, serverAhead } from "./serverVersion";
 import type {
   AskUserQuestionData,
+  ForwardGrant,
   ChatMessage,
   ChatMode,
   TodoList,
@@ -736,6 +737,8 @@ export class ServerState {
   serverIdentity = $state<string | null>(null);
   /** The server's feature list (identity or status event), e.g. "forwarding". */
   features = $state<string[]>([]);
+  /** Servers this person lets use this server's providers (forward_grants; the whole list each time). */
+  forwardGrants = $state<ForwardGrant[]>([]);
   /** Chats whose turn waits for a device that reaches another server (forward_state), by chat. */
   private forwardWait = $state<Record<string, { turnId?: string; serverId: string } | undefined>>({});
   /** The server a chat's running turn is waiting on a device for, if it is. */
@@ -2535,6 +2538,10 @@ export class ServerState {
           this.contextBySession[data.sessionId] = { ...ctx, autoCompactOff: off || undefined, budgetTokens: off ? undefined : budget };
         }
         this.modelOptionsBySession = { ...this.modelOptionsBySession, [data.sessionId]: merged };
+        break;
+      }
+      case "forward_grants": {
+        this.forwardGrants = (env.data as { grants?: ForwardGrant[] } | undefined)?.grants ?? [];
         break;
       }
       case "forward_state": {

@@ -27,6 +27,7 @@ import { setDiscordRpcStatus } from "./discordRpc.svelte";
 import type { DiscordRpcStatus } from "./platform";
 import { showChat } from "./viewport.svelte";
 import { createRelay } from "./forwardRelay";
+import { canRelay, parseVia } from "./forwarding";
 
 let wired = false;
 /** Model forwarding: the relay between servers and the offers that tell each what this device reaches. */
@@ -205,6 +206,9 @@ async function redial(oldConnectionId: ConnectionId) {
     server.connectionId = newConnectionId;
     server.connectionStatus = "connected";
     server.connectionError = null;
+    // Whatever the last connection said about the server may no longer hold; the identity says it again.
+    server.features = [];
+    server.forwardGrants = [];
     app.servers[newConnectionId] = server;
     if (app.activeConnectionId === oldConnectionId) app.activeConnectionId = newConnectionId;
     afterConnect(newConnectionId);
@@ -234,6 +238,7 @@ export function wireEvents() {
         server.serverStatus = data.status;
         if (data.status.features) server.features = data.status.features;
         relay.syncOffers();
+        askGrants(server);
       }
       void send(connectionId, { type: "pong", data: { nonce: data?.nonce } });
       return;
@@ -304,6 +309,7 @@ export function wireEvents() {
     // person may run schedules too; they only see their own.
     if (env.type === "server_identity") {
       relay.syncOffers();
+      askGrants(server);
       if (server.canAdmin) void listScheduled(connectionId);
       if (server.user && server.canAdmin) listPeople(connectionId);
       // This device's local profile only fills a person who has none: a reconnect never overwrites.
@@ -465,6 +471,7 @@ function afterConnect(connectionId: ConnectionId) {
   listProjects(connectionId);
   listProviders(connectionId);
   relay.syncOffers();
+  askGrants(server);
   server.modelsAsked.clear(); // a reconnect (or restarted server) is worth one fresh try per provider
   detectCli(connectionId);
   listNotifications(connectionId);
@@ -481,6 +488,22 @@ function afterConnect(connectionId: ConnectionId) {
   }
   server.turnsLostOnDrop = [];
   if (server.currentSessionId) listTerminals(connectionId, server.currentSessionId);
+}
+
+const grantsAsked = new Set<ConnectionId>();
+/** Asks a forwarding-capable server which servers may use its providers: once per connection, and
+ * only once its feature list is known, so an older server never sees the event. */
+function askGrants(server: ServerState) {
+  if (!canRelay(server) || grantsAsked.has(server.connectionId)) return;
+  grantsAsked.add(server.connectionId);
+  void send(server.connectionId, { type: "list_forward_grants", data: {} });
+}
+
+/** Withdraws a borrowing server's use of a provider (`providerName` is the lender's own name for it). */
+export function revokeForwardGrant(lenderConnectionId: ConnectionId, serverId: string, providerName: string) {
+  void send(lenderConnectionId, { type: "forward_revoke", data: { serverId, providerName } });
+  const lender = app.servers[lenderConnectionId];
+  if (lender) lender.forwardGrants = lender.forwardGrants.filter((g) => !(g.serverId === serverId && g.providerName === providerName));
 }
 
 const seededProfile = new Set<string>();
@@ -1373,7 +1396,18 @@ export function setProvider(connectionId: ConnectionId, sessionId: string, provi
   // registry per project (§4b); omitting projectPath resolves against the wrong one and the
   // turn comes back `no_provider`, clearing this selection.
   const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
-  void send(connectionId, { type: "set_provider", sessionId, data: { providerName, model, projectPath } });
+  const set = () => send(connectionId, { type: "set_provider", sessionId, data: { providerName, model, projectPath } });
+  // A borrowed provider is the lending server's to allow: say so there first, unless it already knows.
+  // Every path that binds one (picker, a new chat's seed, a resumed chat) comes through here.
+  const via = parseVia(providerName);
+  const borrower = app.servers[connectionId];
+  const lender = via && Object.values(app.servers).find((s) => s.serverId === via.serverId && canRelay(s));
+  if (via && lender && borrower?.serverId && !lender.forwardGrants.some((g) => g.serverId === borrower.serverId && g.providerName === via.name)) {
+    lender.forwardGrants = [...lender.forwardGrants, { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name }];
+    void send(lender.connectionId, { type: "forward_grant", data: { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name } }).then(set);
+    return;
+  }
+  void set();
 }
 
 /** Tunes the provider's request shape for a session's next turn (§3.1). All fields optional;

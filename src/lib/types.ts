@@ -569,6 +569,14 @@ export interface NotifyPrefs {
 }
 
 /** Health snapshot riding on every server-sent ping (SPEC.md §2a). */
+/** One borrowing server a person lets use a provider on this server (forward_grants). */
+export interface ForwardGrant {
+  serverId: string;
+  serverName?: string;
+  /** This server's own name for the provider, not the `via:` one. */
+  providerName: string;
+}
+
 export interface ServerStatus {
   /** Same list as server_identity's; whichever event carries it is read. */
   features?: string[];

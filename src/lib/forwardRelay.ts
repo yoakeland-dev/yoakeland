@@ -18,8 +18,8 @@ export function createRelay(send: Send) {
   const hops = new Map<string, Hop>(); // requestId -> who talks to whom
   const offered = new Map<ConnectionId, string>(); // what each server was last told
 
-  const pass = (to: ConnectionId, env: Envelope, fallback?: Hop) =>
-    send(to, { type: env.type, sessionId: env.sessionId ?? fallback?.sessionId, turnId: env.turnId ?? fallback?.turnId, data: env.data });
+  const pass = (to: ConnectionId, env: Envelope, fallback?: Hop, data = env.data) =>
+    send(to, { type: env.type, sessionId: env.sessionId ?? fallback?.sessionId, turnId: env.turnId ?? fallback?.turnId, data });
   const fail = (h: Hop, requestId: string, error: string) =>
     send(h.from, { type: "forward_end", sessionId: h.sessionId, turnId: h.turnId, data: { requestId, error } });
 
@@ -29,6 +29,9 @@ export function createRelay(send: Send) {
     switch (env.type) {
       case "forward_request": {
         if (!d?.requestId) return true;
+        // The lending server decides on who is asking, so the one field written here is the sender's
+        // own serverId, over anything the frame already said. Every piece, since A reassembles by id.
+        const mine = app.servers[connectionId]?.serverId;
         let h = hops.get(d.requestId);
         if (h) {
           // A second request under a live id, or one from someone else: not the same stream, drop it.
@@ -38,13 +41,14 @@ export function createRelay(send: Send) {
           if (d.seq !== 0) return true;
           const a = Object.values(app.servers).find((s) => s.serverId === d.serverId && s.connectionId !== connectionId && canRelay(s));
           h = { from: connectionId, to: a?.connectionId ?? "", sessionId: env.sessionId, turnId: env.turnId };
-          if (!a) {
-            void fail(h, d.requestId, "this device is not connected to the server that has that provider");
+          if (!mine || !a) {
+            void fail(h, d.requestId, mine ? "this device is not connected to the server that has that provider" : "this device does not know this server's id yet");
             return true;
           }
           hops.set(d.requestId, h);
         }
-        void pass(h.to, env);
+        if (!mine) return true;
+        void pass(h.to, env, undefined, { ...env.data, from: mine });
         return true;
       }
       case "forward_cancel": {

@@ -2,7 +2,8 @@
   // One account or API key, opened on the right of Settings > Providers: who it is and whether it
   // is on, its subscription limits, the few things that can be edited, its models, and removal.
   import { untrack } from "svelte";
-  import { ensureModels, refreshModels, setFavoriteModels } from "../../ipc";
+  import { ensureModels, refreshModels, revokeForwardGrant, setFavoriteModels } from "../../ipc";
+  import { serverNameOf } from "../../forwarding";
   import { MULTI_ACCOUNT, providerLabel, type AgentGroup } from "../../modelVendor";
   import { signInCommand } from "../../agentSignIn";
   import { resetText, resetTitle, windows } from "../../rateLimits";
@@ -85,6 +86,9 @@
     copied = true;
     setTimeout(() => (copied = false), 1500);
   }
+
+  // ---- Lent to: servers this person lets use this provider through a device connected to both ----
+  const lentTo = $derived((server?.forwardGrants ?? []).filter((g) => g.providerName === p.name));
 
   // ---- Subscription limits ----
   const limits = $derived(server?.serverStatus?.rateLimits?.[p.name]);
@@ -251,6 +255,21 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+  {/if}
+
+  {#if lentTo.length}
+    <section class="sec">
+      <h4>Lent to</h4>
+      <div class="pcard">
+        <div class="prow"><div class="l"><span>These servers can use this provider as you, through a device connected to both.</span></div></div>
+        {#each lentTo as g (g.serverId)}
+          <div class="prow">
+            <div class="l"><b>{g.serverName || serverNameOf(app, g.serverId)}</b></div>
+            <div class="c"><Button size="sm" disabled={!connected} onclick={() => cid && revokeForwardGrant(cid, g.serverId, g.providerName)}>Revoke</Button></div>
+          </div>
+        {/each}
       </div>
     </section>
   {/if}

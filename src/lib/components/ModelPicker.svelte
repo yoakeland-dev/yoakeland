@@ -458,7 +458,7 @@
                 {@attach tip(g.server.label, { side: "left" })}
                 onclick={() => (activeTab = `lender:${g.server.serverId}`)}
               >
-                <ServerAvatar name={g.server.label} seed={g.server.serverId} size={16} bare />
+                <ServerAvatar name={g.server.label} seed={g.server.serverId} size={16} bare plain />
               </button>
             {/each}
 
