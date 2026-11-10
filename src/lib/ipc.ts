@@ -499,6 +499,20 @@ function askGrants(server: ServerState) {
   void send(server.connectionId, { type: "list_forward_grants", data: {} });
 }
 
+/** Lets `borrower` use the `via:` provider `providerName` on the server that lends it. Resolves once the
+ * lender has been told (at once when it already knows). Call this ONLY from the model picker's own pick
+ * handler, where the person chose that row. Never from an automatic path (resuming a chat, seeding a new
+ * one, anything driven by a server event): the borrowing server controls those names, and a grant sent
+ * there would hand it the person's provider, or quietly undo a Revoke. */
+export async function grantForwarding(borrower: ServerState, providerName: string): Promise<void> {
+  const via = parseVia(providerName);
+  const lender = via && Object.values(app.servers).find((s) => s.serverId === via.serverId && canRelay(s));
+  if (!via || !lender || !borrower.serverId) return;
+  if (lender.forwardGrants.some((g) => g.serverId === borrower.serverId && g.providerName === via.name)) return;
+  lender.forwardGrants = [...lender.forwardGrants, { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name }];
+  await send(lender.connectionId, { type: "forward_grant", data: { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name } });
+}
+
 /** Withdraws a borrowing server's use of a provider (`providerName` is the lender's own name for it). */
 export function revokeForwardGrant(lenderConnectionId: ConnectionId, serverId: string, providerName: string) {
   void send(lenderConnectionId, { type: "forward_revoke", data: { serverId, providerName } });
@@ -1396,18 +1410,7 @@ export function setProvider(connectionId: ConnectionId, sessionId: string, provi
   // registry per project (§4b); omitting projectPath resolves against the wrong one and the
   // turn comes back `no_provider`, clearing this selection.
   const projectPath = app.servers[connectionId]?.projectBySession[sessionId];
-  const set = () => send(connectionId, { type: "set_provider", sessionId, data: { providerName, model, projectPath } });
-  // A borrowed provider is the lending server's to allow: say so there first, unless it already knows.
-  // Every path that binds one (picker, a new chat's seed, a resumed chat) comes through here.
-  const via = parseVia(providerName);
-  const borrower = app.servers[connectionId];
-  const lender = via && Object.values(app.servers).find((s) => s.serverId === via.serverId && canRelay(s));
-  if (via && lender && borrower?.serverId && !lender.forwardGrants.some((g) => g.serverId === borrower.serverId && g.providerName === via.name)) {
-    lender.forwardGrants = [...lender.forwardGrants, { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name }];
-    void send(lender.connectionId, { type: "forward_grant", data: { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name } }).then(set);
-    return;
-  }
-  void set();
+  void send(connectionId, { type: "set_provider", sessionId, data: { providerName, model, projectPath } });
 }
 
 /** Tunes the provider's request shape for a session's next turn (§3.1). All fields optional;

@@ -3,7 +3,7 @@
   import { tip } from "../tooltip.svelte";
   import { Popover } from "bits-ui";
   import { app, modelKey } from "../state.svelte";
-  import { setProvider, setModelOptions, ensureModels, refreshModels, setFavoriteModels } from "../ipc";
+  import { setProvider, grantForwarding, setModelOptions, ensureModels, refreshModels, setFavoriteModels } from "../ipc";
   import { effortLevels } from "./EffortPicker.svelte";
   import { viewport } from "../viewport.svelte";
   import {
@@ -211,7 +211,8 @@
     const d = describeProvider(app, server, name ?? undefined);
     const provider = d.info;
     // A borrowed provider is only taken for a new chat while the server that lends it is connected.
-    if (!name || !provider || d.offline) return;
+    // Nor one the lender hasn't allowed here: an automatic path never grants, only a pick does.
+    if (!name || !provider || d.offline || (parseVia(name) && !d.granted)) return;
     const sig = [name, model, effort, fast].join("\n");
     if (server.seededBySession.get(sessionId) === sig) return;
     server.seededBySession.set(sessionId, sig);
@@ -290,7 +291,12 @@
     const via = parseVia(entry.provider.name);
     const lender = via && describeProvider(app, server, entry.provider.name).lender;
     if (via && lender) ensureModels(lender.connectionId, via.name);
-    if (cid) setProvider(cid, sessionId, entry.provider.name, entry.model.id);
+    if (cid && server) {
+      const bind = () => setProvider(cid, sessionId, entry.provider.name, entry.model.id);
+      // The one place a grant is sent: the person chose this row.
+      if (via) void grantForwarding(server, entry.provider.name).then(bind);
+      else bind();
+    }
     open = false;
   }
 
@@ -550,6 +556,9 @@
                       : "No models for this provider."}
                 </p>
               {:else}
+                {#if parseVia(currentProvider?.name) && currentDesc.lender && !currentDesc.granted}
+                  <p class="hint">Not lent to this server any more. Pick the model again to allow it.</p>
+                {/if}
                 {#if currentDesc.offline}
                   <p class="hint">{currentDesc.serverName} isn't connected on this device. You can still send; the server waits for a device that is.</p>
                 {/if}

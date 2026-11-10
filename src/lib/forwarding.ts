@@ -62,7 +62,7 @@ export function describeProvider(
   app: App,
   server: ServerState | null | undefined,
   providerName: string | undefined,
-): { label: string; serverName?: string; offline?: boolean; info?: ProviderInfo; lender?: ServerState; models: ModelInfo[] } {
+): { label: string; serverName?: string; offline?: boolean; granted?: boolean; info?: ProviderInfo; lender?: ServerState; models: ModelInfo[] } {
   const via = parseVia(providerName);
   if (!via) {
     const info = server?.providers.find((p) => p.name === providerName);
@@ -75,6 +75,8 @@ export function describeProvider(
     label: own ? providerLabel(own) : via.name,
     serverName: serverNameOf(app, via.serverId),
     offline: !lender,
+    // Whether the lending server lets this server use it: false once revoked, or if never allowed.
+    granted: !!lender && !!server?.serverId && lender.forwardGrants.some((g) => g.serverId === server.serverId && g.providerName === via.name),
     lender,
     info,
     models: lender?.modelsByProvider[via.name] ?? [],
