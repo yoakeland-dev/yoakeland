@@ -38,6 +38,7 @@ export const toolMeta: Record<string, { icon: ToolIconName; label: string }> = {
   ask_user_question: { icon: "message-question", label: "Question" },
   write_plan: { icon: "file-text", label: "Plan" },
   skill: { icon: "sparkles", label: "Skill" },
+  recall: { icon: "search", label: "Recall" },
 };
 
 // CLI agents use their own tool names (`Bash`, `commandExecution`, …), so a native call is identified by its ACP `kind`.
@@ -83,9 +84,19 @@ export function activityFor(call: CallLike): string {
   return summary ? `${label} ${summary.split("/").pop()}` : label;
 }
 
+/** "Opened chapter 3 · Title" once the result's first line ("[Chapter 3: Title — unfolded, ...]") is in. */
+function recallSummary(call: { args?: Record<string, unknown>; output?: string }): string {
+  const { query, chapter } = call.args ?? {};
+  const head = /^\[Chapter (\d+): (.*?) — unfolded/.exec(call.output ?? "");
+  if (head) return `Opened chapter ${head[1]} · ${head[2]}`;
+  if (typeof chapter === "number") return `Opened chapter ${chapter}`;
+  return typeof query === "string" && query ? `Searched earlier chapters for "${query}"` : "Searched earlier chapters";
+}
+
 /** One-line preview of a call's args. Args come off the wire/persisted history, so a
  * missing or malformed value here shouldn't be able to crash a card. */
-export function summaryFor(call: { name?: string; args?: Record<string, unknown> } & NativeToolFields): string {
+export function summaryFor(call: { name?: string; args?: Record<string, unknown>; output?: string } & NativeToolFields): string {
+  if (call.name === "recall") return recallSummary(call);
   if (call.native) {
     // A title that repeats the label ("Edit /x" next to "Edit") drops it.
     if (call.title) {
@@ -138,6 +149,7 @@ const VERB: Record<string, (n: number) => string> = {
   ask_user_question: (n) => (n === 1 ? "asked a question" : `asked ${n} questions`),
   write_plan: (n) => (n === 1 ? "wrote a plan" : `wrote the plan ${n} times`),
   skill: (n) => (n === 1 ? "loaded a skill" : `loaded ${n} skills`),
+  recall: (n) => (n === 1 ? "looked back at an earlier chapter" : `looked back at earlier chapters ${n} times`),
 };
 
 const MAX_CLAUSES = 3;

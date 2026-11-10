@@ -492,6 +492,8 @@ export interface RuntimeSettings {
   autoCompactTokens: number;
   /** Added to every summary compaction's prompt; it narrows what the summary stresses, it can't replace the base prompt. */
   compactInstructions: string;
+  /** "summary" = one summary instead of chapters; "" or "chapters" = chapters (the default). */
+  compactionStyle?: string;
 }
 
 export interface SnapshotInfo {
@@ -839,12 +841,26 @@ export interface ChatMessage {
 }
 
 export interface Compaction {
-  /** "clear" stubbed old tool results, "summary" summarized everything before. */
-  kind: "clear" | "summary";
+  /** "clear" stubbed old tool results, "summary" summarized everything before, "chapters" folded it into titled chapters. */
+  kind: "clear" | "summary" | "chapters";
   tokensBefore: number;
   tokensAfter: number;
   /** Asked for with /compact rather than the chat compacting itself. */
   manual?: boolean;
+  /** kind "chapters": the chapters this compaction made. */
+  chapters?: Chapter[];
+  /** Chapters 1..titlesOnly show only their title to the model. */
+  titlesOnly?: number;
+}
+
+export interface Chapter {
+  n: number;
+  title: string;
+  brief: string;
+  /** First and last message id of the chapter, inclusive. */
+  from: string;
+  to: string;
+  tokens: number;
 }
 
 /** A prompt sent while its chat was mid-turn: waits server-side until that turn ends (§3.1). */

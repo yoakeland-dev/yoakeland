@@ -2080,7 +2080,7 @@ export class ServerState {
       toolCalls: [],
       streaming: false,
       createdAt: Date.now(),
-      compaction: { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter, manual: data.manual },
+      compaction: { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter, manual: data.manual, chapters: data.chapters, titlesOnly: data.titlesOnly },
     };
     const cur = this.findAssistantMessage(sessionId, turnId);
     if (!cur) {

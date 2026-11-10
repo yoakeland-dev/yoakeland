@@ -11,15 +11,26 @@
 
   const c = $derived(message.compaction);
   const summary = $derived(message.text.trim());
+  const chapters = $derived(c?.chapters ?? []);
+  const expandable = $derived(!!summary || chapters.length > 0);
+  const title = $derived(
+    chapters.length
+      ? `${c?.manual ? "Folded" : "Auto-folded"} into ${chapters.length} chapter${chapters.length === 1 ? "" : "s"}`
+      : c?.manual ? "Context compacted" : "Context auto-compacted",
+  );
   let open = $state(false);
+  let root: HTMLElement | undefined = $state();
+
+  // A chapter's first message, when the chat has it loaded; the title is only a link then.
+  const rowFor = (id: string) => root?.closest(".list")?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"]`);
 </script>
 
 {#if c}
-  <div class="compacted" class:open>
-    {#if summary}
-      <button class="label" onclick={() => (open = !open)} aria-expanded={open} {@attach tip("Show what the model sees in place of everything above")}>
+  <div class="compacted" class:open bind:this={root}>
+    {#if expandable}
+      <button class="label" onclick={() => (open = !open)} aria-expanded={open} {@attach tip(chapters.length ? "Show the chapters the model sees in place of everything above" : "Show what the model sees in place of everything above")}>
         <Icon name="arrows-minimize" size={12} />
-        {c.manual ? "Context compacted" : "Context auto-compacted"} · {shortNum(c.tokensBefore)} → {shortNum(c.tokensAfter)} tokens
+        {title} · {shortNum(c.tokensBefore)} → {shortNum(c.tokensAfter)} tokens
         <span class="chevron" class:open><Icon name="chevron-right" size={12} /></span>
       </button>
     {:else}
@@ -29,10 +40,32 @@
       </span>
     {/if}
   </div>
-  {#if summary}
+  {#if expandable}
     <div class="accordion" class:open>
       <div class="accordion-inner">
-        {#if open}
+        {#if open && chapters.length}
+          <ol class="chapters selectable">
+            {#each chapters as ch (ch.n)}
+              {@const row = rowFor(ch.from)}
+              <li>
+                <div class="chapter-head">
+                  <span class="num">{ch.n}</span>
+                  {#if row}
+                    <button class="chapter-title" onclick={() => row.scrollIntoView({ block: "start", behavior: "smooth" })}>{ch.title}</button>
+                  {:else}
+                    <span class="chapter-title">{ch.title}</span>
+                  {/if}
+                  <span class="size">{shortNum(ch.tokens)} tokens</span>
+                </div>
+                {#if ch.n > (c?.titlesOnly ?? 0)}
+                  <div class="brief"><Markdown text={ch.brief} /></div>
+                {:else}
+                  <div class="brief folded">Brief folded. The model can still reopen it with recall.</div>
+                {/if}
+              </li>
+            {/each}
+          </ol>
+        {:else if open}
           <div class="summary selectable"><Markdown text={summary} /></div>
         {/if}
       </div>
@@ -92,6 +125,55 @@
   }
   .accordion-inner {
     overflow: hidden;
+  }
+  .chapters {
+    list-style: none;
+    margin: 0.57rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.57rem;
+  }
+  .chapters li {
+    padding: 0.14rem 0.86rem;
+    border-left: 2px solid var(--panel-border);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+  .chapter-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.43rem;
+    min-width: 0;
+  }
+  .num,
+  .size {
+    font-size: var(--text-label-size);
+    flex: none;
+  }
+  .chapter-title {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--text);
+  }
+  button.chapter-title {
+    cursor: pointer;
+  }
+  button.chapter-title:hover,
+  button.chapter-title:focus-visible {
+    color: var(--accent);
+  }
+  .brief {
+    margin-top: 0.14rem;
+  }
+  .brief.folded {
+    font-size: var(--text-label-size);
   }
   .summary {
     margin: 0.57rem 0 0;
