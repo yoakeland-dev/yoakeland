@@ -3,6 +3,7 @@
   import { app } from "../state.svelte";
   import type { ModelRef } from "../handoff";
   import { vendorMetaFor, titleFor, isCli, cliMeta, providerLabel, type Entry } from "../modelVendor";
+  import { describeProvider } from "../forwarding";
   import LobeIcon from "./LobeIcon.svelte";
   import Icon from "./Icon.svelte";
 
@@ -14,13 +15,13 @@
 
   function side(ref: ModelRef) {
     const providers = app.active?.providers ?? [];
-    const provider = providers.find((p) => p.name === ref.provider);
+    const { info: provider, models, label, serverName } = describeProvider(app, app.active, ref.provider);
     // A provider removed since: the model id stands in, with no logo of its own.
     if (!provider) return { icon: "openrouter", title: ref.model, via: ref.provider };
-    const model = app.active?.modelsByProvider[ref.provider]?.find((m) => m.id === ref.model) ?? { id: ref.model };
+    const model = models.find((m) => m.id === ref.model) ?? { id: ref.model };
     const entry: Entry = { provider, model };
     const accounts = isCli(provider) ? providers.filter((p) => p.kind === provider.kind && p.command === provider.command).length : 1;
-    const via = !isCli(provider) ? providerLabel(provider) : accounts > 1 ? `${cliMeta(provider).title} · ${providerLabel(provider)}` : cliMeta(provider).title;
+    const via = serverName ? `${label} · ${serverName}` : !isCli(provider) ? providerLabel(provider) : accounts > 1 ? `${cliMeta(provider).title} · ${providerLabel(provider)}` : cliMeta(provider).title;
     return { icon: vendorMetaFor(entry).icon, title: titleFor(entry), via };
   }
 

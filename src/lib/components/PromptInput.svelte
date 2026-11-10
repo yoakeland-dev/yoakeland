@@ -32,6 +32,7 @@
   import { askBtw } from "../sideChat";
   import { liveActivity } from "../activity.svelte";
   import { sessionModes } from "../modes";
+  import { describeProvider, forwardWaitLabel } from "../forwarding";
   import Icon from "./Icon.svelte";
   import AskCard from "./AskCard.svelte";
   import TodoPanel from "./TodoPanel.svelte";
@@ -462,7 +463,7 @@
   // The "$name" token before the cursor, or "/name" as the message's first word: a skill to name in this
   // message (SPEC.md §3.1 "Skills"). Offered only the skills this chat's agent can load, and only once the
   // sign starts a word, so "$5" stays a price and a path in the middle of a sentence isn't a command.
-  const agentKind = $derived(skillKindOf(server?.providers.find((p) => p.name === server?.providerBySession[sessionId])?.kind));
+  const agentKind = $derived(skillKindOf(describeProvider(app, server, server?.providerBySession[sessionId]).info?.kind));
   const allSkills = $derived(filesRoot ? server?.skillsByProject[filesRoot]?.skills : undefined);
   const skillQuery = $derived.by(() => {
     if (mentionDismissed) return null;
@@ -682,7 +683,7 @@
 
   // What the reply streaming right now is doing, for the status chip.
   const streamingMsg = $derived(server?.messagesBySession[sessionId]?.findLast((m) => m.streaming));
-  const activity = liveActivity(() => streamingMsg);
+  const activity = liveActivity(() => streamingMsg, () => forwardWaitLabel(app, server, sessionId));
   const showStatus = $derived(!floating && !asks.length && scrolledUp);
 
   // One button whose job follows the state: send, queue behind the running turn, stop it when

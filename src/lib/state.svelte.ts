@@ -734,6 +734,15 @@ export class ServerState {
     return me ? !!me.restricted : this.tierRestricted;
   }
   serverIdentity = $state<string | null>(null);
+  /** The server's feature list (identity or status event), e.g. "forwarding". */
+  features = $state<string[]>([]);
+  /** Chats whose turn waits for a device that reaches another server (forward_state), by chat. */
+  private forwardWait = $state<Record<string, { turnId?: string; serverId: string } | undefined>>({});
+  /** The server a chat's running turn is waiting on a device for, if it is. */
+  forwardingTo(sessionId: string): string | undefined {
+    const w = this.forwardWait[sessionId];
+    return w && w.turnId === this.activeTurnBySession[sessionId] ? w.serverId : undefined;
+  }
   /** Chosen by an operator and shared by every client; null until one is picked. */
   serverIcon = $state<ServerIcon | null>(null);
   /** What the UI calls this server everywhere (lists, badges, avatars). */
@@ -2528,6 +2537,12 @@ export class ServerState {
         this.modelOptionsBySession = { ...this.modelOptionsBySession, [data.sessionId]: merged };
         break;
       }
+      case "forward_state": {
+        const data = env.data as { serverId: string; state: "waiting" | "relaying" };
+        if (!env.sessionId) break;
+        this.forwardWait[env.sessionId] = data.state === "waiting" ? { turnId: env.turnId ?? this.activeTurnBySession[env.sessionId], serverId: data.serverId } : undefined;
+        break;
+      }
       case "model_list": {
         const data = env.data as { providerName: string; models: ModelInfo[]; fallback?: boolean };
         this.modelsByProvider = { ...this.modelsByProvider, [data.providerName]: data.models };
@@ -2809,6 +2824,7 @@ export class ServerState {
           this.app.toastAction(this.connectionId, `Server renamed to ${data.identity}`);
         }
         this.serverIdentity = data.identity;
+        if (data.features) this.features = data.features;
         this.serverIcon = data.icon ?? null;
         this.tierRestricted = !!data.restricted;
         this.tier = data.tier ?? null;

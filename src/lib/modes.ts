@@ -1,5 +1,6 @@
 import type { ChatMode, ModeSpec, ProviderInfo } from "./types";
-import type { ServerState } from "./state.svelte";
+import { app, type ServerState } from "./state.svelte";
+import { describeProvider } from "./forwarding";
 import { setMode } from "./ipc";
 import { isCli } from "./modelVendor";
 
@@ -58,12 +59,7 @@ export function sessionModes(
   server: ServerState | null | undefined,
   sessionId: string,
 ) {
-  const provider: ProviderInfo | undefined = server?.providers.find(
-    (p) => p.name === server?.providerBySession[sessionId],
-  );
-  const models = provider
-    ? (server?.modelsByProvider[provider.name] ?? [])
-    : [];
+  const { info: provider, models } = describeProvider(app, server, server?.providerBySession[sessionId]);
   const model =
     models.find((m) => m.id === server?.modelBySession[sessionId]) ?? models[0];
   const list = model?.capabilities?.permissionModes;

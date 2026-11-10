@@ -26,8 +26,11 @@ import { parseThemeFiles } from "./theme";
 import { setDiscordRpcStatus } from "./discordRpc.svelte";
 import type { DiscordRpcStatus } from "./platform";
 import { showChat } from "./viewport.svelte";
+import { createRelay } from "./forwardRelay";
 
 let wired = false;
+/** Model forwarding: the relay between servers and the offers that tell each what this device reaches. */
+const relay = createRelay((connectionId, envelope) => send(connectionId, envelope));
 
 /** Reads the themes folder into `app.customThemes` and re-applies, so an edited active theme updates live.
  * Returns a note for the UI (what was wrong with which file), or null when all is well. */
@@ -157,6 +160,8 @@ function handleConnectionLost(connectionId: ConnectionId, reason: string) {
     server.connectionStatus = "disconnected";
     server.connectionError = reason;
   }
+  relay.dropConnection(connectionId);
+  relay.syncOffers();
   app.log(`disconnected: ${reason}`);
   server.clearAllSessionSyncing();
   server.pendingAsks = [];
@@ -221,10 +226,15 @@ export function wireEvents() {
     const server = app.servers[connectionId];
     if (!server) return; // stale event from a connection we no longer track
     touchActivity(connectionId);
+    if (relay.handle(connectionId, env)) return;
     if (env.type === "ping") {
       // Echo the nonce back; the ping also carries the status bar's server snapshot.
       const data = env.data as { nonce?: string; status?: ServerStatus } | undefined;
-      if (data?.status) server.serverStatus = data.status;
+      if (data?.status) {
+        server.serverStatus = data.status;
+        if (data.status.features) server.features = data.status.features;
+        relay.syncOffers();
+      }
       void send(connectionId, { type: "pong", data: { nonce: data?.nonce } });
       return;
     }
@@ -293,6 +303,7 @@ export function wireEvents() {
     // Owner-only events: a paired-device (restricted) connection would just get an error. A Trusted
     // person may run schedules too; they only see their own.
     if (env.type === "server_identity") {
+      relay.syncOffers();
       if (server.canAdmin) void listScheduled(connectionId);
       if (server.user && server.canAdmin) listPeople(connectionId);
       // This device's local profile only fills a person who has none: a reconnect never overwrites.
@@ -453,6 +464,7 @@ function afterConnect(connectionId: ConnectionId) {
   stableTimers.set(server, setTimeout(() => (server.reconnectAttempt = 0), STABLE_MS));
   listProjects(connectionId);
   listProviders(connectionId);
+  relay.syncOffers();
   server.modelsAsked.clear(); // a reconnect (or restarted server) is worth one fresh try per provider
   detectCli(connectionId);
   listNotifications(connectionId);
@@ -677,6 +689,8 @@ export async function disconnect(connectionId: ConnectionId) {
     server.forgetQueuedPrompts();
     server.turnsLostOnDrop = server.endRunningTurns();
   }
+  relay.dropConnection(connectionId);
+  relay.syncOffers();
   failWaiters(connectionId, "disconnected before the server replied");
 }
 
@@ -690,6 +704,7 @@ export async function removeServer(connectionId: ConnectionId) {
     stopLiveness(connectionId);
   }
   delete app.servers[connectionId];
+  relay.syncOffers();
   if (server?.serverId) forgetKnownServer(server.serverId);
   if (app.activeConnectionId === connectionId) {
     app.activeConnectionId = Object.keys(app.servers)[0] ?? null;

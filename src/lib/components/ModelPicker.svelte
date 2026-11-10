@@ -21,7 +21,9 @@
     providerLabel,
     vendorMetaFor,
   } from "../modelVendor";
-  import type { ProviderInfo } from "../types";
+  import type { ModelInfo, ProviderInfo } from "../types";
+  import { borrowable, describeProvider, parseVia } from "../forwarding";
+  import ServerAvatar from "./ServerAvatar.svelte";
   import SlideText from "./SlideText.svelte";
   import Icon from "./Icon.svelte";
   import LobeIcon from "./LobeIcon.svelte";
@@ -37,6 +39,7 @@
     | "favorites"
     | "openrouter"
     | `cli:${string}`
+    | `lender:${string}`
     | `vendor:${Vendor}`;
 
   let open = $state(false);
@@ -54,27 +57,38 @@
   let search = $state("");
   let searchInput: HTMLInputElement | undefined = $state();
 
-  const currentProvider = $derived(
-    server?.providers.find((p) => p.name === server?.providerBySession[sessionId]),
-  );
+  // The chat's provider: B's own, or a `via:` one resolved on the server that lends it.
+  const currentDesc = $derived(describeProvider(app, server, server?.providerBySession[sessionId]));
+  const currentProvider = $derived(currentDesc.info);
   const currentModel = $derived(server?.modelBySession[sessionId]);
 
-  const allEntries = $derived.by(() => {
+  function entriesFor(providers: ProviderInfo[], modelsOf: (p: ProviderInfo) => ModelInfo[]) {
     const entries: Entry[] = [];
-    for (const provider of usable) {
+    for (const provider of providers) {
       const hidden = app.settings.hiddenModels?.[provider.name] ?? [];
-      for (const model of server?.modelsByProvider[provider.name] ?? []) {
+      for (const model of modelsOf(provider)) {
         // A hidden model stays listed while it is the chat's own, so the picker never shows a blank.
         if (hidden.includes(model.id) && !(provider.name === currentProvider?.name && model.id === currentModel)) continue;
         entries.push({ provider, model });
       }
     }
     return entries;
-  });
+  }
+  const allEntries = $derived(entriesFor(usable, (p) => server?.modelsByProvider[p.name] ?? []));
+
+  // Other connected servers' providers this one can borrow, one group per lending server.
+  const lenders = $derived(server ? borrowable(app, server) : []);
+  const lentGroups = $derived(
+    lenders.map((l) => ({
+      server: l.server,
+      entries: entriesFor(l.providers, (p) => describeProvider(app, server, p.name).models),
+    })),
+  );
+  const lentEntries = $derived(lentGroups.flatMap((g) => g.entries));
 
   const currentEntry = $derived(
     currentProvider && currentModel
-      ? allEntries.find(
+      ? [...allEntries, ...lentEntries].find(
           (e) =>
             e.provider.name === currentProvider.name &&
             e.model.id === currentModel,
@@ -142,6 +156,7 @@
     if (groups.length) return `cli:${groups[0].key}`;
     if (vendorsPresent.length) return `vendor:${vendorsPresent[0]}`;
     if (openrouterPresent) return "openrouter";
+    if (lentGroups.length) return `lender:${lentGroups[0].server.serverId}`;
     return "favorites";
   }
 
@@ -149,14 +164,19 @@
     const q = search.trim().toLowerCase();
     let list: Entry[];
     if (q) {
-      list = allEntries.filter((e) => {
+      list = [...allEntries, ...lentEntries].filter((e) => {
         const vendor = vendorMetaFor(e).label;
-        return `${titleFor(e)} ${e.provider.name} ${vendor}`
+        const d = describeProvider(app, server, e.provider.name);
+        return `${titleFor(e)} ${d.label} ${d.serverName ?? ""} ${vendor}`
           .toLowerCase()
           .includes(q);
       });
     } else if (activeTab === "favorites") {
-      list = allEntries.filter((e) => e.model.isFavorite);
+      list = [...allEntries, ...lentEntries].filter((e) => e.model.isFavorite);
+    } else if (activeTab.startsWith("lender:")) {
+      const id = activeTab.slice(7);
+      // Favorites first, in the lender's own order otherwise.
+      list = (lentGroups.find((g) => g.server.serverId === id)?.entries ?? []).toSorted((a, b) => Number(!!b.model.isFavorite) - Number(!!a.model.isFavorite));
     } else if (activeTab === "openrouter") {
       list = allEntries.filter((e) => isOpenRouter(e.provider));
     } else if (activeTab.startsWith("cli:")) {
@@ -188,14 +208,16 @@
     const again = server.reseedBySession[sessionId];
     if (server.providerBySession[sessionId] && !again) return;
     const { lastUsedProvider: name, lastUsedModel: model, lastUsedEffort: effort, lastUsedFast: fast } = server;
-    const provider = server.providers.find((p) => p.name === name);
-    if (!name || !provider) return;
+    const d = describeProvider(app, server, name ?? undefined);
+    const provider = d.info;
+    // A borrowed provider is only taken for a new chat while the server that lends it is connected.
+    if (!name || !provider || d.offline) return;
     const sig = [name, model, effort, fast].join("\n");
     if (server.seededBySession.get(sessionId) === sig) return;
     server.seededBySession.set(sessionId, sig);
     if (again) delete server.reseedBySession[sessionId];
     setProvider(cid, sessionId, name, model ?? undefined);
-    const modelInfo = server.modelsByProvider[name]?.find((m) => m.id === model);
+    const modelInfo = d.models.find((m) => m.id === model);
     const levels = effortLevels(provider, modelInfo, model ?? undefined);
     const level = effort && levels?.includes(effort) ? effort : undefined;
     if (level || fast) setModelOptions(cid, sessionId, { reasoningEffort: level, fastMode: fast || undefined });
@@ -208,6 +230,17 @@
       if (!server.modelsByProvider[p.name]) ensureModels(cid, p.name);
     }
   });
+  // A borrowed provider's models are asked of the server that lends it; so is the chat's own, if it uses one.
+  $effect(() => {
+    for (const l of lenders) {
+      for (const p of l.providers) {
+        const name = parseVia(p.name)!.name;
+        if (!l.server.modelsByProvider[name]) ensureModels(l.server.connectionId, name);
+      }
+    }
+    const via = parseVia(currentProvider?.name);
+    if (via && currentDesc.lender && !currentDesc.models.length) ensureModels(currentDesc.lender.connectionId, via.name);
+  });
   // Opening the picker retries a CLI agent whose list was missing or the fallback (it was signed out).
   $effect(() => {
     if (!open || !cid || !server) return;
@@ -217,6 +250,8 @@
   });
 
   function tabForEntry(entry: Entry): TabKey {
+    const lent = parseVia(entry.provider.name);
+    if (lent) return `lender:${lent.serverId}`;
     const g = groupOf(entry.provider.name);
     if (g) return `cli:${g.key}`;
     if (isOpenRouter(entry.provider)) return "openrouter";
@@ -252,6 +287,9 @@
   });
 
   function pick(entry: Entry) {
+    const via = parseVia(entry.provider.name);
+    const lender = via && describeProvider(app, server, entry.provider.name).lender;
+    if (via && lender) ensureModels(lender.connectionId, via.name);
     if (cid) setProvider(cid, sessionId, entry.provider.name, entry.model.id);
     open = false;
   }
@@ -288,16 +326,21 @@
    * star responds instantly. */
   function toggleFavorite(entry: Entry) {
     if (!cid || !server) return;
-    const models = server.modelsByProvider[entry.provider.name] ?? [];
+    // A borrowed model's star belongs to the server that lends it.
+    const via = parseVia(entry.provider.name);
+    const home = via ? describeProvider(app, server, entry.provider.name).lender : server;
+    if (!home) return;
+    const name = via?.name ?? entry.provider.name;
+    const models = home.modelsByProvider[name] ?? [];
     const nowFavorite = !entry.model.isFavorite;
-    server.setModelFavorite(entry.provider.name, entry.model.id, nowFavorite);
+    home.setModelFavorite(name, entry.model.id, nowFavorite);
     const favoriteIds = models
       .map((m) =>
         m.id === entry.model.id ? { ...m, isFavorite: nowFavorite } : m,
       )
       .filter((m) => m.isFavorite)
       .map((m) => m.id);
-    setFavoriteModels(cid, entry.provider.name, favoriteIds);
+    setFavoriteModels(home.connectionId, name, favoriteIds);
   }
 </script>
 
@@ -323,7 +366,7 @@
         text={currentEntry
           ? titleFor(currentEntry)
           : currentProvider
-            ? currentModel || (isCli(currentProvider) ? `${cliMeta(currentProvider).title} · default` : currentProvider.name)
+            ? currentModel || (isCli(currentProvider) ? `${cliMeta(currentProvider).title} · default` : currentDesc.label)
             : "Provider…"}
         {dir}
       /></span
@@ -338,14 +381,14 @@
       sideOffset={8}
       collisionPadding={8}
     >
-      {#if (server?.providers.length ?? 0) === 0}
+      {#if (server?.providers.length ?? 0) === 0 && !lenders.length}
         <div class="empty">
           <p>No providers yet.</p>
           <button type="button" class="add-provider" onclick={manageProviders}>
             <Icon name="plus" size={13} /> Add a provider
           </button>
         </div>
-      {:else if allEntries.length === 0 && groups.length === 0}
+      {:else if allEntries.length === 0 && groups.length === 0 && lentEntries.length === 0}
         <div class="empty">
           <p>Loading models…</p>
         </div>
@@ -406,6 +449,18 @@
                 <LobeIcon name="openrouter" size={16} />
               </button>
             {/if}
+
+            {#each lentGroups as g (g.server.serverId)}
+              <button
+                type="button"
+                class="tab"
+                class:active={activeTab === `lender:${g.server.serverId}`}
+                {@attach tip(g.server.label, { side: "left" })}
+                onclick={() => (activeTab = `lender:${g.server.serverId}`)}
+              >
+                <ServerAvatar name={g.server.label} seed={g.server.serverId} size={16} bare />
+              </button>
+            {/each}
 
             <button
               type="button"
@@ -495,12 +550,21 @@
                       : "No models for this provider."}
                 </p>
               {:else}
+                {#if currentDesc.offline}
+                  <p class="hint">{currentDesc.serverName} isn't connected on this device. You can still send; the server waits for a device that is.</p>
+                {/if}
                 {#each tabModels as entry, i (modelKey(entry.provider.name, entry.model.id))}
                   {@const vendor = vendorMetaFor(entry)}
+                  {@const desc = describeProvider(app, server, entry.provider.name)}
                   {@const favorite = !!entry.model.isFavorite}
                   {@const selected =
                     entry.provider.name === currentProvider?.name &&
                     entry.model.id === currentModel}
+                  {#if desc.serverName && desc.serverName !== describeProvider(app, server, tabModels[i - 1]?.provider.name).serverName}
+                    <div class="agent-head">
+                      <span class="agent-title"><ServerAvatar name={desc.serverName} seed={parseVia(entry.provider.name)?.serverId} size={13} bare /> {desc.serverName}</span>
+                    </div>
+                  {/if}
                   {#if entry.model.isLegacy && !tabModels[i - 1]?.model.isLegacy}
                     <div class="legacy-divider"></div>
                   {/if}
@@ -527,7 +591,7 @@
                           fallback="openrouter"
                           size={12}
                         />
-                        {vendor.label} · {providerLabel(entry.provider)}
+                        {vendor.label} · {desc.label}
                       </span>
                     </div>
                     <button
