@@ -209,6 +209,7 @@ async function redial(oldConnectionId: ConnectionId) {
     // Whatever the last connection said about the server may no longer hold; the identity says it again.
     server.features = [];
     server.forwardGrants = [];
+    server.forwardGrantsLoaded = false;
     app.servers[newConnectionId] = server;
     if (app.activeConnectionId === oldConnectionId) app.activeConnectionId = newConnectionId;
     afterConnect(newConnectionId);

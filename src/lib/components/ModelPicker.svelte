@@ -212,7 +212,7 @@
     const provider = d.info;
     // A borrowed provider is only taken for a new chat while the server that lends it is connected.
     // Nor one the lender hasn't allowed here: an automatic path never grants, only a pick does.
-    if (!name || !provider || d.offline || (parseVia(name) && !d.granted)) return;
+    if (!name || !provider || d.offline || (parseVia(name) && d.granted !== true)) return;
     const sig = [name, model, effort, fast].join("\n");
     if (server.seededBySession.get(sessionId) === sig) return;
     server.seededBySession.set(sessionId, sig);
@@ -246,7 +246,7 @@
   $effect(() => {
     if (!open || !cid || !server) return;
     // Only the account on screen: each ACP refresh spawns a process.
-    const name = activeGroup ? selAcct(activeGroup).name : currentProvider && isCli(currentProvider) ? currentProvider.name : "";
+    const name = activeGroup ? selAcct(activeGroup).name : currentProvider && currentDesc.runsOwnTools ? currentProvider.name : "";
     if (name) refreshModels(cid, name);
   });
 
@@ -556,7 +556,7 @@
                       : "No models for this provider."}
                 </p>
               {:else}
-                {#if parseVia(currentProvider?.name) && currentDesc.lender && !currentDesc.granted}
+                {#if parseVia(currentProvider?.name) && currentDesc.lender && currentDesc.granted === false}
                   <p class="hint">Not lent to this server any more. Pick the model again to allow it.</p>
                 {/if}
                 {#if currentDesc.offline}

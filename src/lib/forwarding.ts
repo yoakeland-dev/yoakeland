@@ -1,11 +1,12 @@
 import { loadKnownServers, type ServerState, type app } from "./state.svelte";
 import type { ModelInfo, ProviderInfo } from "./types";
-import { providerLabel } from "./modelVendor";
+import { isCli, providerLabel } from "./modelVendor";
 
 type App = typeof app;
 
-/** The provider kinds another server may lend. Phase 3 adds the CLI kinds here and nowhere else. */
-export const FORWARDABLE_KINDS: ReadonlySet<string> = new Set(["api_key"]);
+/** The provider kinds another server may lend. A CLI kind is lent as a plain model (its own tools off on the
+ * lender), so it is added here only once the server can do that for it. */
+export const FORWARDABLE_KINDS: ReadonlySet<string> = new Set(["api_key", "cli_claude"]);
 export const isForwardable = (p: ProviderInfo) => FORWARDABLE_KINDS.has(p.kind);
 
 export const viaName = (serverId: string, name: string) => `via:${serverId}:${name}`;
@@ -62,11 +63,24 @@ export function describeProvider(
   app: App,
   server: ServerState | null | undefined,
   providerName: string | undefined,
-): { label: string; serverName?: string; offline?: boolean; granted?: boolean; info?: ProviderInfo; lender?: ServerState; models: ModelInfo[] } {
+): {
+  label: string;
+  serverName?: string;
+  offline?: boolean;
+  /** Undefined until the lender has said what it lends (see ServerState.forwardGrantsLoaded). */
+  granted?: boolean;
+  info?: ProviderInfo;
+  lender?: ServerState;
+  models: ModelInfo[];
+  /** True for a CLI agent running on this chat's own server, with its own tools and permission rules.
+   * False for everything else, a borrowed (`via:`) CLI included: there B's agent loop and tools do the work
+   * and the CLI is only the model. Every "is this a CLI agent" branch reads this, never `info.kind`. */
+  runsOwnTools: boolean;
+} {
   const via = parseVia(providerName);
   if (!via) {
     const info = server?.providers.find((p) => p.name === providerName);
-    return { label: info ? providerLabel(info) : (providerName ?? ""), info, lender: server ?? undefined, models: info ? (server?.modelsByProvider[info.name] ?? []) : [] };
+    return { label: info ? providerLabel(info) : (providerName ?? ""), info, lender: server ?? undefined, models: info ? (server?.modelsByProvider[info.name] ?? []) : [], runsOwnTools: !!info && isCli(info) };
   }
   const lender = lenderOf(app, via.serverId);
   const own = lender?.providers.find((p) => p.name === via.name);
@@ -76,10 +90,11 @@ export function describeProvider(
     serverName: serverNameOf(app, via.serverId),
     offline: !lender,
     // Whether the lending server lets this server use it: false once revoked, or if never allowed.
-    granted: !!lender && !!server?.serverId && lender.forwardGrants.some((g) => g.serverId === server.serverId && g.providerName === via.name),
+    granted: lender?.forwardGrantsLoaded && !!server?.serverId ? lender.forwardGrants.some((g) => g.serverId === server.serverId && g.providerName === via.name) : undefined,
     lender,
     info,
     models: lender?.modelsByProvider[via.name] ?? [],
+    runsOwnTools: false,
   };
 }
 

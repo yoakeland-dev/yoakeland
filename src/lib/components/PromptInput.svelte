@@ -463,7 +463,9 @@
   // The "$name" token before the cursor, or "/name" as the message's first word: a skill to name in this
   // message (SPEC.md §3.1 "Skills"). Offered only the skills this chat's agent can load, and only once the
   // sign starts a word, so "$5" stays a price and a path in the middle of a sentence isn't a command.
-  const agentKind = $derived(skillKindOf(describeProvider(app, server, server?.providerBySession[sessionId]).info?.kind));
+  const chatProvider = $derived(describeProvider(app, server, server?.providerBySession[sessionId]));
+  // A borrowed CLI is only a model: the skills B's own agent loads are the ones on offer.
+  const agentKind = $derived(skillKindOf(chatProvider.runsOwnTools ? chatProvider.info?.kind : undefined));
   const allSkills = $derived(filesRoot ? server?.skillsByProject[filesRoot]?.skills : undefined);
   const skillQuery = $derived.by(() => {
     if (mentionDismissed) return null;

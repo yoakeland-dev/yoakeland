@@ -739,6 +739,8 @@ export class ServerState {
   features = $state<string[]>([]);
   /** Servers this person lets use this server's providers (forward_grants; the whole list each time). */
   forwardGrants = $state<ForwardGrant[]>([]);
+  /** False from each connect until the first `forward_grants`: before that an empty list means unknown, not none. */
+  forwardGrantsLoaded = $state(false);
   /** Chats whose turn waits for a device that reaches another server (forward_state), by chat. */
   private forwardWait = $state<Record<string, { turnId?: string; serverId: string } | undefined>>({});
   /** The server a chat's running turn is waiting on a device for, if it is. */
@@ -2542,6 +2544,7 @@ export class ServerState {
       }
       case "forward_grants": {
         this.forwardGrants = (env.data as { grants?: ForwardGrant[] } | undefined)?.grants ?? [];
+        this.forwardGrantsLoaded = true;
         break;
       }
       case "forward_state": {
