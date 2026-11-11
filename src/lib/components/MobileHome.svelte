@@ -26,8 +26,9 @@
   import MobileStatus from "./MobileStatus.svelte";
   import SwipeRow from "./SwipeRow.svelte";
   import MobileChips from "./MobileChips.svelte";
+  import type { LiveStatus } from "../liveChats";
 
-  type Status = "action" | "working" | "finished" | "idle";
+  type Status = LiveStatus | "idle";
   interface Row {
     cid: ConnectionId;
     srv: ServerState;
@@ -79,6 +80,8 @@
 
   type Filter = "all" | "action" | "working";
   let filter = $state<Filter>("all");
+  // "status" leads with what needs you; "server" lists each remote with its own chats, newest first.
+  let grouping = $state<"status" | "server">("status");
   let search = $state("");
   let scrolled = $state(false);
   const count = (st: Status) => rows.filter((r) => r.status === st).length;
@@ -102,6 +105,11 @@
       return hits.length ? [{ id: "results", label: "", rows: hits }] : [];
     }
     if (filter !== "all") return [{ id: filter, label: "", rows: rows.filter((r) => r.status === filter) }];
+    if (grouping === "server" && serverEntries.length > 1) {
+      return serverEntries
+        .map(([cid, srv]) => ({ id: cid, label: srv.label, rows: rows.filter((r) => r.cid === cid) }))
+        .filter((sec) => sec.rows.length);
+    }
     const action = rows.filter((r) => r.status === "action");
     const working = rows.filter((r) => r.status === "working");
     const rest = rows.filter((r) => r.status !== "action" && r.status !== "working");
@@ -178,6 +186,17 @@
 <div class="home">
   <header class="top" class:scrolled>
     <h1>Agents</h1>
+    {#if serverEntries.length > 1}
+      <button
+        class="group-btn"
+        class:on={grouping === "server"}
+        aria-pressed={grouping === "server"}
+        aria-label="Group by server"
+        onclick={() => (grouping = grouping === "server" ? "status" : "server")}
+      >
+        <Icon name="server" size={22} />
+      </button>
+    {/if}
     <span class="bell"><NotificationCenter /></span>
     <DropdownMenu.Root bind:open={menuOpen}>
       <DropdownMenu.Trigger class="avatar-btn" aria-label="Profile and settings">
@@ -305,6 +324,24 @@
     justify-content: center;
     border-radius: 50%;
     color: var(--text);
+  }
+  .group-btn {
+    width: 2.9rem;
+    height: 2.9rem;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .group-btn.on {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  .group-btn:active {
+    background: var(--wash-3);
   }
   .bell :global(.sb-trigger:active) {
     background: var(--wash-3);

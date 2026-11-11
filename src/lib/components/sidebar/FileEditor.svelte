@@ -75,7 +75,10 @@
       return el;
     }
   }
-  const addedBar = new Bar("cm-gutter-added");
+  // Class only, no toDOM: the line-number gutter drops its number when a line class marker draws DOM.
+  const addedBar = new (class extends GutterMarker {
+    elementClass = "cm-gutter-added";
+  })();
 
   const showChanges = StateEffect.define<{ set: DecorationSet; bars: RangeSet<GutterMarker> }>();
   const noChanges = { set: Decoration.none, bars: RangeSet.empty as RangeSet<GutterMarker> };
@@ -149,7 +152,7 @@
     "&": { height: "100%", color: "var(--code-fg, var(--text))", backgroundColor: "var(--code-bg, transparent)" },
     ".cm-scroller": { fontFamily: "var(--code-font-family, ui-monospace, monospace)", fontSize: "var(--code-font-size, 0.8rem)" },
     ".cm-gutters": {
-      backgroundColor: "color-mix(in srgb, var(--text) 6%, var(--code-bg, Canvas))",
+      backgroundColor: "var(--code-bg, transparent)",
       color: "var(--text-dim)",
       border: "none",
     },
@@ -157,9 +160,7 @@
     ".cm-lineNumbers .cm-gutter-added, .cm-lineNumbers .cm-gutter-removed": { whiteSpace: "pre" },
     ".cm-lineNumbers .cm-gutter-added": {
       backgroundColor: "color-mix(in srgb, var(--success, #3fb950) 22%, transparent)",
-      backgroundImage: "linear-gradient(var(--success, #3fb950), var(--success, #3fb950))",
-      backgroundSize: "4px 100%",
-      backgroundRepeat: "no-repeat",
+      boxShadow: "inset 4px 0 0 var(--success, #3fb950)",
     },
     ".cm-lineNumbers .cm-gutter-removed": {
       backgroundColor: "color-mix(in srgb, var(--error, #e5484d) 22%, transparent)",
@@ -234,7 +235,7 @@
   import { tip } from "../../tooltip.svelte";
   import { onDestroy, untrack } from "svelte";
   import { app } from "../../state.svelte";
-  import { readFile, readMedia, writeFile } from "../../ipc";
+  import { getFileDiff, readFile, readMedia, writeFile } from "../../ipc";
   import { refreshWhenVisible } from "../../refresh.svelte";
   import { mentionText } from "../../mentions";
   import { reportEditorLanguage, editorPresence } from "../../editorPresence.svelte";
@@ -445,7 +446,7 @@
       if (r.error) error = r.error;
       else if (r.conflict) conflict = r.version ?? "";
       else {
-        version = r.version ?? "";
+        version = scrolledFor = r.version ?? ""; // our own save: stay where the cursor is
         conflict = null;
         if (view.state.doc.toString() === content) dirty = false;
       }
@@ -472,13 +473,28 @@
   // The agent's latest edit to this file, drawn once the editor holds the content it made (`version`
   // moves with each reload), and scrolled to unless there are local edits to keep in view.
   const edit = $derived(server?.touchedBySession[sessionId]?.[path]);
+  // The file against HEAD, which outlasts the turn and includes hand edits; the agent's own last edit
+  // is the fallback for files git can't diff (not a repo, ignored, or the call fails).
+  let headDiff = $state<FileDiff | null>(null);
+  async function loadHeadDiff() {
+    const c = cid;
+    if (!c) return;
+    const r = await getFileDiff(c, projectPath, path).catch(() => null);
+    headDiff = r?.diff?.hunks.length ? r.diff : null;
+  }
+  refreshWhenVisible(() => `${path}#${version}#${server?.fsTickByProject[projectPath] ?? 0}`, () => visible && !!version, loadHeadDiff);
+  // The HEAD diff reloads on any change in the project, so scrolling happens once per version of
+  // this file (not per reload), to the agent's edit when there is one.
+  let scrolledFor: string | null = null;
   $effect(() => {
-    const diff = edit?.diff;
-    void version;
+    const diff = headDiff ?? edit?.diff;
+    const v = version;
     if (!view) return;
     const { first, ...next } = changeDecorations(view.state, diff);
+    const target = v !== scrolledFor && !untrack(() => dirty) ? (edit?.diff && diff !== edit.diff ? changeDecorations(view.state, edit.diff).first : first) : 0;
+    if (target) scrolledFor = v;
     view.dispatch({
-      effects: [showChanges.of(next), ...(first && !untrack(() => dirty) ? [EditorView.scrollIntoView(view.state.doc.line(first).from, { y: "center" })] : [])],
+      effects: [showChanges.of(next), ...(target ? [EditorView.scrollIntoView(view.state.doc.line(target).from, { y: "center" })] : [])],
     });
   });
 

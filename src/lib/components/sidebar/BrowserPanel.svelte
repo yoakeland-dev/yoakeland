@@ -451,7 +451,7 @@
   {#if tabs.length > 1}
     <div class="tabs">
       {#each tabs as tab (tab.id)}
-        <div class="tab" class:active={tab.id === activeId}>
+        <div class="tab" class:active={tab.id === activeId} onauxclick={(e) => e.button === 1 && closeTab(tab.id)}>
           <button type="button" class="tab-main" {@attach tip(tab.url)} onclick={() => (activeId = tab.id)}>
             {#if tab.loading}<Icon name="loader-2" size={12} />{/if}
             <span>{tab.title || tab.url}</span>
@@ -562,7 +562,7 @@
         {/if}
       </div>
     {/each}
-    {#if active.url === "about:blank" && !active.loading}
+    {#if active.url === "about:blank"}
       <div class="hint">
         <EmptyState icon="world-www" title="Nothing loaded" body={isDesktop
               ? "Type a URL, or a port like 5173 for a local dev server."

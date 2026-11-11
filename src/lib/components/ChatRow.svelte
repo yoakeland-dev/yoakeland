@@ -14,6 +14,8 @@
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import ChatRing from "./ChatRing.svelte";
+  import DotMatrix from "./DotMatrix.svelte";
+  import { liveActivity } from "../activity.svelte";
   import ChatCard, { chatActivity } from "./ChatCard.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { matches } from "../keybinds.svelte";
@@ -68,6 +70,8 @@ import { haptic } from "../haptics";
   const hasDraft = $derived(!!server?.composerDraftBySession[s.sessionId]?.trim());
 
   const messages = $derived(server?.messagesBySession[s.sessionId] ?? []);
+  // The same dot-matrix mode the chat's own spinner shows (thinking, reading, editing, tools).
+  const live = liveActivity(() => (status === "working" ? messages.findLast((m) => m.role === "assistant") : undefined));
 
   const activity = $derived(chatActivity(server, s.sessionId));
   // The lifted tiers (Needs you, Working, Ready) leave their project group, so they carry
@@ -282,8 +286,8 @@ import { haptic } from "../haptics";
             <Icon name="archive" size={13} />
           {:else if status === "idle"}
             <ChatRing state="quiet" />
-          {:else if canStop}
-            <ChatRing state="running" />
+          {:else if status === "working"}
+            <DotMatrix mode={live.mode} size={13} />
           {:else if status === "action"}
             <span class="lamp"></span>
           {:else}

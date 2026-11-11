@@ -152,7 +152,7 @@ function handleConnectionLost(connectionId: ConnectionId, reason: string) {
   clearTimeout(stableTimers.get(server));
   // A fatal error arrived first (the server refused this connection, e.g. a revoked token): keep its
   // message, and don't redial into the same refusal.
-  const refused = server.connectionStatus === "error";
+  const refused = server.connectionRefused;
   if (!refused) {
     server.connectionStatus = "disconnected";
     server.connectionError = reason;
@@ -173,6 +173,7 @@ async function redial(oldConnectionId: ConnectionId) {
   if (!server) return;
   const params = server.connectParams;
   server.connectionStatus = "connecting";
+  server.connectionRefused = false;
   try {
     // A daemon that stopped (a restart, a crash) is started again, as the app does at launch.
     if (isDesktop && params.mode === "local" && !(await probeUnix(params.socketPath))) {

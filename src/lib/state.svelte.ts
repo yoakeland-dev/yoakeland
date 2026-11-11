@@ -613,6 +613,8 @@ export class ServerState {
   connectionMode: ConnectionMode;
   connectionStatus = $state<ConnectionStatus>("connected");
   connectionError = $state<string | null>(null);
+  /** The server refused this connection with a fatal error (a revoked token, say): don't redial into it. */
+  connectionRefused = false;
   /** Redials since the connection last stayed up; ipc.ts's backoff grows with it. */
   reconnectAttempt = 0;
   /** Chats a turn was running in when the connection dropped: refetched on reconnect (ipc.ts afterConnect). */
@@ -3007,6 +3009,7 @@ export class ServerState {
         if (data.fatal) {
           this.connectionStatus = "error";
           this.connectionError = data.message;
+          this.connectionRefused = true;
         }
         // Some errors arrive instead of, not alongside, turn_completed: without this the
         // composer would stay stuck on "Stop" forever.
