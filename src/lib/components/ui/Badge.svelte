@@ -32,12 +32,12 @@
     border-radius: var(--radius-xs);
     background: color-mix(in srgb, var(--c) 15%, transparent);
     color: var(--c);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 500;
     white-space: nowrap;
   }
   .accent {
-    --c: var(--accent);
+    --c: var(--accent-ink);
   }
   .success {
     --c: var(--success);

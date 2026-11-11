@@ -212,7 +212,7 @@
     right: 0;
     z-index: 2;
     background: none;
-    --header-fade-mid: color-mix(in srgb, var(--panel-bg) 58%, transparent);
+    --header-fade-mid: var(--panel-bg);
   }
   .header.overlay::before {
     content: "";
@@ -222,7 +222,7 @@
     pointer-events: none;
     background: linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--panel-bg) 88%, transparent) 40%,
+      var(--panel-bg) 40%,
       var(--header-fade-mid)
     );
     transition: opacity calc(0.2s * var(--anim-speed, 1)) ease;
@@ -306,7 +306,6 @@
   .session-id {
     font-size: var(--text-body-size);
     font-weight: 600;
-    font-family: var(--code-font-family);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

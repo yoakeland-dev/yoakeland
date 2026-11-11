@@ -79,6 +79,7 @@ import {
   type TerminalColorTheme,
 } from "./theme";
 import { APP_THEME_PRESETS } from "./themePresets";
+import { refusalNotice } from "./pairing";
 import { invoke, setCloseHook, setWindowChrome, syncNativeChrome, trafficLightsWidth, windowChromeKind } from "./platform";
 import { viewport } from "./viewport.svelte";
 import { storeAvatar } from "./avatarCache.svelte";
@@ -522,7 +523,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   uiFontSize: 14,
   codeFontSize: 12.5,
   uiFontFamily: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  codeFontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+  codeFontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
   codeWrapLines: true,
   codeLineNumbers: false,
   autoSummary: true,
@@ -2992,12 +2993,17 @@ export class ServerState {
       case "error": {
         const data = env.data as { message: string; fatal?: boolean; projectPath?: string };
         this.app.log(`error: ${data.message}`);
-        // A limited device is refused some requests outright. Say so, and end a folder browse that
-        // would otherwise wait for a listing that is never coming.
-        if (/isn't available from a paired device|needs (Trusted|Full) access|isn't allowed for this person/.test(data.message)) {
+        // A refused request: say why, and end a folder browse that would otherwise wait for a
+        // listing that is never coming. A request that is local-socket only, or off limits to a
+        // limited device, goes through refusalNotice; a tier or ownership refusal says what it needs.
+        let refusal = refusalNotice(data.message, this.limited);
+        if (!refusal && /needs (Trusted|Full) access|isn't allowed for this person/.test(data.message)) {
           const need = /needs Trusted access/.test(data.message) ? "Trusted" : /needs Full access/.test(data.message) ? "Full" : "";
           const notTheirs = /it isn't their chat/.test(data.message);
-          this.app.toastAction(this.connectionId, notTheirs ? "This chat belongs to someone else." : need ? `That needs ${need} access. Ask the server's owner (Settings → Access).` : "Your access to this server doesn't allow that. Ask its owner (Settings → Access).");
+          refusal = notTheirs ? "This chat belongs to someone else." : need ? `That needs ${need} access. Ask the server's owner (Settings → Access).` : "Your access to this server doesn't allow that. Ask its owner (Settings → Access).";
+        }
+        if (refusal) {
+          this.app.toastAction(this.connectionId, refusal);
           if (data.message.startsWith("list_directory") && this.app.browsingConnectionId === this.connectionId) {
             this.app.directoryListing = { path: this.app.directoryListing?.path ?? "", entries: [], error: "Your access to this server doesn't include browsing its folders." };
           }
@@ -3257,7 +3263,7 @@ class AppState {
     typeof localStorage !== "undefined" ? loadBool(RIGHT_SIDEBAR_COLLAPSED_KEY) : false,
   );
   sidebarWidth = $state(
-    typeof localStorage !== "undefined" ? Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || 250 : 250,
+    typeof localStorage !== "undefined" ? Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || 272 : 272,
   );
   // A fraction (0-0.5), not a pixel value: RightSidebar.svelte turns it into a live width via
   // CSS `clamp()`, staying proportional across resizes with no JS syncing.
@@ -3531,6 +3537,7 @@ class AppState {
     const root = document.documentElement;
     const resolved = this.resolvedTheme;
     root.style.colorScheme = resolved;
+    root.dataset.scheme = resolved;
     const tokens = tokensFor(this.appTheme, this.settings.accent, resolved);
     root.style.setProperty("--orig-bg", tokens.bg);
     root.style.setProperty("--orig-panel-bg", tokens.panelBg);
@@ -3563,7 +3570,7 @@ class AppState {
     root.style.setProperty("--orig-code-bg", code.background);
     applyQuietTokens();
     root.style.setProperty("--code-fg", code.foreground);
-    root.style.setProperty("--syn-comment", code.brightBlack);
+    root.style.setProperty("--syn-comment", `color-mix(in srgb, ${code.brightBlack} 65%, ${code.foreground})`);
     root.style.setProperty("--syn-keyword", code.magenta);
     root.style.setProperty("--syn-string", code.green);
     root.style.setProperty("--syn-number", code.yellow);

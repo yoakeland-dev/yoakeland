@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { askLine } from "$lib/chatBrief";
   import { tip } from "../tooltip.svelte";
   // The oldest pending ask (permission or question) as a card that rises out of the composer's
   // top edge; any others stack behind it. Its own buttons answer just this one ask. The composer
@@ -286,7 +287,7 @@
         {:else if command}
           <pre class="command selectable"><span class="prompt">$</span> {command}</pre>
         {:else if permission.description}
-          <p class="desc">{permission.description}</p>
+          <p class="desc">{askLine(permission.description)}</p>
         {/if}
         <div class="actions">
           <button type="button" class="btn danger" onclick={reject}>Reject <kbd>Esc</kbd></button>
@@ -420,7 +421,7 @@
   }
   .kind {
     display: inline-flex;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .owner {
     display: flex;
@@ -552,34 +553,35 @@
     background: var(--wash-2);
     color: var(--text);
     font-size: var(--text-label-size);
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
   }
   .btn:hover {
     background: var(--wash-3);
   }
+  /* Reject is the safe choice, so it's never weaker than Allow: same size, a real fill. It reddens on intent. */
   .btn.danger {
     margin-right: auto;
-    background: none;
     color: var(--danger);
   }
   .btn.danger:hover {
     background: var(--danger-dim);
+    color: var(--danger);
   }
   .btn.primary {
     background: var(--accent);
     color: #0d1020;
+    font-weight: 600;
   }
   .btn.primary:hover {
-    background: var(--accent);
-    filter: brightness(1.08);
+    background: color-mix(in srgb, var(--accent) 88%, #fff);
   }
   kbd {
     padding: 0.05rem 0.3rem;
     border-radius: var(--radius-xs);
     background: var(--wash-3);
     font-family: inherit;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: 500;
     opacity: 0.7;
   }
@@ -611,11 +613,11 @@
     cursor: pointer;
   }
   .options button.hl {
-    background: var(--sidebar-active);
+    background: var(--accent-dim);
   }
   /* A question already answered, revisited with Back. */
   .options button.chosen {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .options button.chosen .num {
     background: var(--accent);
@@ -635,7 +637,7 @@
     border-radius: var(--radius-xs);
     background: var(--wash-2);
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-variant-numeric: tabular-nums;
   }
   .other {

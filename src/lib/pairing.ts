@@ -69,3 +69,14 @@ export function parseScanned(text: string): PairingCode | null {
     return code;
   }
 }
+
+/** What to tell the user when a server refuses a request as off limits from afar, or null to say nothing.
+ * Some requests are local-socket only even with full access, so the refusal alone doesn't mean this
+ * device is limited. The diagnostics page's own polling gets refused too, and the page already says so. */
+export function refusalNotice(message: string, limited: boolean): string | null {
+  if (!/isn't available from a paired device/.test(message)) return null;
+  if (/^(list_problems|list_processes)\b/.test(message)) return null;
+  return limited
+    ? "This device has limited access to the server. Ask its owner for full access (Settings → Access)."
+    : "That only works on the computer running the server.";
+}

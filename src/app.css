@@ -1,5 +1,22 @@
 @import "./lib/ui.css";
 
+/* Inter and JetBrains Mono (SIL OFL), latin subset, variable weight: the UI and code faces, bundled
+   so the app reads the same on a machine that has neither installed. */
+@font-face {
+  font-family: "Inter";
+  src: url("./lib/fonts/Inter-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./lib/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Questrial (SIL OFL), latin subset. */
 @font-face {
   font-family: "Questrial";
@@ -34,18 +51,20 @@
   --panel-border-top: var(--wash-2);
   --panel-border-bottom: var(--wash-2);
   --sidebar-fg: #cfd2dc;
-  --sidebar-fg-dim: #83879a;
+  --sidebar-fg-dim: #aeb1bc;
   --sidebar-hover: var(--wash-2);
   --sidebar-active: var(--wash-3);
 
   --text: #e7e8ee;
-  --text-dim: #9498a8;
+  --text-dim: #aeb1bc;
   /* Fallback values only, visible before JS applies a theme — every token on
      this list is overridden at runtime by applySettings() in state.svelte.ts
      (deriveTheme in theme.ts), predefined scheme or custom accent alike, so
      the whole UI recolors, not just the accent swatch. */
   --accent: #7c9bff;
   --accent-dim: color-mix(in srgb, var(--accent) 15%, transparent);
+  /* The accent as text. A pale accent is fine on a dark panel; on light it needs to go deep enough to read. */
+  --accent-ink: var(--accent);
   --danger-base: #ff6b6b;
   --danger: var(--danger-base);
   --danger-dim: rgba(255, 107, 107, 0.15);
@@ -55,6 +74,8 @@
   --success: var(--success-base);
   --warning-base: #f0b429;
   --warning: var(--warning-base);
+  /* The "needs you" dot. Same as --warning on dark; on light it stays saturated where text has to go deep. */
+  --lamp: var(--warning);
   --info-base: #5b9bff;
   --info: var(--info-base);
 
@@ -110,13 +131,13 @@
 
   /* Type scale: four sizes, deliberate weight jumps between them rather than
      leaning on color/opacity alone to separate a modal title from a label. */
-  --text-title-size: 1.05rem;
-  --text-title-weight: 700;
-  --text-heading-size: 0.72rem;
-  --text-heading-weight: 700;
-  --text-label-size: 0.78rem;
+  --text-title-size: 1.14rem;
+  --text-title-weight: 600;
+  --text-heading-size: 0.79rem;
+  --text-heading-weight: 600;
+  --text-label-size: 0.86rem;
   --text-label-weight: 500;
-  --text-body-size: 0.85rem;
+  --text-body-size: 0.93rem;
   --text-body-weight: 400;
 
   /* Layout rhythm. The chat panel floats with --chat-margin around it and
@@ -218,9 +239,9 @@
   /* Informational only (pointer-events: none), so it may sit over everything. */
   --z-tooltip: 130;
 
-  --ui-font-family: "Questrial", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --logo-font-family: "Departure Mono", ui-monospace, monospace;
-  --code-font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  --code-font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --ui-font-size: 14px;
   --code-font-size: 12.5px;
   /* Multiplier on transition/animation durations — Settings > Appearance;
@@ -250,9 +271,9 @@
      --panel-border is (see above) — an exact alias of it in opaque mode, and a
      little stronger once the surface is translucent: a blurred backdrop behind
      the edge costs the hairline the contrast an opaque panel gets for free. */
-  --float-border: var(--panel-border);
-  --float-border-top: var(--panel-border-top);
-  --float-border-bottom: var(--panel-border-bottom);
+  --float-border: var(--wash-3);
+  --float-border-top: var(--wash-3);
+  --float-border-bottom: var(--wash-3);
 
   /* One in/out animation for every floating surface in the app (popovers,
      dropdowns, the context menu, dialogs, the @mention list) — see the
@@ -418,7 +439,7 @@
 }
 
 .chrome-surface .chrome-btn.active {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* The lamp: a chat is waiting on you. One dot, used on its sidebar row, its tab and its hover card. */
@@ -429,8 +450,8 @@
   height: 7px;
   margin: 3px;
   border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent);
+  background: var(--lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lamp) 20%, transparent);
 }
 
 * {
@@ -457,9 +478,12 @@ body {
   overflow: hidden;
 }
 /* Thin scrollbars everywhere, standard properties rather than ::-webkit-scrollbar: Chromium
-   paints those custom ones on the main thread, so every scroll frame repainted them. */
-body {
+   paints those custom ones on the main thread, so every scroll frame repainted them.
+   scrollbar-width doesn't inherit, so it goes on every element; a class's own value still wins. */
+* {
   scrollbar-width: thin;
+}
+body {
   scrollbar-color: var(--wash-4) transparent;
 }
 
@@ -473,14 +497,25 @@ pre {
   font-size: var(--code-font-size);
 }
 
-/* Placeholder text always reads as "not a value yet" — lower contrast and
-   italic, so a real value (plain, full --text) is never confused with one,
-   most importantly in the credentials fields under Settings > Providers and
+/* Signal colors are tuned for dark surfaces; on a light one they need to be deeper to stay readable as text. */
+:root[data-scheme="light"] {
+  --accent-ink: oklch(from var(--accent) min(l, 0.48) c h);
+  --lamp: #e08a00;
+  --shadow-pop: 0 8px 24px rgba(20, 22, 30, 0.12);
+  --shadow-dialog: 0 16px 48px rgba(20, 22, 30, 0.16);
+  --shadow-drawer: 10px 0 32px rgba(20, 22, 30, 0.14);
+  --success-base: #1a7f47;
+  --warning-base: #7a4d00;
+  --danger-base: #c93636;
+  --info-base: #2563c9;
+}
+
+/* Placeholder text always reads as "not a value yet" — lower contrast, so a real value
+   (plain, full --text) is never confused with one, most importantly in the credentials fields under Settings > Providers and
    the Connect screen. */
 ::placeholder {
   color: var(--text-dim);
-  opacity: 0.65;
-  font-style: italic;
+  opacity: 0.75;
 }
 
 /* One empty-state recipe (icon over one-line copy, centered) shared by the
@@ -714,7 +749,7 @@ button.sb-card.selected:hover {
 }
 .sb-meter-note {
   flex-shrink: 0;
-  font-size: 0.64rem;
+  font-size: 0.79rem;
   color: var(--text-dim);
 }
 .sb-bar {
@@ -742,7 +777,7 @@ button.sb-card.selected:hover {
   flex-shrink: 0;
   min-width: 2.2rem;
   text-align: right;
-  font-size: 0.74rem;
+  font-size: 0.79rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -852,6 +887,7 @@ button.sb-row-main {
 .sb-foot-meta {
   font-size: var(--text-label-size);
   color: var(--text-dim);
+  white-space: nowrap;
 }
 /* Title, meta, then actions: meta sits beside the title. */
 .sb-foot-meta:not(:last-child) {
@@ -862,7 +898,7 @@ button.sb-row-main {
   padding: 0.71rem;
   text-align: center;
   color: var(--text-dim);
-  font-size: 0.78rem;
+  font-size: 0.79rem;
 }
 
 /* The only drag region. Electron applies drag and no-drag areas in document

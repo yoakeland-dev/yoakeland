@@ -192,6 +192,7 @@
 
 <style>
   .feed {
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
     /* What the wallpaper is washed with as the cards rise over it; see .lead and .sheet. */
     --wash-c: var(--panel-bg);
     --wash-a: 86%;
@@ -241,7 +242,7 @@
   }
   .content {
     grid-area: 1 / 1;
-    width: min(54rem, calc(100% - 3.43rem));
+    width: min(44rem, calc(100% - 3.43rem));
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -268,7 +269,7 @@
     margin: 0;
     padding: 0.18rem 0.65rem;
     border-radius: var(--radius-pill);
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight, 600);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -351,7 +352,7 @@
     color: var(--text-dim);
   }
   .status.action {
-    color: var(--warning);
+    color: var(--lamp);
   }
   .status.finished {
     color: var(--success);
@@ -431,7 +432,7 @@
     white-space: nowrap;
     padding: 0.08rem 0.45rem;
     border-radius: var(--radius-xs);
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     font-family: var(--code-font-family);
     color: var(--text-dim);
     background: color-mix(in srgb, var(--text) 6%, transparent);

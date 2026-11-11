@@ -465,7 +465,7 @@
     border-radius: 999px;
     border: 1px solid var(--panel-border);
     color: var(--text-dim);
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     line-height: 1.3;
   }
 
@@ -504,7 +504,7 @@
     color: var(--danger);
   }
   .bar-btn.on {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .bar-btn:disabled {
     opacity: 0.35;
@@ -634,7 +634,7 @@
   }
   .split-mark {
     display: flex;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .rename {
     flex: 1;

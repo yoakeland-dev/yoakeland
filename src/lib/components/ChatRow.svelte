@@ -10,12 +10,13 @@
   import { fileSize, relTime, sessionTitle } from "../format";
   import { CHAT_PROJECT } from "../state.svelte";
   import { STATUS_ICON } from "../liveChats";
+  import { IN_FLIGHT } from "../subagents";
+  import { dotModeFor } from "../toolMeta";
+  import DotMatrix from "./DotMatrix.svelte";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
   import ChatRing from "./ChatRing.svelte";
-  import DotMatrix from "./DotMatrix.svelte";
-  import { liveActivity } from "../activity.svelte";
   import ChatCard, { chatActivity } from "./ChatCard.svelte";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { matches } from "../keybinds.svelte";
@@ -70,8 +71,6 @@ import { haptic } from "../haptics";
   const hasDraft = $derived(!!server?.composerDraftBySession[s.sessionId]?.trim());
 
   const messages = $derived(server?.messagesBySession[s.sessionId] ?? []);
-  // The same dot-matrix mode the chat's own spinner shows (thinking, reading, editing, tools).
-  const live = liveActivity(() => (status === "working" ? messages.findLast((m) => m.role === "assistant") : undefined));
 
   const activity = $derived(chatActivity(server, s.sessionId));
   // The lifted tiers (Needs you, Working, Ready) leave their project group, so they carry
@@ -89,7 +88,7 @@ import { haptic } from "../haptics";
   );
   const askedAt = $derived(variant === "attention" ? server?.pendingAsks.find((a) => a.sessionId === s.sessionId)?.createdAt : undefined);
 
-  // A running chat folds its current call into the origin line; the others get a line of their own.
+  // The lifted tiers show this under the title; a running chat uses its current call instead.
   // Expanded inactive rows show the latest activity too, with "Stopped" reserved for the Ready tier.
   const metaLine = $derived(
     snippet ??
@@ -108,6 +107,15 @@ import { haptic } from "../haptics";
     server?.projectBySession[s.sessionId] ??
       Object.entries(server?.sessionsByProject ?? {}).find(([, list]) => list.some((x) => x.sessionId === s.sessionId))?.[0],
   );
+  const statusCls = $derived(lead === "status" ? (syncing ? "syncing" : stopped ? "stopped" : archived ? "idle" : status) : "filed");
+  // The agent's own spinner, in the mode of the call in flight (thinking, reading, editing, tools).
+  const dotMode = $derived.by(() => {
+    const call = messages.findLast((m) => m.role === "assistant")?.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));
+    const inner = call?.subagent?.calls.findLast((c) => IN_FLIGHT.has(c.status)) ?? call;
+    return inner ? dotModeFor(inner) : "thinking";
+  });
+  // A running chat's current call is its indicator; the other lifted tiers use the meta line.
+  const indicator = $derived(variant === "running" ? activity : metaLine);
   function parts(text: string): { t: string; hit: boolean }[] {
     const q = query?.trim().toLowerCase();
     if (!q) return [{ t: text, hit: false }];
@@ -220,6 +228,21 @@ import { haptic } from "../haptics";
   <ChatCard {connectionId} session={s} />
 {/snippet}
 
+{#snippet titleLine()}
+  <span class="title-line">
+    <span class="label">
+      {#each parts(sessionTitle(s)) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
+    </span>
+    {#if kindBadge}
+      {@const chat = server?.projectBySession[s.sessionId] === CHAT_PROJECT}
+      <span class="badge" {@attach tip(chat ? "Chat" : "Project chat")}><Icon name={chat ? "message-circle" : "folder"} size={11} /></span>
+    {/if}
+    {#if hasDraft}<span class="badge" {@attach tip("Unsent draft")}><Icon name="pencil" size={11} /></span>{/if}
+    {#if pinned}<span class="badge" {@attach tip("Pinned")}><Icon name="pinned" size={11} /></span>{/if}
+    {#if showServer && server && !lifted}<ServerAvatar name={server.label} seed={server.serverId} size={13} />{/if}
+  </span>
+{/snippet}
+
 <div
   class="row variant-{variant}"
   class:active={isCurrent}
@@ -227,6 +250,7 @@ import { haptic } from "../haptics";
   class:offline={!connected}
   class:has-meta={!!metaLine}
   class:lifted
+  class:unread
   class:swiping={dragX !== null}
   style:transform={dragX ? `translateX(${dragX}px)` : null}
   style:--swipe="{dragX ?? 0}px"
@@ -248,17 +272,6 @@ import { haptic } from "../haptics";
       </form>
     </div>
   {:else}
-    {#if canStop}
-      <button
-        type="button"
-        class="stop-btn"
-        {@attach tip("Stop")}
-        aria-label={`Stop ${sessionTitle(s)}`}
-        onclick={() => turnId && cancelTurn(connectionId, s.sessionId, turnId)}
-      >
-        <ChatRing state="stop" />
-      </button>
-    {/if}
     <ContextMenu items={menuItems}>
       <button
         type="button"
@@ -273,71 +286,73 @@ import { haptic } from "../haptics";
         onclick={() => !syncing && openChatSession(connectionId, s.sessionId)}
         onkeydown={onKeydown}
       >
-        <span class="status-icon status-{lead === 'status' ? (syncing ? 'syncing' : stopped ? 'stopped' : archived ? 'idle' : status) : 'filed'}" class:under-stop={canStop} aria-hidden="true">
-          {#if lead === "server" && server}
-            <ServerAvatar name={server.label} seed={server.serverId} size={13} />
-          {:else if lead === "chat"}
-            <Icon name="message-circle" size={13} />
-          {:else if syncing}
-            <span class="spin"><Icon name="loader-2" size={13} /></span>
-          {:else if stopped}
-            <ChatRing state="stopped" />
-          {:else if archived}
-            <Icon name="archive" size={13} />
-          {:else if status === "idle"}
-            <ChatRing state="quiet" />
-          {:else if status === "working"}
-            <DotMatrix mode={live.mode} size={13} />
-          {:else if status === "action"}
-            <span class="lamp"></span>
-          {:else}
-            <Icon name={STATUS_ICON[status]} size={13} />
-          {/if}
-        </span>
-        <span class="text">
-          <span class="title-line">
-            <span class="label">
-              {#each parts(sessionTitle(s)) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
+        {#if lifted}
+          <span class="card">
+            <span class="top">
+              {#if showServer && server}<ServerAvatar name={server.label} seed={server.serverId} size={13} />{:else}<Icon name={projectPath === CHAT_PROJECT ? "message-circle" : "folder"} size={13} />{/if}
+              <span class="who">{projectPath === CHAT_PROJECT ? "Chat" : projectPath ? server?.projectName(projectPath) : ""}</span>
             </span>
-            {#if kindBadge}
-              {@const chat = server?.projectBySession[s.sessionId] === CHAT_PROJECT}
-              <span class="badge" {@attach tip(chat ? "Chat" : "Project chat")}><Icon name={chat ? "message-circle" : "folder"} size={11} /></span>
+            {@render titleLine()}
+            {#if indicator || statusCls !== "idle"}
+              <span class="ind">
+                <span class="status-icon status-{statusCls}" aria-hidden="true">
+                  {#if syncing}
+                    <span class="spin"><Icon name="loader-2" size={12} /></span>
+                  {:else if stopped}
+                    <ChatRing state="stopped" size={12} />
+                  {:else if status === "action"}
+                    <span class="lamp"></span>
+                  {:else if status === "working"}
+                    <DotMatrix mode={dotMode} size={13} />
+                  {:else if status !== "idle"}
+                    <Icon name={STATUS_ICON[status]} size={12} />
+                  {/if}
+                </span>
+                {#if indicator}<span class="ind-text">{#each parts(indicator) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}</span>{/if}
+              </span>
             {/if}
-            {#if hasDraft}<span class="badge" {@attach tip("Unsent draft")}><Icon name="pencil" size={11} /></span>{/if}
-            {#if pinned}<span class="badge" {@attach tip("Pinned")}><Icon name="pinned" size={11} /></span>{/if}
-            {#if showServer && server && !lifted}<ServerAvatar name={server.label} seed={server.serverId} size={13} />{/if}
           </span>
-          {#if metaLine}
-            <span class="meta-line">
-              {#each parts(metaLine) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
-            </span>
-          {/if}
-          {#if lifted && projectPath}
-            <span class="origin">
-              <span class="origin-icon">
-                {#if showServer && server}<ServerAvatar name={server.label} seed={server.serverId} size={13} />{:else}<Icon name={projectPath === CHAT_PROJECT ? "message-circle" : "folder"} size={13} />{/if}
+        {:else}
+          <span class="status-icon status-{statusCls}" aria-hidden="true">
+            {#if lead === "server" && server}
+              <ServerAvatar name={server.label} seed={server.serverId} size={13} />
+            {:else if lead === "chat"}
+              <Icon name="message-circle" size={13} />
+            {:else if syncing}
+              <span class="spin"><Icon name="loader-2" size={13} /></span>
+            {:else if stopped}
+              <ChatRing state="stopped" />
+            {:else if archived}
+              <Icon name="archive" size={13} />
+            {:else if status === "idle"}
+              <ChatRing state="quiet" />
+            {:else if status === "action"}
+              <span class="lamp"></span>
+            {:else}
+              <Icon name={STATUS_ICON[status]} size={13} />
+            {/if}
+          </span>
+          <span class="text">
+            {@render titleLine()}
+            {#if metaLine}
+              <span class="meta-line">
+                {#each parts(metaLine) as p, i (i)}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}
               </span>
-              <span class="origin-text">
-                {showServer && server ? `${server.label}/` : ""}{projectPath === CHAT_PROJECT ? "Chat" : server?.projectName(projectPath)}{#if variant === "running"}{" · "}{activity}{/if}
-              </span>
-            </span>
-          {/if}
-        </span>
+            {/if}
+          </span>
+        {/if}
       </button>
     </ContextMenu>
   {/if}
 
   <span class="trail">
-    <span class="rest">
-      {#if unread}<span class="unread" {@attach tip("New since you last looked")}></span>{/if}
-      <span class="time">{trailing}</span>
-    </span>
+    <span class="rest"><span class="time">{trailing}</span></span>
     <span class="hover-actions">
       {#if actions}{@render actions()}{/if}
       {#if !compact}
-        {#if !archived && !isCurrent && server?.canSplitCurrent}
-          <button class="act" {@attach tip("Open in side panel")} aria-label="Open in side panel" onclick={() => openInSidePanel(connectionId, s.sessionId)}>
-            <Icon name="layout-columns" size={13} />
+        {#if canStop}
+          <button class="act" {@attach tip("Stop")} aria-label={`Stop ${sessionTitle(s)}`} onclick={() => turnId && cancelTurn(connectionId, s.sessionId, turnId)}>
+            <ChatRing state="stop" />
           </button>
         {/if}
         {#if archived}
@@ -393,7 +408,7 @@ import { haptic } from "../haptics";
     cursor: pointer;
     text-align: left;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
   }
   .row.has-meta .main {
     align-items: flex-start;
@@ -401,109 +416,92 @@ import { haptic } from "../haptics";
   .row.has-meta .status-icon {
     margin-top: 0.1rem;
   }
-  /* Needs you is the one tier with structure: a quiet card that grows with the question. */
-  /* The lifted tiers carry two or three lines each, so they get more air than a project's rows. */
-  .row.lifted {
-    --row-pad-y: 0.6rem;
+  /* Unread: a faint wash instead of a dot, dimmer than hover so hover still reads over it. */
+  .row.unread {
+    background: var(--wash-1);
   }
-  .row.variant-attention {
-    margin: 0;
+  .row.unread:hover {
+    background: var(--sidebar-hover);
   }
-  /* Multi-line rows: time sits on the title line, not the row's middle. */
-  .row.has-meta .trail,
-  .row.lifted .trail {
-    align-self: flex-start;
-    margin-top: 0.2rem;
+  .row.unread.active {
+    background: var(--sidebar-active);
   }
-  .row.active .main,
+  .row.unread .label {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .row.compact.unread {
+    background: none;
+  }
+  .row.active .main {
+    color: var(--text);
+  }
+  /* The three live tiers and expanded rows: project on top, title, what it's doing, 
+     Colour stays in the status glyph; every line of text is neutral. */
+  .main.lifted {
+    align-items: stretch;
+    --row-pad-y: 0.55rem;
+    padding-bottom: 0.3rem;
+  }
   .row.lifted .main {
     color: var(--text);
   }
-  /* Styled after the hover card: bold title, dim detail lines. */
-  .row.variant-attention .label {
-    font-weight: 600;
+  .card {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
   }
-  /* Lifted rows: status icon and origin icon share the first column, text the second. */
-  .main.lifted {
-    display: grid;
-    grid-template-columns: 13px minmax(0, 1fr);
-    column-gap: 0.64rem;
-    row-gap: 0.28rem;
-    align-items: start;
-  }
-  .main.lifted .text {
-    display: contents;
-  }
-  .main.lifted .status-icon {
-    margin-top: 0.1rem;
-  }
-  .main.lifted .title-line,
-  .main.lifted .meta-line {
-    grid-column: 2;
-  }
-  .origin {
-    grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: subgrid;
+  .top {
+    display: flex;
     align-items: center;
-    font-size: 0.72rem;
+    gap: 0.43rem;
+    min-width: 0;
+    /* Clear of the time / hover actions pinned to the card's top right. */
+    padding-right: 2.2rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
-  .origin-icon {
-    display: flex;
-    justify-content: center;
-    color: var(--sidebar-fg-dim);
+  .top > :global(svg),
+  .top > :global(span:first-child) {
+    flex-shrink: 0;
   }
-  .origin-text {
+  .who {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* A running chat shows a plain spinner; hovering the row swaps it for a stop button, which is
-     only ever offered on a running chat. */
-  /* ChatRing spins its own arc; the working icon's whole-svg spin must not stack on it. */
-  .status-icon.status-working.under-stop :global(svg) {
-    animation: none;
+  .row.lifted .label {
+    font-size: var(--text-body-size);
+    font-weight: 600;
   }
-  .row:is(:hover, :focus-within) .status-icon.under-stop {
-    visibility: hidden;
-  }
-  .stop-btn {
-    position: absolute;
-    z-index: 1;
-    left: var(--row-indent, 0.71rem);
-    top: calc(var(--row-pad-y, 0.45rem) + 0.1rem);
+  .ind {
     display: flex;
-    width: 13px;
-    height: 13px;
-    padding: 0;
-    border: none;
-    border-radius: 50%;
-    background: none;
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity calc(0.12s * var(--anim-speed, 1)) ease;
+    align-items: center;
+    gap: 0.43rem;
+    font-size: var(--text-label-size);
+    line-height: 1.4;
+    color: var(--text-dim);
   }
-  .row:is(:hover, :focus-within) .stop-btn {
-    opacity: 1;
-    pointer-events: auto;
+  .ind-text {
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
   }
-  .stop-btn::after {
-    content: "";
+  .variant-attention .ind-text {
+    color: var(--text);
+  }
+  /* The card's time and hover actions sit on its top line, not the middle of its height. */
+  .row.lifted .trail {
     position: absolute;
-    inset: -5px;
-  }
-  .stop-btn:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
-    outline-offset: 2px;
-  }
-  .stop-btn:hover :global(.disc) {
-    fill: color-mix(in srgb, var(--info) 80%, var(--text));
-  }
-  .stop-btn:active :global(.sv) {
-    transform: scale(0.88);
+    top: 0.45rem;
+    right: 0.5rem;
   }
   .main.syncing {
     cursor: progress;
@@ -532,21 +530,11 @@ import { haptic } from "../haptics";
     white-space: nowrap;
   }
   .meta-line {
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--sidebar-fg-dim);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .variant-running .meta-line,
-  .variant-ready .meta-line {
-    color: var(--text-dim);
-  }
-  .status-working ~ .text .meta-line {
-    color: color-mix(in srgb, var(--accent) 80%, var(--text-dim));
-  }
-  .variant-attention .meta-line {
-    color: var(--text-dim);
   }
   .badge {
     flex-shrink: 0;
@@ -563,7 +551,7 @@ import { haptic } from "../haptics";
     color: var(--sidebar-fg-dim);
   }
   .status-icon.status-action {
-    color: var(--warning);
+    color: var(--lamp);
   }
   .status-icon.status-finished {
     color: var(--success);
@@ -629,17 +617,11 @@ import { haptic } from "../haptics";
   .time {
     display: flex;
     justify-content: center;
-    width: 1.5rem;
+    min-width: 1.5rem;
     white-space: nowrap;
-    font-size: 0.68rem;
+    font-size: var(--text-label-size);
     color: var(--sidebar-fg-dim);
     font-variant-numeric: tabular-nums;
-  }
-  .unread {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
   }
   .act {
     display: flex;
@@ -690,7 +672,7 @@ import { haptic } from "../haptics";
       overflow: hidden;
       white-space: nowrap;
       font-size: var(--text-label-size);
-      color: var(--accent);
+      color: var(--accent-ink);
       background: var(--accent-dim);
       border-radius: var(--radius-sm);
       pointer-events: none;

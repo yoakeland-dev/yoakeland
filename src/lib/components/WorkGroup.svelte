@@ -17,6 +17,7 @@
 
   const IN_FLIGHT = new Set(["requested", "awaiting_permission", "running"]);
   const allCalls = $derived(steps.flatMap((s) => (s.kind === "cluster" ? s.calls : [])));
+  const waiting = $derived(allCalls.some((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer"));
   const isRunning = $derived(live || allCalls.some((c) => IN_FLIGHT.has(c.status)));
   const hasError = $derived(allCalls.some((c) => c.status === "error" || c.status === "denied"));
 
@@ -52,7 +53,7 @@
     <span class="icon-slot">
       {#if held.flashing}
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
-      {:else if isRunning}
+      {:else if isRunning && !waiting}
         <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
       {:else}
         <span class="status-icon rest" class:err={hasError} transition:fade={{ duration: 160 }}><Icon name="brain" size={14} /></span>
@@ -112,8 +113,8 @@
     color: var(--text-dim);
     padding: 0.29rem 0;
     cursor: pointer;
-    font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-size: var(--text-label-size);
+    font-family: inherit;
     text-align: left;
   }
   /* Same cross-fade slot as ToolCallCard/ToolCallGroup. */
@@ -212,7 +213,7 @@
     border-left: 2px solid var(--panel-border);
     color: var(--text-dim);
     font-style: italic;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
     line-height: 1.5;
     white-space: pre-wrap;
   }
@@ -221,8 +222,8 @@
     align-items: center;
     gap: var(--space-1);
     color: var(--text-dim);
-    font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-size: var(--text-label-size);
+    font-family: inherit;
   }
   .done-icon {
     display: inline-flex;

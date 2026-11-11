@@ -164,7 +164,7 @@
     border-radius: var(--radius-xs, 0.25rem);
     background: color-mix(in srgb, var(--bg) 14%, transparent);
     font-family: inherit;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: 500;
     opacity: 0.7;
   }

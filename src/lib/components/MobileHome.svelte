@@ -356,7 +356,7 @@
     min-width: 1.15rem;
     height: 1.15rem;
     padding: 0 0.3rem;
-    font-size: 0.75rem;
+    font-size: 0.79rem;
     line-height: 1.15rem;
     font-weight: 700;
     box-shadow: 0 0 0 2px var(--bg);

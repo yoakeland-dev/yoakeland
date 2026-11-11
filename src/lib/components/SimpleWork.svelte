@@ -100,8 +100,6 @@
   const latest = $derived(calls[calls.length - 1]);
 
   const liveLabel = $derived.by(() => {
-    const waiting = calls.find((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer");
-    if (waiting) return waiting.status === "awaiting_answer" ? "Waiting for your answer" : "Waiting for your approval";
     const running = calls.findLast((c) => IN_FLIGHT.has(c.status));
     if (running) {
       const inner = running.subagent ? callActivity(running) : "";
@@ -112,6 +110,12 @@
     return "Thinking…";
   });
   const brief = $derived(calls.length ? briefFor(calls) : "Thought");
+  // One kind of tool shows its own glyph; a mixed step keeps the wrench.
+  const restIcon = $derived.by(() => {
+    const icons = new Set(calls.map((c) => metaFor(c).icon));
+    if (isRunning && latest) return metaFor(latest).icon;
+    return icons.size === 1 ? [...icons][0] : "tool";
+  });
   const secs = $derived(durationMs ? `${Math.max(1, Math.round(durationMs / 1000))}s` : "");
 
   // Previous step slides up as the next arrives; the finished summary replaces it at the end.
@@ -127,11 +131,15 @@
     <button class="head" bind:this={head} onclick={toggle} aria-expanded={open}>
       <span class="icon-slot">
         {#if held.flashing}
-          <span class="status-icon rest" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
+          <span class="status-icon rest done" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
         {:else if isRunning}
+          {#if !calls.some((c) => c.status === "awaiting_permission" || c.status === "awaiting_answer")}
           <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
+          {:else}
+            <span class="status-icon rest waiting" transition:fade={{ duration: 160 }}><Icon name={restIcon} size={14} /></span>
+          {/if}
         {:else}
-          <span class="status-icon rest" transition:fade={{ duration: 160 }}><Icon name="tool" size={14} /></span>
+          <span class="status-icon rest" class:failed={failed > 0} transition:fade={{ duration: 160 }}><Icon name={restIcon} size={14} /></span>
         {/if}
         <span class="chevron-icon" class:open><Icon name="chevron-right" size={14} /></span>
       </span>
@@ -174,8 +182,8 @@
     color: var(--text-dim);
     padding: 0.29rem 0;
     cursor: pointer;
-    font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-size: var(--text-label-size);
+    font-family: inherit;
     text-align: left;
   }
   .icon-slot {
@@ -193,6 +201,18 @@
     transition:
       opacity calc(0.15s * var(--anim-speed, 1)) ease,
       transform calc(0.15s * var(--anim-speed, 1)) ease;
+  }
+  .status-icon.rest {
+    color: color-mix(in srgb, var(--accent) 70%, var(--text-dim));
+  }
+  .status-icon.rest.done {
+    color: var(--success);
+  }
+  .status-icon.rest.waiting {
+    color: var(--lamp);
+  }
+  .status-icon.rest.failed {
+    color: var(--danger);
   }
   .status-icon.spin :global(svg) {
     animation: spin calc(1s * var(--icon-slow, 1)) linear infinite;

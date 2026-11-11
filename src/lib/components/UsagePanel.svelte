@@ -860,6 +860,7 @@
     margin: 0.15rem 0 0.3rem;
   }
   .hero-value {
+    color: var(--text);
     font-size: 2.6rem;
     font-weight: 600;
     line-height: 1.1;
@@ -1031,22 +1032,23 @@
   }
   .wins {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 2rem;
-    font-size: var(--text-label-size);
+    flex-direction: column;
+    gap: 0.3rem;
   }
+  /* Every limit on its own line, with its name, bar and figures in shared columns. */
   .win {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: 8rem minmax(4rem, 12rem) auto 1fr;
     align-items: center;
-    gap: 0.5rem;
-    white-space: nowrap;
+    gap: 0.7rem;
+    font-size: var(--text-label-size);
   }
   .wname,
   .wreset {
     color: var(--text-dim);
   }
   .meter {
-    width: 6rem;
+    width: 100%;
     height: 6px;
     border-radius: 3px;
     background: color-mix(in srgb, var(--brand) 18%, transparent);

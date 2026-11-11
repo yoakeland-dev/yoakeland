@@ -95,12 +95,12 @@
       </button>
     {/if}
     {#if queued > 0}
-      <span class="item" {@attach tip("Turns waiting for their chat's current turn to finish")}>
+      <span class="item minor" {@attach tip("Turns waiting for their chat's current turn to finish")}>
         <Icon name="clock" size={12} /> {queued} queued
       </span>
     {/if}
     {#if scheduledCount > 0}
-      <span class="item" {@attach tip("Scheduled turns waiting to run")}>
+      <span class="item minor" {@attach tip("Scheduled turns waiting to run")}>
         <Icon name="clock" size={12} /> {scheduledCount} scheduled
       </span>
     {/if}
@@ -131,7 +131,7 @@
     /* Floating main area: blends into the window; flat keeps its own bar and hairline. */
     background: var(--bg);
     color: var(--statusbar-fg);
-    font-size: 0.72rem;
+    font-size: var(--text-label-size);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -148,6 +148,16 @@
   }
   .left {
     overflow: hidden;
+  }
+  /* The left side gives way first; usage, spend and the bell stay on screen. */
+  .right {
+    flex-shrink: 0;
+  }
+  @media (max-width: 1100px) {
+    .dim,
+    .item.minor {
+      display: none;
+    }
   }
   .item {
     display: inline-flex;
@@ -173,10 +183,10 @@
     color: var(--warning);
   }
   .busy {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .dim {
-    opacity: 0.7;
+    opacity: 0.85;
   }
   .spin {
     display: inline-flex;

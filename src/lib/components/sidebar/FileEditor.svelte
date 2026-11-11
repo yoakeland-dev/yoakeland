@@ -693,7 +693,7 @@
   }
   .dot {
     margin-left: 0.36rem;
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: 0.7em;
   }
   .btn {
@@ -803,7 +803,7 @@
     width: 2.2rem;
     color: var(--text-dim);
     font-family: system-ui, sans-serif;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     vertical-align: middle;
   }
   .glyphs {
@@ -843,14 +843,14 @@
     animation: floatIn var(--float-enter-duration, 0.12s) ease-out;
   }
   .ask-pill:hover {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .status {
     display: flex;
     gap: var(--space-2);
     padding: 0.14rem var(--space-1);
     border-top: 1px solid var(--panel-border);
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
   }

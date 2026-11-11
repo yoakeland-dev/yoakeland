@@ -1096,8 +1096,8 @@
             }}
             placeholder={asks.length
               ? asks.length > 1
-                ? `Or tell it what to do instead (answers all ${asks.length})…`
-                : "Or tell it what to do instead…"
+                ? `Or reply instead (answers all ${asks.length})…`
+                : "Or say what to do instead…"
               : !projectPath
                 ? "Pick a project in the sidebar to chat…"
                 : floating
@@ -1400,7 +1400,7 @@
     /* Centered on the visible body below the header, not the whole panel: .wrap spans behind
        the overlaid header, so a plain 50% would sit too high. */
     top: calc(50% + var(--chat-top, var(--header-height)) / 2);
-    width: min(36rem, calc(100% - 3.43rem));
+    width: min(44rem, calc(100% - 3.43rem));
     transform: translate(-50%, -50%);
   }
   .hero {
@@ -1459,8 +1459,6 @@
     pointer-events: none;
   }
   .hero-project {
-    font-family: var(--logo-font-family);
-    font-weight: 800;
     text-decoration: underline;
     text-underline-offset: 3px;
     text-decoration-color: var(--accent);
@@ -1596,7 +1594,7 @@
     gap: 0.43rem;
     border-radius: inherit;
     background: color-mix(in srgb, var(--float-bg) 85%, var(--accent));
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: 0.86rem;
     font-weight: 500;
     pointer-events: none;
@@ -1694,7 +1692,7 @@
     border-left: 2px solid var(--accent);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     background: color-mix(in srgb, var(--accent) 8%, transparent);
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: var(--text-label-size);
   }
   .editing-label {
@@ -1724,7 +1722,7 @@
   }
   kbd {
     font-family: inherit;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     opacity: 0.75;
   }
   .input-area {
@@ -1845,8 +1843,8 @@
   }
   .m-scope {
     flex-shrink: 0;
-    font-size: 0.68rem;
-    color: var(--accent);
+    font-size: 0.79rem;
+    color: var(--accent-ink);
   }
   .skills {
     display: grid;
@@ -2019,7 +2017,7 @@
   }
   mark {
     background: none;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   /* Collapses to nothing when compact (0fr), leaving the text field and the send button. */
   .toolbar-clip {

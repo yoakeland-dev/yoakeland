@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fmtVersion, shortVersion } from "../serverVersion";
   // A task manager per server, as a page in the chat panel's place: the server process and everything it
   // has started (terminals, CLI agents, MCP servers, tool commands), sampled every few seconds while open.
   import { onMount, untrack } from "svelte";
@@ -197,9 +198,12 @@
   const since = (iso: string) => (Number.isNaN(Date.parse(iso)) ? "–" : uptime(app.now - Date.parse(iso)));
 
   // Polyline points for a series scaled to `max` (at least `floor`, so an idle server stays flat, not full-height).
-  function points(v: number[], floor: number) {
+  // A series with no meaningful ceiling (heap, resident memory) is drawn from below its own lowest point instead,
+  // so it shows the trend rather than a solid block. It always spans the full width, however few samples there are.
+  function points(v: number[], floor: number, relative = false) {
+    const lo = relative ? Math.min(...v) * 0.7 : 0;
     const max = Math.max(floor, ...v);
-    return v.map((y, i) => `${((i / (HISTORY - 1)) * 100 + (100 * (HISTORY - v.length)) / (HISTORY - 1)).toFixed(1)},${(30 - (y / max) * 28).toFixed(1)}`).join(" ");
+    return v.map((y, i) => `${((i / (v.length - 1)) * 100).toFixed(1)},${(30 - ((y - lo) / Math.max(1, max - lo)) * 26).toFixed(1)}`).join(" ");
   }
 </script>
 
@@ -216,7 +220,7 @@
 
 {#snippet head(icon: string, title: string, count?: string | number, extra?: import("svelte").Snippet)}
   <header class="sec-head">
-    <span class="chip"><Icon name={icon as any} size={14} /></span>
+    <span class="sec-icon"><Icon name={icon as any} size={15} /></span>
     <h2>{title}</h2>
     {#if count !== undefined}<span class="count">{count}</span>{/if}
     <span class="grow"></span>
@@ -224,19 +228,16 @@
   </header>
 {/snippet}
 
-{#snippet graph(icon: string, color: string, title: string, value: string, sub: string, v: number[], floor: number)}
+{#snippet graph(icon: string, color: string, title: string, value: string, sub: string, v: number[], floor: number, relative = false)}
   <div class="graph" style="--c: {color}">
-    <div class="g-top">
-      <span class="k"><Icon name={icon as any} size={12} />{title}</span>
-    </div>
-    <span class="v big">{value}</span>
+    <span class="k"><Icon name={icon as any} size={12} />{title}</span>
+    <span class="reading"><span class="v big">{value}</span><span class="sub">{sub}</span></span>
     <svg viewBox="0 0 100 30" preserveAspectRatio="none" class="spark" aria-hidden="true">
       {#if v.length > 1}
-        <polygon points="{points(v, floor)} 100,30 {100 - (100 * (v.length - 1)) / (HISTORY - 1)},30" />
-        <polyline points={points(v, floor)} />
+        <polygon points="0,30 {points(v, floor, relative)} 100,30" />
+        <polyline points={points(v, floor, relative)} />
       {/if}
     </svg>
-    <span class="sub">{sub}</span>
   </div>
 {/snippet}
 
@@ -280,7 +281,7 @@
           {@const cpuPct = st.load1 != null && st.cpus ? Math.round((st.load1 / st.cpus) * 100) : null}
           <div class="stats">
             {@render stat("clock", "Uptime", uptime(st.uptimeSec * 1000))}
-            {@render stat("tag", "Version", st.version || "–")}
+            {@render stat("tag", "Version", st.version ? shortVersion(st.version) : "–", "default", st.version ? fmtVersion(st.version) : "")}
             {@render stat("player-play", "Active turns", String(st.activeTurns), "default", st.queuedTurns ? `${st.queuedTurns} more waiting for a slot` : "")}
             {@render stat("devices", "Clients", String(st.peers))}
             {@render stat("folder", "Open projects", String(st.openProjects))}
@@ -289,9 +290,9 @@
           <div class="graphs">
             {@render graph("cpu", "var(--accent)", "CPU load", cpuPct != null ? `${cpuPct}%` : "–", `${st.load1?.toFixed(2) ?? "–"} load · ${st.cpus} cores`, hh?.load ?? [], 100)}
             {@render graph("database", "var(--info)", "Memory", memUsed != null ? fileSize(memUsed) : "–", st.memTotalBytes ? `of ${fileSize(st.memTotalBytes)}` : "", hh?.mem ?? [], st.memTotalBytes ?? 1)}
-            {@render graph("gauge", "var(--success)", "yoakeland heap", fileSize(st.heapBytes), "Go runtime", hh?.heap ?? [], 64 * 1024 * 1024)}
+            {@render graph("gauge", "var(--success)", "yoakeland heap", fileSize(st.heapBytes), "Go runtime", hh?.heap ?? [], 64 * 1024 * 1024, true)}
             {#if list && all.length}
-              {@render graph("activity", "var(--warning)", "Process memory", fileSize(sum.rss), `${sum.cpu.toFixed(1)}% CPU · ${all.length} ${all.length === 1 ? "process" : "processes"}`, h?.rss ?? [], 64 * 1024 * 1024)}
+              {@render graph("activity", "var(--warning)", "Process memory", fileSize(sum.rss), `${sum.cpu.toFixed(1)}% CPU · ${all.length} ${all.length === 1 ? "process" : "processes"}`, h?.rss ?? [], 64 * 1024 * 1024, true)}
             {/if}
           </div>
         {:else}
@@ -303,20 +304,17 @@
         <span class="dim small" {@attach tip(at ? new Date(at).toLocaleString() : "")}>Checked {checked(at)}</span>
       {/snippet}
       <section class="card">
-        {@render head("activity", "Live processes", list && all.length ? all.length : undefined)}
+        {#snippet procSummary()}
+          <span class="summary" {@attach tip("Across the server and everything it started. 100% CPU is one full core.")}>
+            <span>{sum.cpu.toFixed(1)}% CPU</span><span>{fileSize(sum.rss)}</span><span>{count("Agent")} {count("Agent") === 1 ? "agent" : "agents"}</span><span>{count("MCP")} MCP</span><span>{count("Terminal")} {count("Terminal") === 1 ? "terminal" : "terminals"}</span>
+          </span>
+        {/snippet}
+        {@render head("activity", "Live processes", list && all.length ? all.length : undefined, list && all.length ? procSummary : undefined)}
         {#if !list}
           {@render empty("lock", waited ? "Your access to this server doesn't include its process list." : "Sampling…")}
         {:else if !all.length}
           {@render empty("info-circle", "This server can't report its processes on this platform.")}
         {:else}
-          <div class="stats">
-            {@render stat("bolt", "Child processes", String(all.length - 1))}
-            {@render stat("cpu", "CPU", `${sum.cpu.toFixed(1)}%`, "default", "Across the server and everything it started. 100% is one full core.")}
-            {@render stat("database", "Memory", fileSize(sum.rss), "default", "Resident memory across the server and everything it started.")}
-            {@render stat("robot", "Agents", String(count("Agent")))}
-            {@render stat("plug-connected", "MCP servers", String(count("MCP")))}
-            {@render stat("terminal-2", "Terminals", String(count("Terminal")))}
-          </div>
           <div class="scroll tall">
             <table class="proc">
               <thead>
@@ -335,7 +333,7 @@
                   {@const kind = kinds.get(r.key) ?? "Subprocess"}
                   {@const busy = srv.signaling.includes(r.pid)}
                   <tr>
-                    <td style="padding-left: {Math.min(r.depth, 8) * 14 + 12}px">
+                    <td style="padding-left: calc(var(--pad) + {Math.min(r.depth, 8) * 14}px)">
                       <span class="name">
                         {#if r.hasChildren}
                           <button type="button" class="chev" aria-label={collapsed.has(r.key) ? "Expand" : "Collapse"} onclick={() => toggle(r.key)}>
@@ -347,14 +345,14 @@
                       </span>
                     </td>
                     <td class="s"><Badge tone={KIND_TONE[kind]}>{kind}</Badge></td>
-                    <td class="s dim">{r.status}</td>
-                    <td class="n bar" style="--p: {Math.min(100, r.cpuPercent ?? 0)}%"><span>{(r.cpuPercent ?? 0).toFixed(1)}%</span></td>
-                    <td class="n bar m" style="--p: {(r.rssBytes / Math.max(1, sum.rss)) * 100}%"><span>{fileSize(r.rssBytes)}</span></td>
+                    <td class="s dim"><span class="proc-state {r.status}">{({ R: "Running", S: "Idle", D: "Blocked", Z: "Zombie", T: "Stopped" } as Record<string, string>)[r.status] ?? r.status}</span></td>
+                    <td class="n bar" style="--p: {Math.min(100, r.cpuPercent ?? 0)}%"><span><b>{(r.cpuPercent ?? 0).toFixed(1)}%</b></span></td>
+                    <td class="n bar m" style="--p: {(r.rssBytes / Math.max(1, sum.rss)) * 100}%"><span><b>{fileSize(r.rssBytes)}</b></span></td>
                     <td class="n p dim">{r.pid}</td>
                     <td class="act">
                       {#if kind !== "Server" && srv.canAdmin}
-                        <button type="button" class="kill" disabled={busy} onclick={() => signal(cid, r.pid, "SIGINT")}>INT</button>
-                        <button type="button" class="kill danger" disabled={busy} onclick={() => signal(cid, r.pid, "SIGKILL")}>KILL</button>
+                        <button type="button" class="kill" disabled={busy} onclick={() => signal(cid, r.pid, "SIGINT")}>Interrupt</button>
+                        <button type="button" class="kill danger" disabled={busy} onclick={() => signal(cid, r.pid, "SIGKILL")}>Kill</button>
                       {/if}
                     </td>
                   </tr>
@@ -656,6 +654,7 @@
   /* A card is one fill step above the panel, with a hairline: tonal elevation, as the rest of the app does it. */
   .card {
     --card-bg: color-mix(in srgb, var(--text) 3%, var(--panel-bg));
+    --pad: 1rem;
     min-width: 0;
     background: var(--card-bg);
     border: 1px solid var(--panel-border);
@@ -665,38 +664,39 @@
   .sec-head {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.7rem 0.9rem;
-    border-bottom: 1px solid var(--panel-border);
+    gap: 0.5rem;
+    min-height: 2.71rem;
+    padding: 0.29rem 0.57rem 0.29rem var(--pad);
   }
   h2 {
     margin: 0;
     font-size: var(--text-body-size);
     font-weight: 600;
   }
-  .chip {
-    display: grid;
-    place-items: center;
-    width: 1.7rem;
-    height: 1.7rem;
-    border-radius: var(--radius-sm);
-    background: var(--accent-dim);
-    color: var(--accent);
+  .sec-icon {
+    display: inline-flex;
+    color: var(--accent-ink);
   }
   .count {
-    padding: 0 0.45rem;
-    border-radius: var(--radius-pill);
-    background: var(--wash-3);
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: var(--text-label-size);
     font-variant-numeric: tabular-nums;
-    line-height: 1.4rem;
   }
   .grow {
     flex: 1;
   }
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0 1rem;
+    padding-right: 0.43rem;
+    color: var(--text-dim);
+    font-size: var(--text-label-size);
+    font-variant-numeric: tabular-nums;
+  }
   .small {
-    font-size: 0.75rem;
+    font-size: 0.79rem;
   }
   .empty {
     display: flex;
@@ -710,19 +710,15 @@
   }
   .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-    border-bottom: 1px solid var(--panel-border);
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.86rem 1rem;
+    padding: 0.14rem var(--pad) 1rem;
   }
   .stat {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.7rem 0.9rem;
-    border-left: 1px solid var(--panel-border);
+    gap: 0.14rem;
     min-width: 0;
-  }
-  .stat:first-child {
-    border-left: 0;
   }
   .k {
     display: inline-flex;
@@ -732,7 +728,7 @@
     color: var(--text-dim);
   }
   .v {
-    font-size: 1.05rem;
+    font-size: var(--text-body-size);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     overflow: hidden;
@@ -746,54 +742,63 @@
   .stat.warning .v {
     color: var(--warning);
   }
+  /* The four live readings share the card's bottom edge: columns split by a hairline, each with its own color. */
   .graphs {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-    gap: 0.75rem;
-    padding: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    border-top: 1px solid var(--panel-border);
   }
-  /* Sunk into the card, with the metric's own colour carrying the icon, line and fill. */
   .graph {
     --c: var(--accent);
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
-    padding: 0.7rem 0.8rem 0.6rem;
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: var(--radius-sm);
+    gap: 0.29rem;
+    min-width: 0;
+    padding-top: 0.86rem;
+    box-shadow: -1px 0 0 var(--panel-border);
+  }
+  .graph .k {
+    padding-inline: var(--pad);
   }
   .graph .k :global(.icon) {
     color: var(--c);
   }
+  .reading {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+    padding-inline: var(--pad);
+    white-space: nowrap;
+  }
   .graph .v.big {
-    font-size: 1.6rem;
-    line-height: 1.1;
+    flex-shrink: 0;
+    font-size: 1.5rem;
+    line-height: 1.2;
     letter-spacing: -0.02em;
   }
   .sub {
-    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--text-heading-size);
     color: var(--text-dim);
   }
   .spark {
     display: block;
     width: 100%;
-    height: 3.2rem;
-    margin-top: 0.2rem;
-    overflow: visible;
-    background: repeating-linear-gradient(to bottom, var(--panel-border) 0 1px, transparent 1px 33%);
+    height: 3rem;
+    margin-top: 0.43rem;
     fill: none;
     stroke: var(--c);
-    stroke-width: 1.75;
+    stroke-width: 1.5;
     stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
   }
   .spark polyline {
     vector-effect: non-scaling-stroke;
   }
   .spark polygon {
     fill: var(--c);
-    fill-opacity: 0.18;
+    fill-opacity: 0.12;
     stroke: none;
   }
   .sort {
@@ -816,9 +821,21 @@
     width: 6rem;
   }
   .act {
-    width: 6.5rem;
+    width: 4.5rem;
     text-align: right;
     white-space: nowrap;
+  }
+  .proc .act {
+    width: 9rem;
+  }
+  /* Scrolls sideways before a narrow pane squeezes the name column to nothing. */
+  .proc {
+    min-width: 58rem;
+  }
+  @media (max-width: 720px) {
+    .proc {
+      min-width: 0;
+    }
   }
   .kill {
     padding: 0.05rem 0.4rem;
@@ -827,14 +844,23 @@
     background: none;
     color: inherit;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     font-weight: 600;
     cursor: pointer;
   }
   .kill:hover:not(:disabled) {
     background: var(--wash-3);
   }
-  .kill.danger {
+  @media (hover: hover) {
+    .proc .kill {
+      opacity: 0;
+    }
+    .proc tr:hover .kill,
+    .proc tr:focus-within .kill {
+      opacity: 1;
+    }
+  }
+  .kill.danger:hover:not(:disabled) {
     color: var(--danger);
     border-color: color-mix(in srgb, var(--danger) 45%, transparent);
   }
@@ -847,10 +873,12 @@
   }
   .scroll {
     max-height: 18rem;
-    min-height: 6rem;
+    min-height: 4rem;
     overflow: auto;
-    scrollbar-gutter: stable;
     resize: vertical; /* drag the bottom-right corner */
+  }
+  .scroll:not(:hover)::-webkit-resizer {
+    display: none;
   }
   .scroll.tall {
     max-height: 20rem;
@@ -897,20 +925,63 @@
   tbody tr.self {
     background: var(--accent-dim);
   }
-  /* A bar is a faint track with the fill inside it, so where it starts and ends is clear without grid lines. */
-  td.bar {
-    position: relative;
-  }
-  td.bar::before {
-    content: "";
-    position: absolute;
-    inset: 0.3rem 0.6rem;
-    border-radius: var(--radius-xs, 4px);
-    background: linear-gradient(to right, color-mix(in srgb, var(--accent, currentColor) 30%, transparent) var(--p), var(--wash-2) var(--p));
-  }
+  /* A slim meter beside the number, in the same color as that metric's chart above. */
   td.bar > span {
-    position: relative;
-    padding-right: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.57rem;
+  }
+  td.bar > span::before {
+    content: "";
+    flex: 1;
+    min-width: 1rem;
+    max-width: 2.6rem;
+    height: 3px;
+    border-radius: 2px;
+    background: linear-gradient(to right, var(--c) var(--p), var(--wash-3) var(--p));
+  }
+  /* Fixed width, so the meters in a column start and end together. */
+  td.bar b {
+    flex: none;
+    min-width: 3rem;
+    font-weight: 400;
+  }
+  td.bar.m b {
+    min-width: 4rem;
+  }
+  .proc :is(th, td).n {
+    width: 8.5rem;
+  }
+  .proc :is(th, td).p {
+    width: 5rem;
+  }
+  td.bar {
+    --c: var(--accent);
+  }
+  td.bar.m {
+    --c: var(--info);
+  }
+  .proc-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.36rem;
+  }
+  .proc-state::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--wash-4);
+  }
+  .proc-state.R::before {
+    background: var(--success);
+  }
+  .proc-state.D::before {
+    background: var(--warning);
+  }
+  .proc-state.Z::before {
+    background: var(--danger);
   }
   @media (max-width: 720px) {
     .s,
@@ -929,21 +1000,19 @@
     table-layout: fixed;
     font-size: var(--text-label-size);
   }
-  /* The heading style from DESIGN.md: small, uppercase, tracked. */
   th {
+    white-space: nowrap;
     text-align: left;
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-size: var(--text-label-size);
+    font-weight: 500;
     color: var(--text-dim);
     padding: 0.5rem 0.6rem;
-    border-bottom: 1px solid var(--panel-border);
+    border-block: 1px solid var(--panel-border);
     white-space: nowrap;
   }
   th:first-child,
   td.pad-l {
-    padding-left: 0.9rem;
+    padding-left: var(--pad);
   }
   /* Alternating rows, so a long line is easy to follow across the table. */
   tbody tr:nth-child(even) {
@@ -959,13 +1028,13 @@
     white-space: nowrap;
   }
   .n {
-    width: 5.5rem;
+    width: 7rem;
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
   th.n:last-child,
   td.n:last-child {
-    padding-right: 0.9rem;
+    padding-right: var(--pad);
   }
   .name {
     display: flex;

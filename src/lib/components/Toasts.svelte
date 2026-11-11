@@ -308,7 +308,7 @@
     border-radius: var(--radius-pill);
     background: var(--accent);
     color: #0d1020;
-    font-size: 0.64rem;
+    font-size: 0.79rem;
     line-height: 1.14rem;
     text-align: center;
   }
@@ -405,7 +405,7 @@
     align-self: center;
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-size: var(--text-label-size);
     font-weight: 600;

@@ -212,7 +212,7 @@
   }
   .target {
     font-family: var(--font-mono, monospace);
-    font-size: 0.74rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     overflow: hidden;
     text-overflow: ellipsis;

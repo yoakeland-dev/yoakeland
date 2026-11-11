@@ -316,8 +316,8 @@
     padding: 0.1rem 0.5rem;
     border-radius: var(--radius-xs);
     background: var(--accent-dim);
-    color: var(--accent);
-    font-size: 0.72rem;
+    color: var(--accent-ink);
+    font-size: 0.79rem;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -423,7 +423,7 @@
   }
   .tx code {
     margin-left: 0.5rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .star {

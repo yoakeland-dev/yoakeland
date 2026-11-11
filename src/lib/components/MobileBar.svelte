@@ -78,7 +78,7 @@
   }
   .tt small {
     display: block;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     white-space: nowrap;
     overflow: hidden;
@@ -104,7 +104,7 @@
     background: color-mix(in srgb, var(--text) 10%, transparent);
   }
   .btn.on {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .title {
     flex: 1;
@@ -131,8 +131,8 @@
     background: var(--text-dim);
   }
   .lamp.action {
-    background: var(--warning);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 28%, transparent);
+    background: var(--lamp);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--lamp) 28%, transparent);
   }
   .lamp.working {
     width: 0.85rem;

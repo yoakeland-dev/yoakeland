@@ -80,11 +80,14 @@
   .btn:hover:not(:disabled) {
     --bg: var(--sidebar-hover);
   }
+  .btn:active:not(:disabled) {
+    --bg: var(--sidebar-active);
+  }
   .btn:active:not(:disabled)::before {
     scale: 0.96;
   }
   .btn:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
   .btn:disabled {
@@ -112,7 +115,10 @@
     font-weight: 600;
   }
   .primary:hover:not(:disabled) {
-    --bg: color-mix(in srgb, var(--accent) 88%, #fff);
+    --bg: color-mix(in srgb, var(--accent) 80%, #fff);
+  }
+  .primary:active:not(:disabled) {
+    --bg: color-mix(in srgb, var(--accent) 85%, #000);
   }
   .ghost {
     --bg: transparent;
@@ -134,6 +140,9 @@
   }
   .danger:hover:not(:disabled) {
     --bg: color-mix(in srgb, var(--danger) 22%, transparent);
+  }
+  .danger:active:not(:disabled) {
+    --bg: color-mix(in srgb, var(--danger) 30%, transparent);
   }
   /* Quiet until hovered, then red: a destructive action that is not yet being confirmed. */
   .destructive:hover:not(:disabled) {

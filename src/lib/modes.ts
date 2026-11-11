@@ -14,7 +14,7 @@ export interface ModeMeta {
 
 export const LADDER: ModeMeta[] = [
   { id: "read_only", label: "Read", icon: "eye" },
-  { id: "read_write", label: "Ask", icon: "question-mark" },
+  { id: "read_write", label: "Ask", icon: "message-question" },
   { id: "accept_edits", label: "Edit", icon: "pencil" },
   { id: "auto", label: "Auto", icon: "shield-check" },
   {

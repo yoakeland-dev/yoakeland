@@ -1,7 +1,7 @@
 // @ts-nocheck: run by node --test, which needs the .ts import extension.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodePairingCode, pairingUrl, parseScanned } from "./pairing.ts";
+import { decodePairingCode, pairingUrl, parseScanned, refusalNotice } from "./pairing.ts";
 
 test("the QR URL carries the token in the fragment and decodes back", () => {
   const url = new URL(pairingUrl("192.168.1.20", 7890, "tok+/en=="));
@@ -52,4 +52,14 @@ test("the code the server prints says where to go and what CA to trust", () => {
   assert.deepEqual([got.token, got.caPem, got.host, got.port, got.hosts], ["tok", "PEM", "203.0.113.7", 7890, ["10.0.0.2"]]);
   // and without a fingerprint, as the desktop's copy has when the server has no WebRTC
   assert.equal(parseScanned(btoa(JSON.stringify({ t: "tok", ca: "PEM", h: "10.0.0.2", p: 7890 }))).host, "10.0.0.2");
+});
+
+test("a refusal only reports limited access for a limited device, and polling stays quiet", () => {
+  const refused = (t) => `${t} isn't available from a paired device; do it on the computer running the server`;
+  assert.match(refusalNotice(refused("add_provider"), true), /limited access/);
+  assert.equal(refusalNotice(refused("read_log"), false), "That only works on the computer running the server.");
+  assert.equal(refusalNotice(refused("list_problems"), false), null);
+  assert.equal(refusalNotice(refused("list_problems"), true), null);
+  assert.equal(refusalNotice(refused("list_processes"), true), null);
+  assert.equal(refusalNotice("something else broke", true), null);
 });

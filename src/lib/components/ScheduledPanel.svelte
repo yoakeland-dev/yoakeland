@@ -135,7 +135,7 @@
     border-radius: var(--radius-sm);
     background: var(--accent);
     color: var(--bg, #fff);
-    font-size: 0.68rem;
+    font-size: 0.79rem;
   }
   .err {
     margin-left: 0.4rem;

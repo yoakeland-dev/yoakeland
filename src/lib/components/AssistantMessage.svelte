@@ -509,7 +509,6 @@
   }
   .account-chip {
     color: var(--text-dim);
-    opacity: 0.8;
     white-space: nowrap;
     max-width: 110px;
     overflow: hidden;
@@ -531,7 +530,7 @@
     background: none;
     border: none;
     padding: 0;
-    color: var(--accent);
+    color: var(--accent-ink);
     font-size: inherit;
     cursor: pointer;
     text-decoration: underline;

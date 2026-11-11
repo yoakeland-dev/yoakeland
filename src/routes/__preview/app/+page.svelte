@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import Main from "../../+page.svelte";
   import { app, ServerState } from "$lib/state.svelte";
+  import { fetched } from "$lib/usageFetch.svelte";
   import type { ChatMessage, ModeSpec, ModelInfo, SessionSummary } from "$lib/types";
 
   const now = Date.now();
@@ -51,6 +52,7 @@
     if (mode === "remote") s.serverIcon = { name: "ghost", hue: 270 };
     s.recentProjects = Object.keys(projects);
     s.sessionsByProject = projects;
+    for (const [path, list] of Object.entries(projects)) for (const x of list) s.projectBySession[x.sessionId] = path;
     s.providers = [
       { name: "claude-subscription", kind: "cli_claude", configDir: "~/.claude" },
       { name: "claude-work", kind: "cli_claude", label: "Work", configDir: "~/.claude-work" },
@@ -283,7 +285,7 @@
     };
     local.openPlanSessionId = "s1";
   }
-  local.modelBySession = { s1: "claude-opus-5-5" };
+  local.modelBySession = { s1: "claude-opus-5-5", s2: "claude-opus-5-5" };
   const msgs: ChatMessage[] = [
     { id: "m1", role: "user", text: "Can you tighten up the settings layout?", toolCalls: [], streaming: false, createdAt: now - 200_000 },
     {
@@ -507,7 +509,34 @@
         if (t > 50) clearInterval(wobble);
       }, 150);
     }
-    if (params.has("usage")) app.showUsage = true;
+    if (params.has("usage")) {
+      app.showUsage = true;
+      // A month of fake turns, once the (never-answered) real fetch has claimed its slot.
+      setTimeout(() => {
+        const hour = Math.floor(now / 3_600_000) * 3600;
+        const rows = Array.from({ length: 30 * 3 }, (_, i) => {
+          const wave = 1 + Math.sin(i / 4) * 0.7;
+          return { h: hour - i * 8 * 3600, s: i % 3, p: 0, m: i % 2, n: 3 + (i % 6), in: Math.round(470_000 * wave), cached: Math.round(400_000 * wave), out: Math.round(12_000 * wave), usd: 0.4 * wave + (i % 5) * 0.1, ms: 90_000 };
+        });
+        // The other mock servers never answer either, and a pending fetch would dim the page.
+        for (const srv of Object.values(app.servers)) if (srv.serverId) fetched[srv.serverId] = { loading: false };
+        fetched[local.serverId!] = {
+          loading: false,
+          report: {
+            sessions: [
+              { id: "s1", title: "Refine the settings dialog", projectPath: "/home/aveline/Projects/yoake/yoake-gui" },
+              { id: "s2", title: "Fix terminal resize flicker", projectPath: "/home/aveline/Projects/yoake/yoake-gui" },
+              { id: "s4", title: "Persist remote tokens", projectPath: "/home/aveline/Projects/yoakeland" },
+            ],
+            providers: [{ name: "claude-subscription", kind: "cli_claude" }],
+            models: ["claude-opus-5-5", "claude-sonnet-5"],
+            rows,
+            firstAt: iso(60 * 24 * 30),
+            deleted: { sessions: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+          },
+        };
+      }, 200);
+    }
     (window as unknown as { __app: typeof app }).__app = app;
     // ?toasts: a burst of notifications every few seconds (a stack for s2, singles for the rest).
     if (params.has("toasts")) {

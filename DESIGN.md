@@ -6,7 +6,7 @@ colors:
   ground: "hsl(226 15% 5%)"
   panel: "hsl(226 12% 7%)"
   text: "hsl(226 10% 92%)"
-  text-dim: "hsl(226 6% 62%)"
+  text-dim: "hsl(226 7% 72%)"
   edge: "hsla(226 20% 95% / 0.08)"
   danger: "#ff6b6b"
   success: "#58d68d"
@@ -14,21 +14,21 @@ colors:
   info: "#5b9bff"
 typography:
   title:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "1.05rem"
-    fontWeight: 700
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "1.14rem"
+    fontWeight: 600
   body:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "0.85rem"
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "0.93rem"
     fontWeight: 400
   label:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "0.78rem"
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "0.86rem"
     fontWeight: 500
   heading:
-    fontFamily: "Questrial, -apple-system, Segoe UI, sans-serif"
-    fontSize: "0.72rem"
-    fontWeight: 700
+    fontFamily: "Inter, -apple-system, Segoe UI, sans-serif"
+    fontSize: "0.79rem"
+    fontWeight: 600
 rounded:
   xs: "4px"
   sm: "6px"
@@ -81,31 +81,32 @@ Low-saturation surfaces so the accent (often 60 to 90% saturation) is the only l
 ### Neutral
 - **Ground** (`hsl(h 15% 5%)`): the window behind panels.
 - **Panel** (`hsl(h 12% 7%)`): the chat, sidebars, drawers.
-- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 6% 62%)`): body and secondary.
+- **Text** (`hsl(h 10% 92%)`) and **Text dim** (`hsl(h 7% 72%)`, 8.8:1 on panel): body and secondary.
 - **Edge** (`hsla(h 20% 95% / 0.08)`): the one hairline. Same value on all four sides.
 - **Washes** (`--wash-1..4`, 4/6/9/14% of text): rest, hover, active, strong edge. Always these four, never white or black literals.
 
 ### Semantic
-Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room.
+Danger, success, warning, info are fixed signal colors, cooled together by Quiet Room, and deeper on the light scheme so they hold up as text. Red is for failure, destructive intent and the no-sandbox warning.
 
 ### Named Rules
+**The Living Details Rule.** Surfaces stay quiet and themes own them. Details keep their color: status marks, chart lines, kind badges, provider logos, name-tinted tiles. Refined never means gray; don't flatten or strip a detail just to look calmer.
 **The One Hue Rule.** Every neutral is derived from the accent hue. A component that hard-codes a gray or a white alpha breaks on light themes and on sampled accents.
 **The Provider Rule.** A provider's brand color appears only on things that belong to that provider (`usage.ts` `BRANDS`). Everything else uses the accent.
 **The Wallpaper Rule.** The wallpaper shows only on the new-chat empty state. It may supply the accent; it never tints surfaces directly.
 
 ## Typography
 
-**UI Font:** a neutral UI sans (default `Inter`, falling back to the system face). Questrial is only the bundled fallback. **Mono:** Departure Mono for the brand mark, system mono for code. Fonts are changeable in settings and not binding.
+**UI Font:** Inter, bundled. **Mono:** JetBrains Mono, bundled, for code, commands and paths only; status lines and titles are prose and stay in the UI font. Fonts are changeable in settings and not binding.
 
 **Character:** Plain and professional; hierarchy comes from weight jumps, not size sprawl. Numerals that line up (times, counts, costs) use tabular figures.
 
 ### Hierarchy
-- **Title** (700, 1.05rem): dialog and page titles.
-- **Body** (400, 0.85rem): chat and content.
-- **Label** (500, 0.78rem): controls, rows, metadata.
-- **Heading** (700, 0.72rem, uppercase tracking): group headers like NEEDS YOU.
+- **Title** (600, 1.14rem): dialog and page titles.
+- **Body** (400, 0.93rem): chat and content.
+- **Label** (500, 0.86rem): controls, rows, metadata.
+- **Heading** (600, 0.79rem, uppercase tracking): group headers like NEEDS YOU.
 
-Four sizes only, in rem so the UI-size setting scales everything.
+Four sizes only, in rem so the UI-size setting scales everything. Nothing is set below 0.79rem (11px at the default size).
 
 ## Layout
 
@@ -148,14 +149,21 @@ Sunk fill (`--field-bg`), hairline edge. Focus lifts the fill and adds a faint a
 `--float-bg`, lg radius, pop or dialog shadow, shared float-in/out motion (0.16s in, 0.12s out).
 
 ### Sidebar tiers
-Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab.
+Needs you, Working, Ready: state is shape and lamp, not sentences. A chat that needs the user shows a lit dot (the **lamp**: 7px, warning color, a 3px halo at 20%) and a heavier title, with a count on the section label. No outline and no card. The same lamp marks that chat's tab. Amber marks what wants a look: a chat waiting, a dirty count, a favorite.
 
 ### Composer and ask
-One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards.
+One floating surface. When an agent asks a question, the ask card sits on top of the composer and the composer's top edge is the only line between them (14px outer corners, square where they meet). Never two stacked cards. The no-sandbox notice is a red tab tucked behind the composer's top edge, for as long as the chat is unsandboxed. In an approval, Allow once is the solid accent and Reject has a fill with a red label.
+
+### Diagnostics
+Each section is a card, one fill step above the panel, with one hairline and no boxes inside it. Figures sit in plain columns. Live readings span the full card width with their own colors, and table meters reuse those colors. Long lines scroll sideways rather than crushing the name column.
+
+### Status bar
+Server health, peers, branch, terminals, waiting and running counts, usage, spend and the bell, each with its own signal color.
 
 ## Do's and Don'ts
 
 ### Do:
+- **Do** check a new piece on `/__preview/components`, the sheet of real components with hover, focus and pressed forced on.
 - **Do** derive any new color from `--accent`, `--text`, `--panel-bg` or the wash tokens.
 - **Do** pick a radius by nesting depth: lg, sm, xs. Use `--radius-float` only for the composer and ask card.
 - **Do** keep a screen to one focal element and push secondary numbers behind a drill or tab.

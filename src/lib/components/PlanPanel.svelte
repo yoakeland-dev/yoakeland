@@ -131,7 +131,7 @@
   .revise {
     margin: 0;
     padding: 0 0.71rem 0.71rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .plan-actions button {
