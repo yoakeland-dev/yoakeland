@@ -10,6 +10,7 @@
   import { askConfirm } from "../confirm.svelte";
   import { isDesktop } from "../platform";
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import { awaitingApproval } from "../extensions";
   import { pendingWhatsNew } from "../whatsnew";
   import type { ComponentProps } from "svelte";
@@ -181,14 +182,14 @@
     <DropdownMenu.Root bind:open={menuOpen}>
       <DropdownMenu.Trigger class="avatar-btn" aria-label="Profile and settings">
         <span class="avatar">
-          {#if isPhotoAvatar(app.settings.profileAvatar)}<img src={app.settings.profileAvatar} alt="" />{:else}{app.settings.profileAvatar || "🐣"}{/if}
+          {#if isPhotoAvatar(app.myProfile.avatar)}<img src={avatarSrc(app.myProfile.avatar)} alt="" />{:else}{app.myProfile.avatar || "🐣"}{/if}
         </span>
         <span class="presence" class:online={connected.length > 0}></span>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <MenuContent class="context-menu user-menu" side="bottom" align="end" sideOffset={6}>
           <div class="who">
-            <strong>{app.settings.profileName || "anonymous"}</strong>
+            <strong>{app.myProfile.name || "anonymous"}</strong>
             <span>{presence}</span>
           </div>
           <DropdownMenu.Item class="context-menu-item" onSelect={openSettings}><Icon name="settings" size={18} /><span>Settings</span></DropdownMenu.Item>
@@ -206,7 +207,7 @@
     </DropdownMenu.Root>
     <AboutDialog bind:open={showAbout} onWhatsNew={() => (showNew = true)} />
     <WhatsNewDialog bind:open={showNew} />
-    {#if pairCid}<PairPhoneDialog bind:open={showPair} cid={pairCid} />{/if}
+    {#if pairCid}<PairPhoneDialog bind:open={showPair} cid={pairCid} onOpenPeople={() => app.openSettingsTab("access")} />{/if}
   </header>
 
   <MobileStatus />

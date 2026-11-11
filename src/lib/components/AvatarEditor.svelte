@@ -2,6 +2,7 @@
   // Phone-only profile picture editor: drag to reposition, slide to zoom, or pick an emoji. Saves the
   // same thing the desktop upload does (a 96x96 JPEG data URL, or the emoji text), so nothing else changes.
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import Button from "./ui/Button.svelte";
   import Icon from "./Icon.svelte";
 
@@ -11,7 +12,7 @@
   // svelte-ignore state_referenced_locally
   const startsAsPhoto = isPhotoAvatar(current);
   // svelte-ignore state_referenced_locally
-  let src = $state(startsAsPhoto ? current : "");
+  let src = $state(startsAsPhoto ? avatarSrc(current) : "");
   // svelte-ignore state_referenced_locally
   let emoji = $state(startsAsPhoto ? emojis[0] : current || emojis[0]);
   let x = $state(0);

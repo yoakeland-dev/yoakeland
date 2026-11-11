@@ -1,6 +1,6 @@
 import { askConfirm } from "./confirm.svelte";
 import { chooseMode, sessionModes } from "./modes";
-import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerIcon, ServerStatus, TreeEntry, ContextBreakdown, Origin, ScheduleTrigger } from "./types";
+import type { AuditEvent, AuditQuery, ChatMode, Envelope, FileContent, McpServerConfig, McpImportData, FileDiff, GitChange, ModelRole, NotifyPrefs, RuntimeSettings, ServerIcon, ServerStatus, TreeEntry, ContextBreakdown, Origin, ScheduleTrigger, Tier, Caps } from "./types";
 import {
   app,
   CHAT_PROJECT,
@@ -12,6 +12,7 @@ import {
   type KnownServer,
 } from "./state.svelte";
 import { outgoingAvatarDataUrl } from "./avatar";
+import { setAvatarFetcher } from "./avatarCache.svelte";
 import { briefOf, continuationDraft } from "./chatBrief";
 import { closeAck, connectedHost, isDesktop, invoke, listen, openUrl, pickFiles, quitApp } from "./platform";
 import { bytesToBase64, base64ToBytes } from "./base64";
@@ -289,8 +290,18 @@ export function wireEvents() {
       listSessionsForProjects(connectionId, server.recentProjects);
     }
 
-    // Owner-only events: a paired-device (restricted) connection would just get an error.
-    if (env.type === "server_identity" && !server.tierRestricted) void listScheduled(connectionId);
+    // Owner-only events: a paired-device (restricted) connection would just get an error. A Trusted
+    // person may run schedules too; they only see their own.
+    if (env.type === "server_identity") {
+      if (server.canAdmin) void listScheduled(connectionId);
+      if (server.user && server.canAdmin) listPeople(connectionId);
+      // This device's local profile only fills a person who has none: a reconnect never overwrites.
+      const u = server.user;
+      if (u && !u.name && !u.avatar && app.settings.profileName && !seededProfile.has(`${connectionId}:${u.id}`)) {
+        seededProfile.add(`${connectionId}:${u.id}`);
+        setProfile(connectionId, { name: app.settings.profileName, avatar: app.settings.profileAvatar || undefined });
+      }
+    }
 
     // provider_registered only carries {name}, not the full roster, so refetch it.
     if (env.type === "provider_registered") {
@@ -448,7 +459,7 @@ function afterConnect(connectionId: ConnectionId) {
   // The sidebar groups sessions across every saved project, not just the currently open one.
   void listSessionsForProjects(connectionId, [CHAT_PROJECT, ...server.recentProjects]);
   if (server.currentProjectPath) listFiles(connectionId, server.currentProjectPath);
-  if (!server.limited) listTokens(connectionId);
+  if (server.canAdmin) listTokens(connectionId);
   // Only the desktop app has a browser panel the agent can drive (§3.2 browser_host).
   if (isDesktop) void send(connectionId, { type: "browser_host", data: { enabled: true } });
   // Reconcile the chats on screen, and any a turn was running in when the connection dropped (its
@@ -459,6 +470,8 @@ function afterConnect(connectionId: ConnectionId) {
   server.turnsLostOnDrop = [];
   if (server.currentSessionId) listTerminals(connectionId, server.currentSessionId);
 }
+
+const seededProfile = new Set<string>();
 
 /** Self-reported identity sent on the opt-in `auth` frame (§2a), sourced from Settings > Profile.
  * One identity shared across every server, not per-connection, so this takes no connectionId. */
@@ -1048,7 +1061,8 @@ export function setSessionArchived(connectionId: ConnectionId, sessionId: string
   void send(connectionId, { type: "set_session_archived", data: { sessionId, archived, projectPath: project } });
 }
 
-/** Pairs (or, with `null`, unpairs) `sessionId`'s split/sidebar layout (§3.1), server-persisted * so it survives a reload or shows on another device. Optimistic, like setSessionArchived. */
+/** Pairs (or, with `null`, unpairs) `sessionId`'s split/sidebar layout (§3.1), server-persisted
+ * so it survives a reload or shows on another device. Optimistic, like setSessionArchived. */
 export function setSessionLayout(connectionId: ConnectionId, sessionId: string, linkedSessionId: string | null) {
   const server = app.servers[connectionId];
   const project = server?.projectBySession[sessionId];
@@ -1606,12 +1620,56 @@ export function setPeerAvatar(connectionId: ConnectionId, avatar: string) {
   void send(connectionId, { type: "set_peer_avatar", data: { avatar: outgoingAvatarDataUrl(avatar) } });
 }
 
-/** Force-closes another live connection. Any peer may disconnect any other (§2a). */
+/** Edits your own person: the name and picture every chat shows for you. A device's label is separate. */
+export function setProfile(connectionId: ConnectionId, profile: { name?: string; avatar?: string }) {
+  void send(connectionId, { type: "set_profile", data: profile });
+}
+
+// A person's picture is an "upload:<sha>" reference; the server hands the image over on request.
+setAvatarFetcher((avatar) => {
+  const id = app.active?.connectionId;
+  if (!id) return false;
+  void send(id, { type: "get_avatar", data: { avatar } });
+  return true;
+});
+
+// ---- People & devices (§3.1/§3.2 people), Trusted and Full ----
+
+export function listPeople(connectionId: ConnectionId) {
+  void send(connectionId, { type: "list_people", data: {} });
+}
+
+/** `caps` replaces the person's whole overlay: send only what differs from the tier's default. */
+export function setUserPermissions(connectionId: ConnectionId, userId: string, change: { tier?: Tier; caps?: Partial<Caps> }) {
+  void send(connectionId, { type: "set_user_permissions", data: { userId, ...change } });
+}
+
+export function setDeviceRestrictions(connectionId: ConnectionId, credential: string, change: { maxTier?: Tier | ""; deny?: string[] }) {
+  void send(connectionId, { type: "set_device_restrictions", data: { credential, ...change } });
+}
+
+export function setLimitedDefaults(connectionId: ConnectionId, caps: Partial<Caps>) {
+  void send(connectionId, { type: "set_limited_defaults", data: { caps } });
+}
+
+export function mergeUsers(connectionId: ConnectionId, from: string, into: string) {
+  void send(connectionId, { type: "merge_users", data: { from, into } });
+}
+
+export function moveDevice(connectionId: ConnectionId, credential: string, userId: string) {
+  void send(connectionId, { type: "move_device", data: { credential, userId } });
+}
+
+export function removeUser(connectionId: ConnectionId, userId: string) {
+  void send(connectionId, { type: "remove_user", data: { userId } });
+}
+
+/** Force-closes another live connection (§2a). Full access, or the computer running the server. */
 export function disconnectPeer(connectionId: ConnectionId, peerId: string) {
   void send(connectionId, { type: "disconnect_peer", data: { peerId } });
 }
 
-/** Promotes (full) or demotes a device; applies to its whole credential. Needs full access here. */
+/** Old clients' switch: full makes the credential's person Full, otherwise caps the device at Limited. Needs full access. */
 export function setPeerScope(connectionId: ConnectionId, peerId: string, full: boolean) {
   void send(connectionId, { type: "set_peer_scope", data: { peerId, full } });
 }
@@ -1664,8 +1722,16 @@ export function setServerIcon(connectionId: ConnectionId, icon: ServerIcon) {
 // ---- Per-person tokens (§3.1), local-socket-only, like remote-access ----
 
 /** Mints a new named TCP auth credential. The `token_registered` response carries the raw token once (§3.2). */
-export function registerToken(connectionId: ConnectionId, name: string, email?: string, pairing = false) {
-  void send(connectionId, { type: "register_token", data: { name, email: email || undefined, pairing: pairing || undefined } });
+export function registerToken(
+  connectionId: ConnectionId,
+  name: string,
+  email?: string,
+  pairing = false,
+  /** Whose device this is: "me", "new" (named `newUserName`), or an existing person's id (the local client only).
+   * Omitted, an old server treats a pairing code as a new person. */
+  who?: { user: string; newUserName?: string; tier?: Tier; maxTier?: Tier },
+) {
+  void send(connectionId, { type: "register_token", data: { name, email: email || undefined, pairing: pairing || undefined, ...who } });
 }
 
 /** Lets a device that scanned a pairing QR code in (or turns it away). Local socket only. */

@@ -8,6 +8,7 @@
   import { browseAndAddProject, openChatSession, startChatWith, listSessionsForProjects, newChat as newChatIn, switchServer, disconnect, reconnectServer } from "../ipc";
   import ContextMenu, { type ContextMenuItem } from "./ContextMenu.svelte";
   import { isPhotoAvatar } from "../avatar";
+  import { avatarSrc } from "../avatarCache.svelte";
   import type { SessionSummary } from "../types";
   import Icon from "./Icon.svelte";
   import ProjectGroup from "./ProjectGroup.svelte";
@@ -369,13 +370,6 @@
     return s.messageCount > 0 || (srv.messagesBySession[s.sessionId] ?? []).length > 0;
   }
 
-  // Archived is the only "out of the list" state: the flag you set, or age past autoArchiveDays
-  // (0 = never age out). There is no separate "closed".
-  const isArchived = (s: SessionSummary) => {
-    if (s.archived) return true;
-    const days = app.settings.autoArchiveDays;
-    return !!days && app.now - new Date(s.updatedAt).getTime() > days * 86400000;
-  };
   const byRecent = (a: SessionSummary, b: SessionSummary) =>
     new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
 
@@ -470,7 +464,7 @@
         return (
           !pinnedKeys.has(k) &&
           !liftedKeys.has(k) &&
-          !isArchived(s) &&
+          !srv.isArchived(s) &&
           !srv.hiddenSplitSessionIds.has(s.sessionId) &&
           hasMessages(s, srv)
         );
@@ -480,9 +474,9 @@
 
   // The chats tab is one flat list across servers: no projects to group by.
   const chatRows = $derived<Row[]>(
-    allRows.filter((r) => !pinnedKeys.has(key(r)) && !isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)),
+    allRows.filter((r) => !pinnedKeys.has(key(r)) && !r.srv.isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)),
   );
-  const archivedChatRows = $derived<Row[]>(allRows.filter((r) => isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)));
+  const archivedChatRows = $derived<Row[]>(allRows.filter((r) => r.srv.isArchived(r.s)).sort((a, b) => byRecent(a.s, b.s)));
 
   const serverSections = $derived(
     serverEntries
@@ -516,7 +510,7 @@
           cid: gcid,
           project,
           sessions: (srv.sessionsByProject[project] ?? [])
-            .filter((s) => isArchived(s) && !srv.hiddenSplitSessionIds.has(s.sessionId) && hasMessages(s, srv))
+            .filter((s) => srv.isArchived(s) && !srv.hiddenSplitSessionIds.has(s.sessionId) && hasMessages(s, srv))
             .sort(byRecent),
         }))
         .filter((g) => g.sessions.length > 0),
@@ -564,7 +558,7 @@
     } catch {}
   }
 
-  const unread = $derived(allRows.filter((r) => !isArchived(r.s) && r.srv.isUnread(r.s)).sort((a, b) => byRecent(a.s, b.s)));
+  const unread = $derived(allRows.filter((r) => !r.srv.isArchived(r.s) && r.srv.isUnread(r.s)).sort((a, b) => byRecent(a.s, b.s)));
 
   // Spans every server/project, titles and cached message text, narrowed by the active chip.
   const results = $derived.by(() => {
@@ -572,7 +566,7 @@
     if (!q) return [];
     const pool =
       filterOn === "waiting" ? needsYou : filterOn === "running" ? running : filterOn === "unread" ? unread
-        : filterOn === "archived" ? searchRows.filter((r) => isArchived(r.s))
+        : filterOn === "archived" ? searchRows.filter((r) => r.srv.isArchived(r.s))
         : searchRows;
     const out: (Row & { snippet?: string })[] = [];
     for (const r of pool) {
@@ -672,7 +666,7 @@
   {#if paired}
     <SplitEntry primary={r.s} secondary={paired} connectionId={r.cid} {variant} />
   {:else}
-    <ChatRow connectionId={r.cid} session={r.s} {variant} {showServer} expanded={newLook && variant === "default"} />
+    <ChatRow connectionId={r.cid} session={r.s} {variant} {showServer} expanded={newLook && tab === "projects" && variant === "default"} />
   {/if}
 {/snippet}
 
@@ -946,7 +940,7 @@
             <ChatRow
               connectionId={r.cid}
               session={r.s}
-              variant={isArchived(r.s) ? "archived" : r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default"}
+              variant={r.srv.isArchived(r.s) ? "archived" : r.srv.activeTurnBySession[r.s.sessionId] ? "running" : "default"}
               showServer={multiServer}
               snippet={r.snippet}
               query={search.trim()}
@@ -1058,16 +1052,16 @@
         >
           <span class="avatar-wrap">
             <span class="avatar">
-              {#if isPhotoAvatar(app.settings.profileAvatar)}
-                <img src={app.settings.profileAvatar} alt="" />
+              {#if isPhotoAvatar(app.myProfile.avatar)}
+                <img src={avatarSrc(app.myProfile.avatar)} alt="" />
               {:else}
-                {app.settings.profileAvatar || "🐣"}
+                {app.myProfile.avatar || "🐣"}
               {/if}
             </span>
             <span class="presence" class:online={connectedServers.length > 0}></span>
           </span>
           <span class="profile-text">
-            <span class="profile-name">{app.settings.profileName || "anonymous"}</span>
+            <span class="profile-name">{app.myProfile.name || "anonymous"}</span>
             <span class="profile-status">{presence}</span>
           </span>
           <Icon name="selector" size={14} />
@@ -1140,7 +1134,7 @@
     </div>
     <AboutDialog bind:open={showAbout} onWhatsNew={() => (showNew = true)} />
     <WhatsNewDialog bind:open={showNew} />
-    {#if pairCid}<PairPhoneDialog bind:open={showPair} cid={pairCid} />{/if}
+    {#if pairCid}<PairPhoneDialog bind:open={showPair} cid={pairCid} onOpenPeople={() => app.openSettingsTab("access")} />{/if}
 
     {#if viewport.kind === "desktop" && (!app.sidebarCollapsed || resizing)}
       <!-- Also mounted mid-drag while collapsed, since unmounting it here

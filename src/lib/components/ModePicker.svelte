@@ -38,7 +38,7 @@
   $effect(() => {
     if (open && cid && cliProvider) refreshModels(cid, cliProvider.name);
   });
-  const rungs = $derived(LADDER.filter((m) => info.available.includes(m.id)));
+  const rungs = $derived(LADDER.filter((m) => info.available.includes(m.id) && !!server?.canUseMode(m.id, projectPath)));
   const canPlan = $derived(info.available.includes("plan"));
 
   // A model switch can leave the chat in a mode the new model doesn't have.
@@ -122,10 +122,10 @@
             </p>
           </div>
         </div>
-        <label class="line danger-line">
+        {#if server?.isFull}<label class="line danger-line">
           <span>Turn bash off <em>when there's no sandbox</em></span>
           <Switch checked={shellOff} onchange={toggleShellOff} />
-        </label>
+        </label>{/if}
       {/if}
 
       <Slider

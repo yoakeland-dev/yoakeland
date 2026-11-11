@@ -20,6 +20,7 @@
     setProvider,
     setPeerAvatar,
     setPeerName,
+    setProfile,
     signInOpenRouter,
   } from "../ipc";
   import { basename } from "../format";
@@ -98,6 +99,11 @@
     // Servers connected before this step only know the identity the app started with.
     for (const [id, s] of Object.entries(app.servers)) {
       if (s.connectionStatus !== "connected") continue;
+      // A server with people keeps the name and picture itself; this is the person choosing them.
+      if (app.servers[id]?.user) {
+        setProfile(id, { name: app.settings.profileName, avatar: app.settings.profileAvatar || undefined });
+        continue;
+      }
       setPeerName(id, app.settings.profileName || "anonymous");
       setPeerAvatar(id, app.settings.profileAvatar);
     }

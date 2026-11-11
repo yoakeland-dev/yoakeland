@@ -81,21 +81,21 @@
   // Manual refresh: processes and problems are sampled now, and the buttons spin until the answer's newer.
   function refresh() {
     if (!cid) return;
-    listProcesses(cid);
-    listProblems(cid);
+    if (app.servers[cid]?.caps?.processes !== false) listProcesses(cid);
+    if (app.servers[cid]?.canAdmin) listProblems(cid);
   }
   const checked = (ms: number | undefined) => (ms ? relTime(ms, app.now) : "–");
   const KIND_ICON = { Server: "server", Agent: "robot", MCP: "plug-connected", Terminal: "terminal-2", Subprocess: "bolt" } as const;
   const KIND_TONE = { Server: "accent", Agent: "accent", MCP: "success", Terminal: "neutral", Subprocess: "neutral" } as const;
 
-  // Processes every poll; problems every fifth (10 s). Both are local-socket only (see `waited`).
+  // Processes every poll; problems every fifth (10 s). Each needs the right access (see `waited`).
   let tick = 0;
   onMount(() => {
     const poll = () => {
       if (document.hidden) return;
       live.forEach(([id]) => {
-        listProcesses(id);
-        if (tick % 5 === 0) listProblems(id);
+        if (app.servers[id]?.caps?.processes !== false) listProcesses(id);
+        if (tick % 5 === 0 && app.servers[id]?.canAdmin) listProblems(id);
       });
       tick++;
     };
@@ -311,7 +311,7 @@
         {/snippet}
         {@render head("activity", "Live processes", list && all.length ? all.length : undefined, list && all.length ? procSummary : undefined)}
         {#if !list}
-          {@render empty("lock", waited ? "This server doesn't share its process list: it is only offered over the local socket, since command lines can hold secrets." : "Sampling…")}
+          {@render empty("lock", waited ? "Your access to this server doesn't include its process list." : "Sampling…")}
         {:else if !all.length}
           {@render empty("info-circle", "This server can't report its processes on this platform.")}
         {:else}
@@ -350,7 +350,7 @@
                     <td class="n bar m" style="--p: {(r.rssBytes / Math.max(1, sum.rss)) * 100}%"><span><b>{fileSize(r.rssBytes)}</b></span></td>
                     <td class="n p dim">{r.pid}</td>
                     <td class="act">
-                      {#if kind !== "Server"}
+                      {#if kind !== "Server" && srv.canAdmin}
                         <button type="button" class="kill" disabled={busy} onclick={() => signal(cid, r.pid, "SIGINT")}>Interrupt</button>
                         <button type="button" class="kill danger" disabled={busy} onclick={() => signal(cid, r.pid, "SIGKILL")}>Kill</button>
                       {/if}
@@ -422,7 +422,7 @@
                       <td class="dim">{p.ip || "–"}</td>
                       <td class="n dim">{since(p.connectedAt)}</td>
                       <td class="act">
-                        {#if !you && cid}
+                        {#if !you && cid && srv.isFull}
                           <button type="button" class="kill danger" onclick={() => kick(cid, p)}>Kick</button>
                         {/if}
                       </td>
@@ -491,7 +491,7 @@
 
       {#snippet logBtn()}
         {@render refreshed(pr?.readAtMs)}
-        <Button variant="ghost" size="sm" {@attach tip("Download the server log (local server only)")} onclick={() => readLog(cid)}><Icon name="file-text" size={13} /> Download log</Button>
+        <Button variant="ghost" size="sm" disabled={!srv.canAdmin} {@attach tip(srv.canAdmin ? "Download the server log" : "Needs Trusted access")} onclick={() => readLog(cid)}><Icon name="file-text" size={13} /> Download log</Button>
       {/snippet}
       <section class="card">
         {@render head("heart-rate-monitor", "Tool call health", undefined, pr ? logBtn : undefined)}

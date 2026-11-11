@@ -175,6 +175,8 @@ export interface HistoryMessage {
   content: string;
   author?: string;
   authorAvatar?: string;
+  /** The person who sent it; the name and picture to show come from `session_history.profiles`. */
+  authorId?: string;
   origin?: Origin;
   attachments?: string[];
   reasoning?: string;
@@ -234,6 +236,8 @@ export interface SessionHistoryData {
   context?: ContextData;
   spend?: SpendData;
   messages?: HistoryMessage[];
+  /** Each author in `messages` once, by `authorId`, as they are now. */
+  profiles?: Record<string, Profile>;
 }
 
 /** How a server's avatar is drawn: no name = initials, no hue = derived from serverId.
@@ -248,8 +252,75 @@ export interface ServerIdentityData {
   icon?: ServerIcon;
   serverId?: string;
   version?: string;
-  /** This connection is held to the paired-device scope (a phone's code). Absent: full access. */
+  /** Below the Full tier. Kept for old servers; `tier` says which. Absent: full access. */
   restricted?: boolean;
+  /** This connection's tier and effective caps. Absent from a server that predates tiers. */
+  tier?: Tier;
+  caps?: Caps;
+  /** The person this connection acts as. Absent from a server that predates people. */
+  user?: Profile;
+}
+
+/** `limited` < `trusted` < `full`. */
+export type Tier = "limited" | "trusted" | "full";
+
+/** A name and picture (an emoji or a data URL). `id` is set where it isn't keyed by one. */
+export interface Profile {
+  id?: string;
+  name: string;
+  avatar?: string;
+}
+
+/** What a person may do below Full, by cap name (PLAN_PERMISSIONS "Caps"). */
+export interface Caps {
+  files_edit?: boolean;
+  commands_sandboxed?: boolean;
+  commands_unsandboxed?: boolean;
+  autonomous?: boolean;
+  /** Registered provider names of CLI agents. */
+  cli?: string[];
+  mcp_tools?: boolean;
+  browser?: "off" | "watch" | "use";
+  terminals_watch?: boolean;
+  processes?: boolean;
+  others_chats?: boolean;
+}
+
+/** `people` (§3.2): everyone this reader may manage. Never carries a token value. */
+export interface PeopleData {
+  users: Person[];
+  limitedDefaults: Partial<Caps>;
+  tierDefaults: Record<Tier, Caps>;
+  cliProviders: string[];
+}
+
+export interface Person {
+  id: string;
+  name: string;
+  avatar?: string;
+  names?: string[];
+  tier: Tier;
+  /** Only what differs from the tier's default. */
+  caps?: Partial<Caps>;
+  effectiveCaps: Caps;
+  createdBy?: string;
+  devices: PersonDevice[];
+}
+
+export interface PersonDevice {
+  /** The credential's name; it is the device's key. */
+  credential: string;
+  deviceType?: DeviceType;
+  deviceName?: string;
+  /** The device's ceiling. Empty: none. */
+  maxTier?: Tier | "";
+  /** Caps this device is denied. */
+  deny: string[];
+  /** Unix seconds. */
+  lastSeen?: number;
+  /** Person id. */
+  pairedBy?: string;
+  online: boolean;
 }
 
 export interface PeerListData {
@@ -583,8 +654,12 @@ export interface PeerInfo {
   /** The chat this connection last opened. */
   sessionId?: string;
   projectPath?: string;
-  /** Held to the paired-device allowlist; false means full access. */
+  /** Below the Full tier; false means full access. */
   restricted?: boolean;
+  tier?: Tier;
+  /** The person behind the credential (`owner` on the local socket); `name` stays the device's. */
+  userId?: string;
+  userName?: string;
 }
 
 /** A registered per-person TCP credential (§3.1 register_token/list_tokens):
@@ -593,8 +668,10 @@ export interface TokenInfo {
   name: string;
   email?: string;
   hasAvatar: boolean;
-  /** Devices on this credential are limited to the paired-device scope. */
+  /** Devices on this credential are below the Full tier. */
   restricted?: boolean;
+  userId?: string;
+  tier?: Tier;
 }
 
 // ---- Built-in terminal (SPEC.md §3.1/§3.2 terminal_*) ----
@@ -736,6 +813,8 @@ export interface ChatMessage {
   author?: string;
   /** That sender's picture (§3.2 `authorAvatar`): an emoji glyph or a data URL. */
   authorAvatar?: string;
+  /** The sender's person id (§3.2 `authorId`); the live name and picture are in `profiles`. */
+  authorId?: string;
   /** Set when a person didn't type it: an artifact or a scheduled turn. */
   origin?: Origin;
   /** Server-side paths a `user` message attached (§3.1 user_prompt). */
