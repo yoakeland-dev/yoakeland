@@ -2,7 +2,7 @@
   "name": "yoake-gui",
   "productName": "Yoakeland",
   "desktopName": "Yoakeland.desktop",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Agents that run on your machine",
   "type": "module",
   "scripts": {
