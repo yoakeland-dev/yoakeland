@@ -2,6 +2,7 @@
   import { askLine } from "../chatBrief";
   import { callActivity } from "../activity.svelte";
   import { IN_FLIGHT } from "../subagents";
+  import { titleFor, vendorMetaFor } from "../modelVendor";
   import type { ServerState } from "../state.svelte";
 
   /** One line on what a chat is doing: the ask it's blocked on, the call in flight, or how its last reply started. */
@@ -15,6 +16,18 @@
     if (!server?.activeTurnBySession[sessionId]) return last?.text.replace(/[#*`>_\[\]]/g, "").trim().split("\n")[0] || "Done";
     return going ? callActivity(going) : last?.toolCalls.length ? "Writing…" : "Thinking…";
   }
+
+  /** The model a chat last answered with (or is set to), with its vendor mark, for the card and the sidebar row. */
+  export function chatModel(server: ServerState | undefined, sessionId: string): { title: string; icon: string | undefined } | undefined {
+    const m = (server?.messagesBySession[sessionId] ?? []).findLast((x) => x.role === "assistant" && x.model);
+    const providerName = m?.provider ?? server?.providerBySession[sessionId];
+    const modelId = m?.model ?? server?.modelBySession[sessionId];
+    if (!modelId) return undefined;
+    const provider = server?.providers.find((p) => p.name === providerName);
+    if (!provider) return { title: modelId, icon: undefined };
+    const entry = { provider, model: server?.modelsByProvider[provider.name]?.find((x) => x.id === modelId) ?? { id: modelId } };
+    return { title: titleFor(entry), icon: vendorMetaFor(entry).icon };
+  }
 </script>
 
 <script lang="ts">
@@ -22,7 +35,6 @@
   // rows of detail stay in one place. Every derived value is lazy, so it only computes while shown.
   import { app, CHAT_PROJECT, type ConnectionId } from "../state.svelte";
   import { fileSize, relTime, sessionTitle, shortNum, usd } from "../format";
-  import { titleFor, vendorMetaFor } from "../modelVendor";
   import { ringState } from "../contextBreakdown";
   import { STATUS_ICON } from "../liveChats";
   import type { SessionSummary } from "../types";
@@ -41,16 +53,7 @@
     server?.projectBySession[s.sessionId] ??
       Object.entries(server?.sessionsByProject ?? {}).find(([, list]) => list.some((x) => x.sessionId === s.sessionId))?.[0],
   );
-  const model = $derived.by(() => {
-    const m = messages.findLast((x) => x.role === "assistant" && x.model);
-    const providerName = m?.provider ?? server?.providerBySession[s.sessionId];
-    const modelId = m?.model ?? server?.modelBySession[s.sessionId];
-    if (!modelId) return undefined;
-    const provider = server?.providers.find((p) => p.name === providerName);
-    if (!provider) return { title: modelId, icon: undefined };
-    const entry = { provider, model: server?.modelsByProvider[provider.name]?.find((x) => x.id === modelId) ?? { id: modelId } };
-    return { title: titleFor(entry), icon: vendorMetaFor(entry).icon };
-  });
+  const model = $derived(chatModel(server, s.sessionId));
   const ring = $derived(ringState(server?.contextBySession[s.sessionId]));
   const git = $derived(projectPath ? server?.gitStatusByProject[projectPath] : undefined);
   const unsandboxed = $derived(!!server?.isUnsandboxed(projectPath));
