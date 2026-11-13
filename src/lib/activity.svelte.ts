@@ -11,8 +11,9 @@ const IN_FLIGHT = new Set(["requested", "awaiting_permission", "awaiting_answer"
 // crossfade) or it would never visibly replace "thinking".
 const HOLD_MS = 1600;
 
-function current(m: ChatMessage | undefined): Activity {
+function current(m: ChatMessage | undefined, waiting?: string): Activity {
   if (!m?.streaming) return { mode: "thinking", label: "" };
+  if (waiting) return { mode: "thinking", label: waiting };
   const call = m.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));
   if (call?.status === "awaiting_permission") return { mode: dotModeFor(call), label: "Waiting for your approval" };
   if (call?.status === "awaiting_answer") return { mode: "thinking", label: "Waiting for your answer" };
@@ -36,8 +37,8 @@ export function formatElapsed(ms: number): string {
 
 /** What a streaming reply is doing right now, for the dot-matrix spinner and its label, plus
  * a once-a-second elapsed time. Call during component init. */
-export function liveActivity(get: () => ChatMessage | undefined) {
-  const raw = $derived(current(get()));
+export function liveActivity(get: () => ChatMessage | undefined, waiting?: () => string | undefined) {
+  const raw = $derived(current(get(), waiting?.()));
   let shown = $state(untrack(() => raw));
   let since = Date.now();
   $effect(() => {

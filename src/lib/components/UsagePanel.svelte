@@ -10,6 +10,7 @@
   import { CLI_AGENTS, MULTI_ACCOUNT, providerLabel as accountLabel, titleFor } from "../modelVendor";
   import type { CliKind } from "../types";
   import { tip } from "../tooltip.svelte";
+  import { describeProvider } from "../forwarding";
   import { level, limitCards, resetText, resetTitle, type Card } from "../rateLimits";
   import {
     BRANDS,
@@ -137,13 +138,14 @@
 
   // --- Labels ---
   function providerInfo(r: UsageRec) {
-    return serverByKey(r.server)?.providers.find((p) => p.name === r.provider);
+    return describeProvider(app, serverByKey(r.server), r.provider).info;
   }
   function brandOfProvider(r: UsageRec): Brand | null {
     return providerBrand({ name: r.provider, kind: r.kind, httpProvider: providerInfo(r)?.httpProvider });
   }
   function providerLabel(r: UsageRec): string {
-    let base = CLI_AGENTS[r.kind as CliKind]?.title ?? r.provider;
+    const d = describeProvider(app, serverByKey(r.server), r.provider);
+    let base = CLI_AGENTS[r.kind as CliKind]?.title ?? (d.serverName ? `${d.label} · ${d.serverName}` : r.provider);
     // Several accounts of one agent: say which.
     const sibs = serverByKey(r.server)?.providers.filter((p) => p.kind === r.kind) ?? [];
     const acct = sibs.length > 1 ? sibs.find((p) => p.name === r.provider) : undefined;
@@ -162,6 +164,9 @@
         const model = srv.modelsByProvider[provider.name]?.find((m) => m.id === r.model);
         if (model) return titleFor({ provider, model });
       }
+      const lent = describeProvider(app, srv, r.provider);
+      const model = lent.models.find((m) => m.id === r.model);
+      if (lent.info && model) return titleFor({ provider: lent.info, model });
     }
     return r.model;
   }

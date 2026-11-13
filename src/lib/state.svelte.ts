@@ -2,6 +2,7 @@ import { applyQuietTokens } from "./quietRoom";
 import { fmtVersion, isOlder, serverAhead } from "./serverVersion";
 import type {
   AskUserQuestionData,
+  ForwardGrant,
   ChatMessage,
   ChatMode,
   TodoList,
@@ -595,6 +596,12 @@ export class ServerState {
 
   /** Null until server_identity's first reply lands on this connection. */
   serverId = $state<string | null>(null);
+  /** What this device verified about the connection (serverKey.ts), set once serverId is known. Model
+   * forwarding stamps it on what this server asks of another, and grants are made for it. */
+  relayKey = $state<string | null>(null);
+  /** The server said a second, different serverId on this connection. A server's id never changes, so this
+   * one isn't trusted to relay or lend (forwarding.ts canRelay) and keeps the id it first gave. */
+  idConflict = $state(false);
   /** What the server says it is (server_identity); null from one that predates reporting it. */
   version = $state<string | null>(null);
   /** The latest version this connection already toasted about, so a newer release toasts again. */
@@ -737,6 +744,19 @@ export class ServerState {
     return me ? !!me.restricted : this.tierRestricted;
   }
   serverIdentity = $state<string | null>(null);
+  /** The server's feature list (identity or status event), e.g. "forwarding". */
+  features = $state<string[]>([]);
+  /** Servers this person lets use this server's providers (forward_grants; the whole list each time). */
+  forwardGrants = $state<ForwardGrant[]>([]);
+  /** False from each connect until the first `forward_grants`: before that an empty list means unknown, not none. */
+  forwardGrantsLoaded = $state(false);
+  /** Chats whose turn waits for a device that reaches another server (forward_state), by chat. */
+  private forwardWait = $state<Record<string, { turnId?: string; serverId: string } | undefined>>({});
+  /** The server a chat's running turn is waiting on a device for, if it is. */
+  forwardingTo(sessionId: string): string | undefined {
+    const w = this.forwardWait[sessionId];
+    return w && w.turnId === this.activeTurnBySession[sessionId] ? w.serverId : undefined;
+  }
   /** Chosen by an operator and shared by every client; null until one is picked. */
   serverIcon = $state<ServerIcon | null>(null);
   /** What the UI calls this server everywhere (lists, badges, avatars). */
@@ -2532,6 +2552,17 @@ export class ServerState {
         this.modelOptionsBySession = { ...this.modelOptionsBySession, [data.sessionId]: merged };
         break;
       }
+      case "forward_grants": {
+        this.forwardGrants = (env.data as { grants?: ForwardGrant[] } | undefined)?.grants ?? [];
+        this.forwardGrantsLoaded = true;
+        break;
+      }
+      case "forward_state": {
+        const data = env.data as { serverId: string; state: "waiting" | "relaying" };
+        if (!env.sessionId) break;
+        this.forwardWait[env.sessionId] = data.state === "waiting" ? { turnId: env.turnId ?? this.activeTurnBySession[env.sessionId], serverId: data.serverId } : undefined;
+        break;
+      }
       case "model_list": {
         const data = env.data as { providerName: string; models: ModelInfo[]; fallback?: boolean };
         this.modelsByProvider = { ...this.modelsByProvider, [data.providerName]: data.models };
@@ -2813,6 +2844,7 @@ export class ServerState {
           this.app.toastAction(this.connectionId, `Server renamed to ${data.identity}`);
         }
         this.serverIdentity = data.identity;
+        if (data.features) this.features = data.features;
         this.serverIcon = data.icon ?? null;
         this.tierRestricted = !!data.restricted;
         this.tier = data.tier ?? null;
@@ -2826,7 +2858,10 @@ export class ServerState {
           this.aheadToasted = true;
           this.app.toastAction(this.connectionId, "Server is newer than this app");
         }
-        if (data.serverId && this.serverId !== data.serverId) {
+        if (data.serverId && this.serverId && this.serverId !== data.serverId) {
+          if (!this.idConflict) this.app.toastAction(this.connectionId, "This server changed its id. It won't lend or borrow models until you reconnect it.");
+          this.idConflict = true;
+        } else if (data.serverId && !this.serverId) {
           this.serverId = data.serverId;
           this.hydrateFromServerId(data.serverId);
         }

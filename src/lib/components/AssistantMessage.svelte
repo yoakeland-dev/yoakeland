@@ -7,6 +7,7 @@
   import { vendorMetaFor, titleFor, isCli, providerLabel, type Entry } from "../modelVendor";
   import { relTime, shortNum } from "../format";
   import { liveActivity } from "../activity.svelte";
+  import { describeProvider, forwardWaitLabel } from "../forwarding";
   import { fade } from "svelte/transition";
   import ToolCallGroup from "./ToolCallGroup.svelte";
   import WorkGroup from "./WorkGroup.svelte";
@@ -185,9 +186,9 @@
   // footer just omits the model chip.
   const modelEntry = $derived.by((): Entry | null => {
     if (!message.provider || !message.model) return null;
-    const provider = app.active?.providers.find((p) => p.name === message.provider);
+    const { info: provider, models } = describeProvider(app, app.active, message.provider);
     if (!provider) return null;
-    const model = app.active?.modelsByProvider[message.provider]?.find(
+    const model = models.find(
       (m) => m.id === message.model,
     ) ?? {
       id: message.model,
@@ -197,7 +198,9 @@
   const modelMeta = $derived(modelEntry ? vendorMetaFor(modelEntry) : null);
   const modelTitle = $derived(modelEntry ? titleFor(modelEntry) : "");
   // Which login paid for the turn; only worth saying when the agent has several.
+  const lentBy = $derived(describeProvider(app, app.active, message.provider).serverName);
   const accountChip = $derived(
+    lentBy ? `via ${lentBy}` :
     modelEntry && isCli(modelEntry.provider) &&
       (app.active?.providers.filter((p) => p.kind === modelEntry.provider.kind && p.command === modelEntry.provider.command).length ?? 0) > 1
       ? providerLabel(modelEntry.provider)
@@ -209,7 +212,7 @@
   const usage = $derived(message.usage ?? message.finish?.usage ?? null);
 
   // What the spinner in the model chip shows, and the elapsed time beside it.
-  const activity = liveActivity(() => message);
+  const activity = liveActivity(() => message, () => forwardWaitLabel(app, app.active, sessionId));
 
   const noRun = $derived(
     message.finish?.finishReason === "cancelled" ||

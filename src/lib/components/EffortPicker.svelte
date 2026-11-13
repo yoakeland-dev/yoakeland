@@ -1,6 +1,7 @@
 <script module lang="ts">
   import type { ModelInfo, ProviderInfo } from "../types";
-  import type { ServerState } from "../state.svelte";
+  import { app as appState, type ServerState } from "../state.svelte";
+  import { describeProvider } from "../forwarding";
 
   /** The effort levels a model takes (SPEC.md §3.1 set_model_options), or null
    * when it has no effort control. What the model list advertises wins; the
@@ -29,9 +30,9 @@
   /** What a chat's picker resolves to: its provider and model, the model's effort levels
    * (null when it has none) and the level the chat has set, if any. */
   export function sessionEffort(server: ServerState | null | undefined, sessionId: string) {
-    const provider = server?.providers.find((p) => p.name === server?.providerBySession[sessionId]);
+    const { info: provider, models } = describeProvider(appState, server, server?.providerBySession[sessionId]);
     const modelId = server?.modelBySession[sessionId];
-    const model = provider ? server?.modelsByProvider[provider.name]?.find((m) => m.id === modelId) : undefined;
+    const model = provider ? models.find((m) => m.id === modelId) : undefined;
     return {
       model,
       levels: effortLevels(provider, model, modelId),

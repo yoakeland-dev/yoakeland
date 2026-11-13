@@ -3,7 +3,8 @@
   import { callActivity } from "../activity.svelte";
   import { IN_FLIGHT } from "../subagents";
   import { titleFor, vendorMetaFor } from "../modelVendor";
-  import type { ServerState } from "../state.svelte";
+  import { app as appState, type ServerState } from "../state.svelte";
+  import { describeProvider, forwardWaitLabel } from "../forwarding";
 
   /** One line on what a chat is doing: the ask it's blocked on, the call in flight, or how its last reply started. */
   export function chatActivity(server: ServerState | undefined, sessionId: string): string {
@@ -14,7 +15,7 @@
     const going = last?.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));
     // Finished: show how it ended, to answer from the sidebar.
     if (!server?.activeTurnBySession[sessionId]) return last?.text.replace(/[#*`>_\[\]]/g, "").trim().split("\n")[0] || "Done";
-    return going ? callActivity(going) : last?.toolCalls.length ? "Writing…" : "Thinking…";
+    return going ? callActivity(going) : forwardWaitLabel(appState, server, sessionId) ?? (last?.toolCalls.length ? "Writing…" : "Thinking…");
   }
 
   /** The model a chat last answered with (or is set to), with its vendor mark, for the card and the sidebar row. */
@@ -23,9 +24,10 @@
     const providerName = m?.provider ?? server?.providerBySession[sessionId];
     const modelId = m?.model ?? server?.modelBySession[sessionId];
     if (!modelId) return undefined;
-    const provider = server?.providers.find((p) => p.name === providerName);
+    // A borrowed provider (via:<server>:<name>) is described by the server that lends it.
+    const { info: provider, models } = describeProvider(appState, server, providerName);
     if (!provider) return { title: modelId, icon: undefined };
-    const entry = { provider, model: server?.modelsByProvider[provider.name]?.find((x) => x.id === modelId) ?? { id: modelId } };
+    const entry = { provider, model: models.find((x) => x.id === modelId) ?? { id: modelId } };
     return { title: titleFor(entry), icon: vendorMetaFor(entry).icon };
   }
 </script>

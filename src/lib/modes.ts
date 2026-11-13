@@ -1,7 +1,7 @@
 import type { ChatMode, ModeSpec, ProviderInfo } from "./types";
-import type { ServerState } from "./state.svelte";
+import { app, type ServerState } from "./state.svelte";
+import { describeProvider } from "./forwarding";
 import { setMode } from "./ipc";
-import { isCli } from "./modelVendor";
 
 /** The rungs, by how much the agent may do without asking, and Plan, the phase in front of them.
  * Auto is only there for an agent whose own reviewer can do the deciding. */
@@ -58,15 +58,15 @@ export function sessionModes(
   server: ServerState | null | undefined,
   sessionId: string,
 ) {
-  const provider: ProviderInfo | undefined = server?.providers.find(
-    (p) => p.name === server?.providerBySession[sessionId],
-  );
-  const models = provider
-    ? (server?.modelsByProvider[provider.name] ?? [])
-    : [];
+  const { info: provider, models, runsOwnTools, serverName } = describeProvider(app, server, server?.providerBySession[sessionId]);
   const model =
     models.find((m) => m.id === server?.modelBySession[sessionId]) ?? models[0];
-  const list = model?.capabilities?.permissionModes;
+  // A borrowed model's own list says what the lender's agent can do, which isn't what runs here: the
+  // modes are those of this server's API models (none known: the four basic ones).
+  const borrowed = serverName !== undefined;
+  const list = borrowed
+    ? server?.providers.filter((p) => p.kind === "api_key").flatMap((p) => server.modelsByProvider[p.name] ?? []).find((m) => m.capabilities?.permissionModes)?.capabilities?.permissionModes
+    : model?.capabilities?.permissionModes;
   const specs = list
     ? (Object.fromEntries(list.map((s) => [s.mode, s])) as Partial<
         Record<ChatMode, ModeSpec>
@@ -75,7 +75,7 @@ export function sessionModes(
   const available = MODES.filter((m) =>
     specs ? !!specs[m.id] : m.id !== "accept_edits" && m.id !== "auto",
   ).map((m) => m.id);
-  return { provider, cli: !!provider && isCli(provider), specs, available };
+  return { provider, cli: runsOwnTools, specs, available };
 }
 
 /** Puts a chat in `id`. Optimistic; mode_set (state.svelte.ts) confirms it once the round trip lands. */

@@ -259,6 +259,8 @@ export interface ServerIdentityData {
   caps?: Caps;
   /** The person this connection acts as. Absent from a server that predates people. */
   user?: Profile;
+  /** What the server can do beyond the base protocol, e.g. "forwarding". */
+  features?: string[];
 }
 
 /** `limited` < `trusted` < `full`. */
@@ -406,6 +408,8 @@ export interface ProviderInfo {
   configDir?: string;
   /** Names of a custom agent's environment variables; values never leave the server. */
   envKeys?: string[];
+  /** api_key providers: a short hash of the endpoint and key, to tell the same key on two servers. */
+  keyId?: string;
 }
 
 // Mirrors whichever upstream's own shape close to verbatim (SPEC.md §3.2 model_list).
@@ -567,7 +571,19 @@ export interface NotifyPrefs {
 }
 
 /** Health snapshot riding on every server-sent ping (SPEC.md §2a). */
+/** One borrowing server a person lets use a provider on this server (forward_grants). */
+export interface ForwardGrant {
+  serverId: string;
+  serverName?: string;
+  /** This server's own name for the provider, not the `via:` one. */
+  providerName: string;
+  /** How the granting devices reached the borrowing server (serverKey.ts); a request must come by one. */
+  serverKeys?: string[];
+}
+
 export interface ServerStatus {
+  /** Same list as server_identity's; whichever event carries it is read. */
+  features?: string[];
   uptimeSec: number;
   activeTurns: number;
   peers: number;
