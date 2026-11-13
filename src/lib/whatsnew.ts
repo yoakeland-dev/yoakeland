@@ -8,6 +8,19 @@ export interface WhatsNewEntry {
 
 export const WHATS_NEW: Record<string, WhatsNewEntry> = {
   // Draft from the unreleased work, check the wording before tagging.
+  "0.2.0": {
+    title: "Share your server",
+    image: "whatsnew/0.2.0.png",
+    items: [
+      { icon: "users", title: "People, not just devices", body: "Give each person a name, a picture and their own chats." },
+      { icon: "shield-check", title: "Three levels of trust", body: "Limited, Trusted or Full, per person and per device." },
+      { icon: "device-mobile", title: "Pair in one card", body: "Pick who it's for, enter the code, approve. Done." },
+      { icon: "clock", title: "Scheduled turns", body: "Have an agent run on a schedule while you're away." },
+      { icon: "app-window", title: "Live pages in chat", body: "Agents can hand you a small interactive page, not just text." },
+      { icon: "checks", title: "A todo list you can watch", body: "The agent's plan stays in a panel as it works." },
+    ],
+  },
+  // Draft from the unreleased work, check the wording before tagging.
   "0.1.7": {
     title: "Any agent, one place",
     image: "whatsnew/0.1.7.png",
