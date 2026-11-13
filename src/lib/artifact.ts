@@ -69,7 +69,7 @@ const CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-i
  * its own) sends the user's choice to the assistant; `yoake.log(...)`, console output and uncaught errors
  * are kept for the assistant's artifact_logs tool. The app relays these as artifact_event. */
 const reporter = (id: string) =>
-  `<script>(()=>{const id=${JSON.stringify(id)},post=m=>parent.postMessage({yoakeArtifact:id,...m},"*");` +
+  `<script>(()=>{const id=${JSON.stringify(id)},post=m=>top.postMessage({yoakeArtifact:id,...m},"*");` +
   `const p=()=>post({h:document.documentElement.scrollHeight});` +
   `new ResizeObserver(p).observe(document.documentElement);addEventListener("load",p);p();` +
   `addEventListener("click",e=>{if(e.target.closest&&e.target.closest("a"))e.preventDefault()});` +
@@ -92,6 +92,9 @@ export function artifactSrcdoc(source: string, id: string): string {
 /** What the app does with an event from a page: send it on as artifact_event. */
 export type ArtifactSink = (kind: "submit" | "log" | "error", data: unknown) => void;
 
+/** The window of the artifact's page: the one frame inside the shell. */
+const pageWindow = (shell: HTMLIFrameElement): Window | undefined => shell.contentWindow?.frames[0];
+
 const frames = new Map<string, { frame: HTMLIFrameElement; sink?: ArtifactSink }>();
 let listening = false;
 
@@ -103,7 +106,7 @@ export function showArtifact(host: HTMLElement, source: string, sink?: ArtifactS
     addEventListener("message", (e) => {
       const d = e.data as { yoakeArtifact?: string; h?: number; kind?: string; data?: unknown } | null;
       const entry = d && typeof d.yoakeArtifact === "string" ? frames.get(d.yoakeArtifact) : undefined;
-      if (!entry || e.source !== entry.frame.contentWindow) return;
+      if (!entry || e.source !== pageWindow(entry.frame)) return;
       if (typeof d?.h === "number") entry.frame.style.height = Math.min(Math.max(d.h, 24), 1200) + "px";
       else if (d?.kind === "submit" || d?.kind === "log" || d?.kind === "error") entry.sink?.(d.kind, d.data);
     });
@@ -111,14 +114,16 @@ export function showArtifact(host: HTMLElement, source: string, sink?: ArtifactS
   for (const [id, f] of frames) if (!f.frame.isConnected) frames.delete(id);
   const id = crypto.randomUUID();
   const frame = document.createElement("iframe");
-  frame.setAttribute("sandbox", "allow-scripts"); // no allow-same-origin: it can't reach the app's storage or DOM
   frame.setAttribute("referrerpolicy", "no-referrer");
   frame.title = "Artifact";
-  // A real URL with a CSP of its own: srcdoc, data: and blob: frames all inherit the app's (script-src
-  // 'self'), which blocks the page's inline scripts. The page's HTML is posted in once it has loaded.
-  frame.src = "/artifact-frame.html";
+  // The page runs in a frame of its own inside this one (static/artifact-shell.html): sandboxed
+  // without allow-same-origin, so it can't reach the app's storage or DOM, at a real URL with a CSP of
+  // its own (srcdoc, data: and blob: frames inherit the app's script-src 'self', which blocks the
+  // page's inline scripts), and held by a shell whose policy keeps it from navigating to another host.
+  // The page's HTML is posted in once both have loaded.
+  frame.src = "/artifact-shell.html";
   const doc = artifactSrcdoc(source, id);
-  frame.addEventListener("load", () => frame.contentWindow?.postMessage({ yoakeDoc: doc }, "*"), { once: true });
+  frame.addEventListener("load", () => pageWindow(frame)?.postMessage({ yoakeDoc: doc }, "*"), { once: true });
   frames.set(id, { frame, sink });
   host.replaceChildren(frame);
 }

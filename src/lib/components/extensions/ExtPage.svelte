@@ -160,7 +160,7 @@
     padding: 0;
     border: none;
     background: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-size: var(--text-label-size);
     cursor: pointer;
@@ -228,7 +228,7 @@
   }
   .rail h3 {
     margin: 0 0 1rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -254,7 +254,7 @@
   }
   .rail :global(dd.mono) {
     font-family: var(--font-mono, monospace);
-    font-size: 0.76rem;
+    font-size: 0.79rem;
     white-space: pre-line;
   }
   .rail :global(dd.chips) {

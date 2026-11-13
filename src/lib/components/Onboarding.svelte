@@ -596,10 +596,10 @@
       {#if step !== "welcome"}
         <Button variant="ghost" icon aria-label="Back" disabled={copying} onclick={() => go(STEPS[at - 1])}><Icon name="chevron-left" size={15} /></Button>
       {/if}
-      <span class="spacer"></span>
       {#if step !== "done"}
         <Button variant="ghost" disabled={copying} onclick={finish}>Skip setup</Button>
       {/if}
+      <span class="spacer"></span>
       {#if step === "welcome"}
         <Button variant="primary" onclick={() => (saveProfile(), go(STEPS[1]))}>Get started <Icon name="chevron-right" size={14} /></Button>
       {:else if step === "done"}
@@ -697,9 +697,8 @@
     outline: none;
   }
   h1.big {
-    font-family: var(--logo-font-family);
-    font-weight: 400;
     font-size: 1.6rem;
+    letter-spacing: -0.01em;
   }
   .sub {
     margin: 0 auto var(--space-2);
@@ -724,7 +723,7 @@
   .avatar-block {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-1);
     margin-top: var(--space-1);
   }
@@ -735,7 +734,6 @@
   .avatars {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
     gap: var(--space-1);
   }
   .avatar.upload {
@@ -774,7 +772,7 @@
     background: var(--accent-dim);
   }
   .avatar:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 

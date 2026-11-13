@@ -14,6 +14,7 @@
 
   const IN_FLIGHT = new Set(["requested", "awaiting_permission", "running"]);
   const isRunning = $derived(calls.some((c) => IN_FLIGHT.has(c.status)));
+  const waiting = $derived(calls.some((c) => c.status === "awaiting_permission"));
   const hasError = $derived(calls.some((c) => c.status === "error" || c.status === "denied"));
   // Headline the most recent call so a fresh one sliding in reads as "here's what's happening now".
   const latest = $derived(calls[calls.length - 1]);
@@ -50,7 +51,7 @@
     <span class="icon-slot">
       {#if held.flashing}
         <span class="status-icon check" transition:fade={{ duration: 160 }}><Icon name="circle-check" size={14} /></span>
-      {:else if isRunning}
+      {:else if isRunning && !waiting}
         <span class="status-icon spin" transition:fade={{ duration: 160 }}><Icon name="loader-2" size={14} /></span>
       {:else}
         <span class="status-icon rest" class:err={hasError} transition:fade={{ duration: 160 }}><Icon name={restIcon} size={14} /></span>
@@ -92,8 +93,8 @@
     color: var(--text-dim);
     padding: 0.29rem 0;
     cursor: pointer;
-    font-size: 0.8rem;
-    font-family: ui-monospace, monospace;
+    font-size: var(--text-label-size);
+    font-family: inherit;
     text-align: left;
   }
   /* Same cross-fade slot as ToolCallCard's icon/chevron. */

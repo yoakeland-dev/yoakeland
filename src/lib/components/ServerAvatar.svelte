@@ -6,9 +6,10 @@
   // Color hashed from serverId, not name, so renaming a server keeps its color
   // and two same-named servers still look different. Rounded square avoids
   // reading as a person's avatar.
+  // `plain` leaves out the name tooltip, for a spot that already has one.
   // `bare` drops the tile for inline chrome (the composer's pills): just the icon, tinted with the
   // server's colour, or the plain computer/cloud glyph when no icon was chosen.
-  let { name, seed, size = 16, bare = false }: { name: string; seed?: string | null; size?: number; bare?: boolean } = $props();
+  let { name, seed, size = 16, bare = false, plain = false }: { name: string; seed?: string | null; size?: number; bare?: boolean; plain?: boolean } = $props();
 
   // FNV-1a plus murmur3's finalizer: FNV alone barely moves low bits on short, similar strings.
   function hash(s: string): number {
@@ -33,14 +34,14 @@
 </script>
 
 {#if bare}
-  <span class="server-mark" class:tinted={!!svg} style="--hue: {hue}; width: {size}px; height: {size}px" {@attach tip(name)} aria-hidden="true">
+  <span class="server-mark" class:tinted={!!svg} style="--hue: {hue}; width: {size}px; height: {size}px" {@attach plain ? undefined : tip(name)} aria-hidden="true">
     {#if svg}{@html svg}{:else}<Icon name={live?.connectionMode === "local" ? "computer" : "cloud"} {size} />{/if}
   </span>
 {:else}
 <span
   class="server-avatar"
   style="--hue: {hue}; width: {size}px; height: {size}px; font-size: {Math.round(size * (initials.length > 1 ? 0.45 : 0.56))}px"
-  {@attach tip(name)}
+  {@attach plain ? undefined : tip(name)}
   aria-hidden="true">{#if svg}{@html svg}{:else}{initials}{/if}</span
 >
 {/if}

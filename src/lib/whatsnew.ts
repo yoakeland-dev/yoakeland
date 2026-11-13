@@ -7,6 +7,19 @@ export interface WhatsNewEntry {
 }
 
 export const WHATS_NEW: Record<string, WhatsNewEntry> = {
+  "0.2.0": {
+    title: "Share your server",
+    image: "whatsnew/0.2.0.png",
+    items: [
+      { icon: "users", title: "People, not just devices", body: "Give each person a name, a picture and their own chats. Pair their device in one card." },
+      { icon: "shield-check", title: "Three levels of trust", body: "Limited, Trusted or Full, per person and per device." },
+      { icon: "arrows-exchange", title: "Borrow a model", body: "Use a provider from another of your servers, relayed through this device. You choose what each server may borrow." },
+      { icon: "book-2", title: "Chapters for long chats", body: "Old conversation folds into titled chapters the agent can reopen when it needs them." },
+      { icon: "clock", title: "Scheduled turns", body: "Have an agent run on a schedule while you're away." },
+      { icon: "app-window", title: "Live pages in chat", body: "Agents can hand you a small interactive page, not just text." },
+      { icon: "checks", title: "A todo list you can watch", body: "The agent's plan stays in a panel as it works." },
+    ],
+  },
   // Draft from the unreleased work, check the wording before tagging.
   "0.1.7": {
     title: "Any agent, one place",

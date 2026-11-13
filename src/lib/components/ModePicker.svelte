@@ -90,7 +90,7 @@
   </Popover.Trigger>
 
   <Popover.Portal>
-    <PopoverContent class="mode-panel" side="bottom" align="start" sideOffset={8} collisionPadding={8}>
+    <PopoverContent class="mode-panel" side="bottom" align="end" sideOffset={8} collisionPadding={8}>
       <div class="panel-head">
         <span class="panel-heading">Mode</span>
         {#if canPlan}
@@ -179,7 +179,7 @@
     padding: 0.29rem 0.57rem 0.29rem;
   }
   .panel-heading {
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -190,7 +190,7 @@
     align-items: center;
     gap: 0.28rem;
     padding: 0.14rem 0.5rem;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     background: none;
     border: 1px solid var(--panel-border);
@@ -207,20 +207,20 @@
   .plan-chip.on {
     background: var(--accent-dim);
     border-color: transparent;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .line {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0.29rem 0.57rem;
-    font-size: 0.74rem;
+    font-size: 0.79rem;
     color: var(--text);
     cursor: pointer;
   }
   .line em {
     font-style: normal;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     margin-left: 0.3rem;
   }
@@ -233,7 +233,7 @@
     border-radius: var(--radius-md, 0.5rem);
     background: var(--danger-dim);
     color: var(--danger);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     line-height: 1.4;
   }
   .danger p {

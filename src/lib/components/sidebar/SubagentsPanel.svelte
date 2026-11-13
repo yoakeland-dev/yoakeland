@@ -45,7 +45,7 @@
     color: var(--text-dim);
   }
   .live {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .list {
     flex: 1;

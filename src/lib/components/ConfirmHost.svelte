@@ -35,6 +35,16 @@
     gap: var(--space-1, 0.5rem);
     z-index: var(--z-confirm-content);
   }
+  /* On a phone the confirm is a sheet, and so is Settings (--z-sheet, 140): tie for a stacking
+     order, and Settings wins, which hides the confirm and makes Remove look dead. Sit above it. */
+  @media (max-width: 700px) {
+    :global(.dialog-content.confirm) {
+      z-index: calc(var(--z-sheet) + 2) !important;
+    }
+    :global(.dialog-overlay.confirm-overlay) {
+      z-index: calc(var(--z-sheet) + 1) !important;
+    }
+  }
   :global(.confirm-title) {
     font-weight: 600;
   }

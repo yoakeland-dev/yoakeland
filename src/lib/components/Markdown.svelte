@@ -384,7 +384,7 @@
     margin: 0.2em 0;
   }
   .markdown :global(a) {
-    color: var(--accent);
+    color: var(--accent-ink);
     text-decoration: underline;
     text-underline-offset: 2px;
     cursor: pointer;
@@ -419,7 +419,7 @@
   .markdown :global(.mention),
   .markdown :global(code.file-ref) {
     /* Toward --text, so a muted theme accent still reads. */
-    color: color-mix(in srgb, var(--accent) 60%, var(--text));
+    color: color-mix(in srgb, var(--accent-ink) 60%, var(--text));
     padding: 0.1em 0.35em 0.1em 1.55em;
     background: var(--icon) no-repeat 0.35em 50% / 1.05em, var(--accent-dim);
     border-radius: var(--radius-sm);
@@ -482,7 +482,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.14rem 0.29rem;
-    color: color-mix(in srgb, var(--code-fg) 55%, transparent);
+    color: color-mix(in srgb, var(--code-fg) 70%, transparent);
     font-size: var(--text-label-size);
     user-select: none;
   }

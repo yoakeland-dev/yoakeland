@@ -93,7 +93,7 @@
   :global(.eyebrow) {
     margin: 0;
     font-size: var(--text-label-size);
-    color: var(--accent);
+    color: var(--accent-ink);
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
@@ -134,7 +134,7 @@
     width: 2.1rem;
     height: 2.1rem;
     border-radius: var(--radius-md);
-    color: var(--accent);
+    color: var(--accent-ink);
     background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
   .body :global(button) {

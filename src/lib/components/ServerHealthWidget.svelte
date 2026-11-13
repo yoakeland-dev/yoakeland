@@ -4,7 +4,7 @@
   // Health snapshot comes from each server's ping (SPEC.md §2a status).
   import { Popover } from "bits-ui";
   import { app, type ServerState } from "../state.svelte";
-  import { fmtVersion } from "../serverVersion";
+  import { fmtVersion, shortVersion } from "../serverVersion";
   import Icon from "./Icon.svelte";
   import ServerAvatar from "./ServerAvatar.svelte";
 
@@ -110,7 +110,7 @@
                   <span class="sb-row-name">{s.label}</span>
                   <span class="sb-row-meta">
                     {#if st}
-                      <span class="dot"></span>up {uptime(st.uptimeSec)}{#if st.version}&nbsp;· {fmtVersion(st.version)}{/if}
+                      <span class="dot"></span><span class="up">up {uptime(st.uptimeSec)}{#if st.version}<span class="ver" {@attach tip(fmtVersion(st.version))}>&nbsp;· {shortVersion(st.version)}</span>{/if}</span>
                     {:else if s.connectionStatus === "connected"}
                       Waiting for its first status…
                     {:else}
@@ -189,14 +189,14 @@
   }
   .more {
     margin-left: 0.29rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     opacity: 0.8;
   }
   .metric {
     font-variant-numeric: tabular-nums;
   }
   .dim {
-    opacity: 0.6;
+    opacity: 0.85;
   }
   .state {
     display: inline-flex;
@@ -218,38 +218,57 @@
     color: var(--danger);
   }
   .dot {
+    flex-shrink: 0;
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--success);
   }
   :global(.servers-panel) {
-    width: min(23rem, 92vw);
+    width: min(26rem, 92vw);
+  }
+  /* Two columns of equal lines, so a server's meters line up with what's beside them. */
+  .srv-row {
+    --line: 1.36rem;
+    border-radius: var(--radius-sm);
   }
   .srv-row .sb-row-main {
     align-items: flex-start;
-    padding-block: 0.3rem;
-    gap: 0.6rem;
+    padding: 0.43rem 0.5rem;
+    gap: 0.64rem;
+  }
+  .srv-row :global(.server-avatar) {
+    margin-top: 0.14rem;
   }
   .srv-row.clickable {
     cursor: pointer;
   }
   .srv-row.clickable:hover {
-    background: var(--hover-bg, color-mix(in srgb, currentColor 7%, transparent));
+    background: var(--sidebar-hover);
   }
   .srv-row .sb-row-text {
-    gap: 0.14rem;
+    gap: 0;
+  }
+  .srv-row .sb-row-name {
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    line-height: var(--line);
+  }
+  .srv-row .sb-row-meta {
+    font-size: var(--text-heading-size);
+    line-height: var(--line);
   }
   .srv-row.offline :global(.server-avatar) {
     filter: grayscale(1);
     opacity: 0.55;
   }
-  .facts {
-    gap: 0;
+  .up {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .facts span + span::before {
-    content: "·";
-    margin: 0 0.36rem;
+  .facts {
+    gap: 0.57rem;
+    font-variant-numeric: tabular-nums;
   }
   .fact {
     display: inline-flex;
@@ -257,36 +276,37 @@
     gap: 0.21rem;
   }
   .busy {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .meters {
     flex-shrink: 0;
-    width: 7.5rem;
+    width: 8.6rem;
     display: flex;
     flex-direction: column;
-    gap: 0.29rem;
-    padding-top: 0.14rem;
   }
   .m {
     display: flex;
     align-items: center;
     gap: 0.43rem;
-    font-size: var(--text-label-size);
+    height: var(--line);
+    font-size: var(--text-heading-size);
   }
   .k {
     width: 1.7rem;
     color: var(--text-dim);
   }
   .v {
-    min-width: 2rem;
+    min-width: 2.2rem;
     text-align: right;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
   .gb {
     align-self: flex-end;
-    font-size: 0.64rem;
+    font-size: var(--text-heading-size);
+    line-height: var(--line);
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 </style>

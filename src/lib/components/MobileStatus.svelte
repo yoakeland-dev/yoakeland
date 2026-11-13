@@ -254,7 +254,7 @@
     background: var(--danger);
   }
   .lamp.wait {
-    background: var(--warning);
+    background: var(--lamp);
   }
   .meter {
     height: 6px;

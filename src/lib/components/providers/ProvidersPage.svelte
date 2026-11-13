@@ -234,7 +234,7 @@
   }
   .gh {
     padding: 0.7rem 0.5rem 0.25rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -288,7 +288,7 @@
   /* The plan is text and a key is an icon, the way the status bar's usage widget shows them. */
   .chip {
     flex-shrink: 0;
-    font-size: 0.6rem;
+    font-size: 0.79rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -351,7 +351,7 @@
   .det :global(.sec > h4) {
     margin: 0;
     padding: 1rem 1.14rem 0.4rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;

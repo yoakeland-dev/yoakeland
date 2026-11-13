@@ -1,18 +1,34 @@
 <script module lang="ts">
+  import { askLine } from "../chatBrief";
   import { callActivity } from "../activity.svelte";
   import { IN_FLIGHT } from "../subagents";
-  import type { ServerState } from "../state.svelte";
+  import { titleFor, vendorMetaFor } from "../modelVendor";
+  import { app as appState, type ServerState } from "../state.svelte";
+  import { describeProvider, forwardWaitLabel } from "../forwarding";
 
   /** One line on what a chat is doing: the ask it's blocked on, the call in flight, or how its last reply started. */
   export function chatActivity(server: ServerState | undefined, sessionId: string): string {
     const ask = server?.pendingAsks.find((a) => a.sessionId === sessionId);
-    if (ask) return ask.kind === "question" ? ask.question : ask.description || "Needs your approval";
+    if (ask) return ask.kind === "question" ? ask.question : askLine(ask.description) || "Needs your approval";
     const last = (server?.messagesBySession[sessionId] ?? []).findLast((m) => m.role === "assistant");
     // Any call still going, not just the last: parallel subagents outlast the calls after them.
     const going = last?.toolCalls.findLast((c) => IN_FLIGHT.has(c.status));
     // Finished: show how it ended, to answer from the sidebar.
     if (!server?.activeTurnBySession[sessionId]) return last?.text.replace(/[#*`>_\[\]]/g, "").trim().split("\n")[0] || "Done";
-    return going ? callActivity(going) : last?.toolCalls.length ? "Writing…" : "Thinking…";
+    return going ? callActivity(going) : forwardWaitLabel(appState, server, sessionId) ?? (last?.toolCalls.length ? "Writing…" : "Thinking…");
+  }
+
+  /** The model a chat last answered with (or is set to), with its vendor mark, for the card and the sidebar row. */
+  export function chatModel(server: ServerState | undefined, sessionId: string): { title: string; icon: string | undefined } | undefined {
+    const m = (server?.messagesBySession[sessionId] ?? []).findLast((x) => x.role === "assistant" && x.model);
+    const providerName = m?.provider ?? server?.providerBySession[sessionId];
+    const modelId = m?.model ?? server?.modelBySession[sessionId];
+    if (!modelId) return undefined;
+    // A borrowed provider (via:<server>:<name>) is described by the server that lends it.
+    const { info: provider, models } = describeProvider(appState, server, providerName);
+    if (!provider) return { title: modelId, icon: undefined };
+    const entry = { provider, model: models.find((x) => x.id === modelId) ?? { id: modelId } };
+    return { title: titleFor(entry), icon: vendorMetaFor(entry).icon };
   }
 </script>
 
@@ -21,7 +37,6 @@
   // rows of detail stay in one place. Every derived value is lazy, so it only computes while shown.
   import { app, CHAT_PROJECT, type ConnectionId } from "../state.svelte";
   import { fileSize, relTime, sessionTitle, shortNum, usd } from "../format";
-  import { titleFor, vendorMetaFor } from "../modelVendor";
   import { ringState } from "../contextBreakdown";
   import { STATUS_ICON } from "../liveChats";
   import type { SessionSummary } from "../types";
@@ -40,16 +55,7 @@
     server?.projectBySession[s.sessionId] ??
       Object.entries(server?.sessionsByProject ?? {}).find(([, list]) => list.some((x) => x.sessionId === s.sessionId))?.[0],
   );
-  const model = $derived.by(() => {
-    const m = messages.findLast((x) => x.role === "assistant" && x.model);
-    const providerName = m?.provider ?? server?.providerBySession[s.sessionId];
-    const modelId = m?.model ?? server?.modelBySession[s.sessionId];
-    if (!modelId) return undefined;
-    const provider = server?.providers.find((p) => p.name === providerName);
-    if (!provider) return { title: modelId, icon: undefined };
-    const entry = { provider, model: server?.modelsByProvider[provider.name]?.find((x) => x.id === modelId) ?? { id: modelId } };
-    return { title: titleFor(entry), icon: vendorMetaFor(entry).icon };
-  });
+  const model = $derived(chatModel(server, s.sessionId));
   const ring = $derived(ringState(server?.contextBySession[s.sessionId]));
   const git = $derived(projectPath ? server?.gitStatusByProject[projectPath] : undefined);
   const unsandboxed = $derived(!!server?.isUnsandboxed(projectPath));
@@ -152,7 +158,7 @@
     color: var(--sidebar-fg-dim);
   }
   .state.action {
-    color: var(--warning);
+    color: var(--lamp);
   }
   .state.finished {
     color: var(--success);
@@ -171,7 +177,7 @@
   }
   .age {
     flex-shrink: 0;
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     font-variant-numeric: tabular-nums;
     color: var(--info);
     padding: 0 0.4rem;
@@ -201,7 +207,7 @@
   }
   .facts dt {
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
   }
   .facts dd {
     display: flex;
@@ -263,6 +269,6 @@
     align-items: center;
     gap: 0.4rem;
     color: var(--text-dim);
-    font-size: 0.72rem;
+    font-size: 0.79rem;
   }
 </style>

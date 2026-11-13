@@ -35,6 +35,9 @@
     letter-spacing: 0.02em;
     user-select: none;
   }
+  :global(:root[data-scheme="light"]) .tile {
+    color: hsl(var(--hue) 70% 30%);
+  }
   .tile.brand {
     background: var(--sidebar-hover);
     color: var(--text);

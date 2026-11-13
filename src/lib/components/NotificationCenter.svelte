@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { askLine } from "$lib/chatBrief";
   import PopoverContent from "./PopoverContent.svelte";
   import { tip } from "../tooltip.svelte";
   // §3.2 notification: dismissing here dismisses for every device on that server (echoes
@@ -167,7 +168,7 @@
             <div class="plain">
               <button type="button" class="row unread" onclick={() => open(a)}>
                 <span class="lp warn" aria-hidden="true"></span>
-                <span class="t"><b>{askTitle(a)} needs you</b><small>{a.kind === "question" ? a.question : a.description}</small></span>
+                <span class="t"><b>{askTitle(a)} needs you</b><small>{a.kind === "question" ? a.question : askLine(a.description)}</small></span>
                 {#if a.createdAt}<time>{when(a.createdAt)}</time>{/if}
               </button>
             </div>
@@ -220,7 +221,7 @@
               <span class="lead"><Icon name="alert-circle" size={14} /></span>
               <span class="text">
                 <span class="title">{askTitle(a)} needs you</span>
-                <span class="detail">{@render from(a.cid)}<span class="clip">{a.kind === "question" ? a.question : a.description}</span></span>
+                <span class="detail">{@render from(a.cid)}<span class="clip">{a.kind === "question" ? a.question : askLine(a.description)}</span></span>
               </span>
               {#if a.createdAt}<span class="time">{when(a.createdAt)}</span>{/if}
             </button>
@@ -272,19 +273,21 @@
 <style>
   .badge {
     position: absolute;
-    top: -0.29rem;
-    right: -0.29rem;
+    top: -0.14rem;
+    right: 0;
     min-width: 0.93rem;
     padding: 0 0.21rem;
     border-radius: var(--radius-pill);
     background: var(--accent);
     color: #0d1020;
-    font-size: 0.64rem;
+    font-size: 0.71rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
     line-height: 0.93rem;
     text-align: center;
   }
   .badge.ask {
-    background: var(--warning);
+    background: var(--lamp);
   }
   :global(.notif-panel) {
     width: min(23rem, 92vw);
@@ -502,7 +505,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     background: none;
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-weight: 600;
   }

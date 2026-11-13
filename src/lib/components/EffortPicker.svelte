@@ -1,6 +1,7 @@
 <script module lang="ts">
   import type { ModelInfo, ProviderInfo } from "../types";
-  import type { ServerState } from "../state.svelte";
+  import { app as appState, type ServerState } from "../state.svelte";
+  import { describeProvider } from "../forwarding";
 
   /** The effort levels a model takes (SPEC.md §3.1 set_model_options), or null
    * when it has no effort control. What the model list advertises wins; the
@@ -29,9 +30,9 @@
   /** What a chat's picker resolves to: its provider and model, the model's effort levels
    * (null when it has none) and the level the chat has set, if any. */
   export function sessionEffort(server: ServerState | null | undefined, sessionId: string) {
-    const provider = server?.providers.find((p) => p.name === server?.providerBySession[sessionId]);
+    const { info: provider, models } = describeProvider(appState, server, server?.providerBySession[sessionId]);
     const modelId = server?.modelBySession[sessionId];
-    const model = provider ? server?.modelsByProvider[provider.name]?.find((m) => m.id === modelId) : undefined;
+    const model = provider ? models.find((m) => m.id === modelId) : undefined;
     return {
       model,
       levels: effortLevels(provider, model, modelId),
@@ -176,7 +177,7 @@
     padding: 0.43rem 0.57rem 0.29rem;
   }
   .panel-heading {
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -209,7 +210,7 @@
     padding: 0 0.5rem 0 0.14rem;
     background: none;
     border: none;
-    color: color-mix(in srgb, var(--text) 45%, transparent);
+    color: var(--text-dim);
     font-size: var(--text-label-size);
     white-space: nowrap;
     cursor: pointer;
@@ -230,13 +231,13 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.29rem 0.57rem 0.36rem;
-    font-size: 0.74rem;
+    font-size: 0.79rem;
     color: var(--text);
     cursor: pointer;
   }
   .line em {
     font-style: normal;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
     margin-left: 0.3rem;
   }

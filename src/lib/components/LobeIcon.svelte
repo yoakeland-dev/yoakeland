@@ -1,4 +1,10 @@
 <script module lang="ts">
+  // Marks we've redrawn locally, keyed by Lobe slug (see src/lib/icons). Codex's
+  // color mark shipped a baked-in white plate, which read as a tile on dark
+  // surfaces; ours drops the plate and keeps the cutouts white.
+  import codexColor from "$lib/icons/codex-color.svg?raw";
+  const overrides: Record<string, string> = { "codex-color": codexColor };
+
   // Deliberately not using @lobehub's CDN option: Vite resolves this glob at
   // build time into one lazy chunk per icon, bundled locally, nothing fetched at runtime.
   const svgLoaders = import.meta.glob("/node_modules/@lobehub/icons-static-svg/icons/*.svg", {
@@ -72,6 +78,11 @@
     let cancelled = false;
     (async () => {
       for (const slug of wanted) {
+        const override = overrides[slug];
+        if (override) {
+          svg = namespaceIds(override, uid);
+          return;
+        }
         let raw = cache.get(slug);
         if (raw === undefined) {
           const load = svgLoaders[`/node_modules/@lobehub/icons-static-svg/icons/${slug}.svg`];

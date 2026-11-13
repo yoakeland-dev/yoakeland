@@ -262,7 +262,7 @@
   th {
     padding: 0.43rem 0.71rem;
     text-align: left;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;

@@ -10,6 +10,7 @@
   import { CLI_AGENTS, MULTI_ACCOUNT, providerLabel as accountLabel, titleFor } from "../modelVendor";
   import type { CliKind } from "../types";
   import { tip } from "../tooltip.svelte";
+  import { describeProvider } from "../forwarding";
   import { level, limitCards, resetText, resetTitle, type Card } from "../rateLimits";
   import {
     BRANDS,
@@ -137,13 +138,14 @@
 
   // --- Labels ---
   function providerInfo(r: UsageRec) {
-    return serverByKey(r.server)?.providers.find((p) => p.name === r.provider);
+    return describeProvider(app, serverByKey(r.server), r.provider).info;
   }
   function brandOfProvider(r: UsageRec): Brand | null {
     return providerBrand({ name: r.provider, kind: r.kind, httpProvider: providerInfo(r)?.httpProvider });
   }
   function providerLabel(r: UsageRec): string {
-    let base = CLI_AGENTS[r.kind as CliKind]?.title ?? r.provider;
+    const d = describeProvider(app, serverByKey(r.server), r.provider);
+    let base = CLI_AGENTS[r.kind as CliKind]?.title ?? (d.serverName ? `${d.label} · ${d.serverName}` : r.provider);
     // Several accounts of one agent: say which.
     const sibs = serverByKey(r.server)?.providers.filter((p) => p.kind === r.kind) ?? [];
     const acct = sibs.length > 1 ? sibs.find((p) => p.name === r.provider) : undefined;
@@ -162,6 +164,9 @@
         const model = srv.modelsByProvider[provider.name]?.find((m) => m.id === r.model);
         if (model) return titleFor({ provider, model });
       }
+      const lent = describeProvider(app, srv, r.provider);
+      const model = lent.models.find((m) => m.id === r.model);
+      if (lent.info && model) return titleFor({ provider: lent.info, model });
     }
     return r.model;
   }
@@ -860,6 +865,7 @@
     margin: 0.15rem 0 0.3rem;
   }
   .hero-value {
+    color: var(--text);
     font-size: 2.6rem;
     font-weight: 600;
     line-height: 1.1;
@@ -1031,22 +1037,23 @@
   }
   .wins {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 2rem;
-    font-size: var(--text-label-size);
+    flex-direction: column;
+    gap: 0.3rem;
   }
+  /* Every limit on its own line, with its name, bar and figures in shared columns. */
   .win {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: 8rem minmax(4rem, 12rem) auto 1fr;
     align-items: center;
-    gap: 0.5rem;
-    white-space: nowrap;
+    gap: 0.7rem;
+    font-size: var(--text-label-size);
   }
   .wname,
   .wreset {
     color: var(--text-dim);
   }
   .meter {
-    width: 6rem;
+    width: 100%;
     height: 6px;
     border-radius: 3px;
     background: color-mix(in srgb, var(--brand) 18%, transparent);

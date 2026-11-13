@@ -2593,7 +2593,7 @@
   :global(.settings-overlay) {
     position: fixed;
     inset: 0;
-    background: rgba(6, 7, 11, 0.5);
+    background: rgba(6, 7, 11, 0.66);
     z-index: var(--z-overlay-backdrop);
     animation: scrimIn var(--dialog-enter-duration) ease-out;
   }
@@ -2689,7 +2689,7 @@
   .tabs-group-label {
     flex-shrink: 0;
     margin: 0.86rem 0 0.29rem 0.57rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -2743,7 +2743,7 @@
     background: var(--accent);
   }
   :global(.settings-tab-trigger[data-state="active"] .icon) {
-    color: var(--accent);
+    color: var(--accent-ink);
     opacity: 1;
   }
   :global(.settings-tab-trigger.tab-dim) {
@@ -2754,6 +2754,8 @@
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
+    /* More below reads as more below; the bottom padding keeps the end of the page clear of it. */
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
     scrollbar-gutter: stable;
     padding: 1.14rem 1.71rem 1.71rem;
   }
@@ -3151,7 +3153,7 @@
   }
   .bind-prompt {
     font-size: var(--text-label-size);
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .bind-x {
     display: inline-flex;
@@ -3540,7 +3542,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.36rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .mode-card.active .mode-card-label {
@@ -3626,17 +3628,17 @@
     flex: 1;
     -webkit-appearance: none;
     appearance: none;
-    height: 1.43rem;
+    height: 0.57rem;
     border-radius: 999px;
     background: linear-gradient(
       to right,
-      hsl(0 70% 65%),
-      hsl(60 70% 65%),
-      hsl(120 70% 65%),
-      hsl(180 70% 65%),
-      hsl(240 70% 65%),
-      hsl(300 70% 65%),
-      hsl(360 70% 65%)
+      hsl(0 48% 62%),
+      hsl(60 48% 62%),
+      hsl(120 48% 62%),
+      hsl(180 48% 62%),
+      hsl(240 48% 62%),
+      hsl(300 48% 62%),
+      hsl(360 48% 62%)
     );
   }
   .hue-slider::-webkit-slider-thumb {
@@ -4472,7 +4474,7 @@
     background: none;
     border: 0;
     border-radius: var(--radius-pill);
-    color: var(--accent);
+    color: var(--accent-ink);
     font: inherit;
     font-weight: 600;
   }

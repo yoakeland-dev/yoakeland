@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- What the app frames around an ```artifact page (src/lib/artifact.ts). A sandboxed page can still
+     send itself to another address, and where a frame may go is decided by the page that holds it:
+     the app's own policy lets frames go anywhere on the web (the web client's browser panel needs
+     that), so a page could carry what it shows to any host. This page holds the artifact's frame
+     instead, and lets it load nothing but this app's own files. No script runs here. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'">
+<!-- Follows the app's scheme, so neither frame gets an opaque backdrop. -->
+<meta name="color-scheme" content="light dark">
+<style>html,body{margin:0;height:100%;background:transparent}iframe{display:block;border:0;width:100%;height:100%}</style>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Artifact" src="/artifact-frame.html"></iframe>

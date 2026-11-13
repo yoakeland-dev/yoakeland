@@ -149,7 +149,7 @@
     cursor: default;
   }
   button:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
 </style>

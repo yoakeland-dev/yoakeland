@@ -133,7 +133,7 @@
     color: var(--text-dim);
   }
   .behind {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .dim {
     color: var(--text-dim);

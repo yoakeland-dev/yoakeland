@@ -215,7 +215,7 @@ env: {Object.keys(s.config.env).join(", ")}{/if}</pre>
     border-radius: var(--radius-xs);
     background: var(--well);
     font-family: var(--font-mono, monospace);
-    font-size: 0.74rem;
+    font-size: 0.79rem;
     white-space: pre-wrap;
     word-break: break-all;
     max-height: 24rem;
@@ -265,7 +265,7 @@ env: {Object.keys(s.config.env).join(", ")}{/if}</pre>
   }
   .tool-name code {
     margin-left: 0.4rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 400;
     color: var(--text-dim);
   }

@@ -1007,7 +1007,9 @@
         {:else if serverEntries.length && newLook}
           <!-- New look: the inbox is one flat list; each card names its project. -->
           {#each activeRows as r (key(r))}{@render rowFor(r, "default")}{:else}
-            <p class="empty">No chats yet. Start one from a project, or with the button above.</p>
+            {#if !tiers?.needs.length && !tiers?.running.length && !pinned.length}
+              <p class="empty">No chats yet. Start one from a project, or with the button above.</p>
+            {/if}
           {/each}
         {:else if serverEntries.length && grouping === "remote"}
           <!-- Classic look: the server head then project groups are the list itself. -->
@@ -1289,7 +1291,7 @@
     background: var(--sidebar-hover);
   }
   .tab.on :global(.icon) {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .quick-row {
     display: flex;
@@ -1314,7 +1316,7 @@
     background: var(--sidebar-hover);
   }
   .new-chat :global(.icon) {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   /* Always mounted and eased shut, rather than unmounted with `slide`: the sidebar's flex gap
      after it only goes when the node does, which made the list jump by a gap at the end. Shut,
@@ -1415,7 +1417,7 @@
     background: none;
     color: var(--sidebar-fg-dim);
     font: inherit;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -1427,7 +1429,6 @@
   .dock-count {
     font-variant-numeric: tabular-nums;
     letter-spacing: 0;
-    opacity: 0.7;
   }
   .dock-chevron {
     margin-left: auto;
@@ -1465,12 +1466,11 @@
   /* Same small-caps label as the palette's and Settings' group headings. */
   .section-label {
     padding: 0.71rem var(--space-1) 0.29rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--sidebar-fg-dim);
-    opacity: 0.75;
   }
   .section-label .count {
     margin-left: 0.3rem;
@@ -1522,7 +1522,7 @@
     padding: var(--space-1);
   }
   .note {
-    font-size: 0.7rem;
+    font-size: 0.79rem;
     padding-top: 0;
   }
   .sidebar-empty {
@@ -1560,7 +1560,7 @@
   }
   .starter :global(.icon) {
     flex-shrink: 0;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .starter:hover {
     background: var(--sidebar-hover);
@@ -1583,7 +1583,7 @@
     border: none;
     padding: 0;
     font: inherit;
-    color: var(--accent);
+    color: var(--accent-ink);
     cursor: pointer;
   }
   .link:hover {
@@ -1609,7 +1609,7 @@
     background: var(--sidebar-hover);
   }
   :global(.filter-btn.on) {
-    color: var(--accent);
+    color: var(--accent-ink);
     background: var(--sidebar-active);
   }
   .filter-dot {
@@ -1625,7 +1625,7 @@
     flex: 1;
   }
   :global(.filter-item .filter-count) {
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     opacity: 0.7;
   }
   :global(.filter-item .filter-count.warn) {
@@ -1671,7 +1671,7 @@
     border: none;
     color: var(--text);
     font: inherit;
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     font-weight: 600;
     cursor: pointer;
     text-align: left;
@@ -1716,7 +1716,7 @@
     opacity: 0.55;
   }
   .server-state {
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     font-weight: 400;
     color: var(--warning);
   }
@@ -1856,7 +1856,7 @@
     color: var(--text);
   }
   .profile-status {
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--sidebar-fg-dim);
   }
   .icon-btn {

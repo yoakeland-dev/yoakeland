@@ -300,7 +300,7 @@
     align-items: center;
     gap: 0.43rem;
     padding: 0.5rem 0.57rem 0.21rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -320,7 +320,7 @@
   /* A selectable header: the header's type treatment with an item's hover. */
   :global(.dropdown-item.dropdown-group-item) {
     margin-top: 0.21rem;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;

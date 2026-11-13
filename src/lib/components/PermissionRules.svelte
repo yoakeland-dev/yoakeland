@@ -142,14 +142,14 @@
     text-align: center;
     padding: 0.1rem 0;
     border-radius: var(--radius-pill);
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     font-weight: 600;
     text-transform: uppercase;
     background: var(--wash-2);
     color: var(--text-dim);
   }
   .badge.allow {
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .badge.deny {
     color: var(--danger);
@@ -166,7 +166,7 @@
   }
   .meta {
     flex-shrink: 0;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .revoke {

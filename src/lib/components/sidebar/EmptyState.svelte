@@ -46,7 +46,7 @@
     height: 2.57rem;
     margin-bottom: 0.29rem;
     border-radius: 50%;
-    color: var(--accent);
+    color: var(--accent-ink);
     background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .danger .disc {

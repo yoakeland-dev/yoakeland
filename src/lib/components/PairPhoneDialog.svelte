@@ -499,7 +499,7 @@
     height: 1.9rem;
     border-radius: 28%;
     background: var(--accent-dim);
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   :global(.pair-hint) {
     margin: 0;
@@ -889,7 +889,7 @@
     border-radius: 28%;
     background: var(--wash-3);
     color: var(--text-dim);
-    font-size: 0.95rem;
+    font-size: 0.79rem;
     font-weight: 600;
   }
   .card h3 {

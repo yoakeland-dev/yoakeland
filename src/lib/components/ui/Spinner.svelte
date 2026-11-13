@@ -14,7 +14,7 @@
     border-radius: 50%;
     border: 2px solid color-mix(in srgb, currentColor 22%, transparent);
     border-top-color: currentColor;
-    color: var(--accent);
+    color: var(--accent-ink);
     animation: turn calc(0.8s / var(--anim-speed, 1)) linear infinite;
   }
   .s {

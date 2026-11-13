@@ -299,7 +299,7 @@
     padding: 0.5rem 0.64rem 0.64rem;
     z-index: var(--z-popover);
     color: var(--text);
-    font-size: 0.74rem;
+    font-size: 0.79rem;
     animation: floatIn var(--float-enter-duration) ease-out;
   }
   :global(.ctx-panel[data-state="closed"]) {
@@ -313,7 +313,7 @@
   }
   .heading {
     flex: 1;
-    font-size: 0.66rem;
+    font-size: 0.79rem;
     font-weight: var(--text-heading-weight);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -456,7 +456,7 @@
   }
   .note {
     margin-top: 0.5rem;
-    font-size: 0.68rem;
+    font-size: 0.79rem;
     line-height: 1.4;
     color: var(--text-dim);
   }

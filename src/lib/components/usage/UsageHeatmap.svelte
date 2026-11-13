@@ -89,7 +89,7 @@
     background: color-mix(in oklab, var(--accent) var(--l), color-mix(in srgb, var(--text) 5%, transparent));
   }
   .grid .cell.on {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--accent);
     outline-offset: -1px;
   }
   .foot {

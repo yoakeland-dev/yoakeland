@@ -147,7 +147,8 @@ const VENDOR_LABELS: Record<string, string> = {
 };
 
 export function prettifySlug(slug: string): string {
-  return slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  // A version keeps its dot: "claude-sonnet-5-5" is Sonnet 5.5, not "Sonnet 5 5".
+  return slug.replace(/(\d)[-_](?=\d)/g, "$1.").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function openRouterVendorMeta(modelId: string): {

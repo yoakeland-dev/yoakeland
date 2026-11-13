@@ -87,7 +87,7 @@
     padding-left: 0.9rem;
   }
   .row.group .k {
-    font-size: 0.72rem;
+    font-size: 0.79rem;
   }
   .dim {
     color: var(--text-dim);
@@ -120,7 +120,7 @@
   }
   code {
     font-family: var(--mono, ui-monospace, monospace);
-    font-size: 0.78rem;
+    font-size: 0.79rem;
     font-weight: 400;
     color: var(--text-dim);
   }

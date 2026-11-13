@@ -26,8 +26,13 @@ import { parseThemeFiles } from "./theme";
 import { setDiscordRpcStatus } from "./discordRpc.svelte";
 import type { DiscordRpcStatus } from "./platform";
 import { showChat } from "./viewport.svelte";
+import { createRelay } from "./forwardRelay";
+import { canRelay, describeProvider, isLent, parseVia } from "./forwarding";
+import { connectionKey } from "./serverKey";
 
 let wired = false;
+/** Model forwarding: the relay between servers and the offers that tell each what this device reaches. */
+const relay = createRelay((connectionId, envelope) => send(connectionId, envelope), () => app.servers);
 
 /** Reads the themes folder into `app.customThemes` and re-applies, so an edited active theme updates live.
  * Returns a note for the UI (what was wrong with which file), or null when all is well. */
@@ -152,11 +157,13 @@ function handleConnectionLost(connectionId: ConnectionId, reason: string) {
   clearTimeout(stableTimers.get(server));
   // A fatal error arrived first (the server refused this connection, e.g. a revoked token): keep its
   // message, and don't redial into the same refusal.
-  const refused = server.connectionStatus === "error";
+  const refused = server.connectionRefused;
   if (!refused) {
     server.connectionStatus = "disconnected";
     server.connectionError = reason;
   }
+  relay.dropConnection(connectionId);
+  relay.syncOffers();
   app.log(`disconnected: ${reason}`);
   server.clearAllSessionSyncing();
   server.pendingAsks = [];
@@ -173,6 +180,7 @@ async function redial(oldConnectionId: ConnectionId) {
   if (!server) return;
   const params = server.connectParams;
   server.connectionStatus = "connecting";
+  server.connectionRefused = false;
   try {
     // A daemon that stopped (a restart, a crash) is started again, as the app does at launch.
     if (isDesktop && params.mode === "local" && !(await probeUnix(params.socketPath))) {
@@ -200,6 +208,10 @@ async function redial(oldConnectionId: ConnectionId) {
     server.connectionId = newConnectionId;
     server.connectionStatus = "connected";
     server.connectionError = null;
+    // Whatever the last connection said about the server may no longer hold; the identity says it again.
+    server.features = [];
+    server.forwardGrants = [];
+    server.forwardGrantsLoaded = false;
     app.servers[newConnectionId] = server;
     if (app.activeConnectionId === oldConnectionId) app.activeConnectionId = newConnectionId;
     afterConnect(newConnectionId);
@@ -221,10 +233,16 @@ export function wireEvents() {
     const server = app.servers[connectionId];
     if (!server) return; // stale event from a connection we no longer track
     touchActivity(connectionId);
+    if (relay.handle(connectionId, env)) return;
     if (env.type === "ping") {
       // Echo the nonce back; the ping also carries the status bar's server snapshot.
       const data = env.data as { nonce?: string; status?: ServerStatus } | undefined;
-      if (data?.status) server.serverStatus = data.status;
+      if (data?.status) {
+        server.serverStatus = data.status;
+        if (data.status.features) server.features = data.status.features;
+        relay.syncOffers();
+        askGrants(server);
+      }
       void send(connectionId, { type: "pong", data: { nonce: data?.nonce } });
       return;
     }
@@ -293,6 +311,16 @@ export function wireEvents() {
     // Owner-only events: a paired-device (restricted) connection would just get an error. A Trusted
     // person may run schedules too; they only see their own.
     if (env.type === "server_identity") {
+      // The key comes from how this device connected, so it is worked out once per connection.
+      if (!server.relayKey && server.serverId) {
+        void connectionKey(server.connectParams, !isDesktop).then((k) => {
+          server.relayKey = k;
+          relay.syncOffers();
+          askGrants(server);
+        });
+      }
+      relay.syncOffers();
+      askGrants(server);
       if (server.canAdmin) void listScheduled(connectionId);
       if (server.user && server.canAdmin) listPeople(connectionId);
       // This device's local profile only fills a person who has none: a reconnect never overwrites.
@@ -453,6 +481,8 @@ function afterConnect(connectionId: ConnectionId) {
   stableTimers.set(server, setTimeout(() => (server.reconnectAttempt = 0), STABLE_MS));
   listProjects(connectionId);
   listProviders(connectionId);
+  relay.syncOffers();
+  askGrants(server);
   server.modelsAsked.clear(); // a reconnect (or restarted server) is worth one fresh try per provider
   detectCli(connectionId);
   listNotifications(connectionId);
@@ -469,6 +499,45 @@ function afterConnect(connectionId: ConnectionId) {
   }
   server.turnsLostOnDrop = [];
   if (server.currentSessionId) listTerminals(connectionId, server.currentSessionId);
+}
+
+const grantsAsked = new Set<ConnectionId>();
+/** Asks a forwarding-capable server which servers may use its providers: once per connection, and
+ * only once its feature list is known, so an older server never sees the event. */
+function askGrants(server: ServerState) {
+  if (!canRelay(server) || grantsAsked.has(server.connectionId)) return;
+  grantsAsked.add(server.connectionId);
+  void send(server.connectionId, { type: "list_forward_grants", data: {} });
+}
+
+/** Lets `borrower` use the `via:` provider `providerName` on the server that lends it, once the person says
+ * yes: a grant lasts until revoked. True when it is lent (already, or the lender has been told), false when
+ * the person said no or it can't be. Call this ONLY from the model picker's own pick handler, where the
+ * person chose that row. Never from an automatic path (resuming a chat, seeding a new one, anything driven
+ * by a server event): the borrowing server controls those names, and a grant sent there would hand it the
+ * person's provider, or quietly undo a Revoke. The lender answers with the whole list, refusals included,
+ * so the list shown is only ever the lender's. */
+export async function grantForwarding(borrower: ServerState, providerName: string): Promise<boolean> {
+  const via = parseVia(providerName);
+  const lender = via && Object.values(app.servers).find((s) => s.serverId === via.serverId && canRelay(s));
+  if (!via || !lender || !canRelay(borrower)) return false;
+  if (isLent(lender, borrower, via.name)) return true;
+  const label = describeProvider(app, borrower, providerName).label;
+  const ok = await askConfirm(
+    `Let ${borrower.label} use ${label} from ${lender.label}? Its requests run there as you, on your account, until you revoke it in that provider's settings on ${lender.label}.`,
+  );
+  if (!ok) return false;
+  await send(lender.connectionId, {
+    type: "forward_grant",
+    data: { serverId: borrower.serverId, serverKey: borrower.relayKey, serverName: borrower.label, providerName: via.name },
+  });
+  return true;
+}
+
+/** Withdraws a borrowing server's use of a provider (`providerName` is the lender's own name for it). The
+ * lender's reply updates the list. */
+export function revokeForwardGrant(lenderConnectionId: ConnectionId, serverId: string, providerName: string) {
+  void send(lenderConnectionId, { type: "forward_revoke", data: { serverId, providerName } });
 }
 
 const seededProfile = new Set<string>();
@@ -677,6 +746,8 @@ export async function disconnect(connectionId: ConnectionId) {
     server.forgetQueuedPrompts();
     server.turnsLostOnDrop = server.endRunningTurns();
   }
+  relay.dropConnection(connectionId);
+  relay.syncOffers();
   failWaiters(connectionId, "disconnected before the server replied");
 }
 
@@ -690,6 +761,7 @@ export async function removeServer(connectionId: ConnectionId) {
     stopLiveness(connectionId);
   }
   delete app.servers[connectionId];
+  relay.syncOffers();
   if (server?.serverId) forgetKnownServer(server.serverId);
   if (app.activeConnectionId === connectionId) {
     app.activeConnectionId = Object.keys(app.servers)[0] ?? null;

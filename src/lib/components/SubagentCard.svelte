@@ -129,6 +129,15 @@
 </div>
 
 <style>
+  /* A narrow pane drops the small print before it cuts into the title. */
+  .subagent {
+    container-type: inline-size;
+  }
+  @container (max-width: 20rem) {
+    .subagent:not(.asking) .meta {
+      display: none;
+    }
+  }
   /* Flat like the chat's tool groups: a one-line head, and what the subagent did sits under a thread line. */
   .subagent {
     container-type: inline-size;
@@ -158,7 +167,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .head {
@@ -182,7 +191,7 @@
     flex: none;
     width: 1rem;
     height: 1rem;
-    color: var(--accent);
+    color: var(--accent-ink);
   }
   .icon > span {
     position: absolute;
@@ -216,8 +225,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: ui-monospace, monospace;
-    font-size: 0.72rem;
+    font-family: inherit;
+    font-size: 0.79rem;
     color: var(--text-dim);
   }
   .asking .meta {
@@ -267,7 +276,7 @@
     border: none;
     color: var(--text-dim);
     font: inherit;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     cursor: pointer;
@@ -280,7 +289,7 @@
     padding: var(--space-1);
     background: rgba(0, 0, 0, 0.25);
     border-radius: var(--radius-sm);
-    font-size: 0.75rem;
+    font-size: 0.79rem;
     white-space: pre-wrap;
     word-break: break-word;
     max-height: 16rem;

@@ -237,7 +237,7 @@
   }
   .trow.th {
     padding-block: 0.5rem;
-    font-size: 0.72rem;
+    font-size: 0.79rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;

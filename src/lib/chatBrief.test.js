@@ -2,7 +2,7 @@
 // Run with: node --test src/lib/
 import assert from "node:assert/strict";
 import test from "node:test";
-import { briefOf, clip, continuationDraft, projectStarters } from "./chatBrief.ts";
+import { askLine, briefOf, clip, continuationDraft, projectStarters } from "./chatBrief.ts";
 
 const msg = (role, text, toolCalls = []) => ({ id: text, role, text, toolCalls, streaming: false, createdAt: 0 });
 
@@ -37,4 +37,11 @@ test("project starters follow what is there", () => {
   assert.ok(s.some((x) => x.title === "Run the tests and fix failures"));
   assert.ok(projectStarters(undefined, 0).some((x) => x.title === "Find what's untested"));
   assert.ok(s.length <= 4);
+});
+
+test("an ask line drops the args JSON", () => {
+  assert.equal(askLine('bash on {"command":"docker compose up -d"}'), "bash: docker compose up -d");
+  assert.equal(askLine('mcp_x on {"n":1}'), "mcp_x");
+  assert.equal(askLine("bash on rg"), "bash on rg");
+  assert.equal(askLine("bash on {broken}"), "bash on {broken}");
 });
