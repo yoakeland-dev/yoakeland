@@ -575,6 +575,8 @@ export interface ForwardGrant {
   serverName?: string;
   /** This server's own name for the provider, not the `via:` one. */
   providerName: string;
+  /** How the granting devices reached the borrowing server (serverKey.ts); a request must come by one. */
+  serverKeys?: string[];
 }
 
 export interface ServerStatus {

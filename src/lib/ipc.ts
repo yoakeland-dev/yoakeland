@@ -27,11 +27,12 @@ import { setDiscordRpcStatus } from "./discordRpc.svelte";
 import type { DiscordRpcStatus } from "./platform";
 import { showChat } from "./viewport.svelte";
 import { createRelay } from "./forwardRelay";
-import { canRelay, parseVia } from "./forwarding";
+import { canRelay, describeProvider, isLent, parseVia } from "./forwarding";
+import { connectionKey } from "./serverKey";
 
 let wired = false;
 /** Model forwarding: the relay between servers and the offers that tell each what this device reaches. */
-const relay = createRelay((connectionId, envelope) => send(connectionId, envelope));
+const relay = createRelay((connectionId, envelope) => send(connectionId, envelope), () => app.servers);
 
 /** Reads the themes folder into `app.customThemes` and re-applies, so an edited active theme updates live.
  * Returns a note for the UI (what was wrong with which file), or null when all is well. */
@@ -309,6 +310,14 @@ export function wireEvents() {
     // Owner-only events: a paired-device (restricted) connection would just get an error. A Trusted
     // person may run schedules too; they only see their own.
     if (env.type === "server_identity") {
+      // The key comes from how this device connected, so it is worked out once per connection.
+      if (!server.relayKey && server.serverId) {
+        void connectionKey(server.connectParams, !isDesktop).then((k) => {
+          server.relayKey = k;
+          relay.syncOffers();
+          askGrants(server);
+        });
+      }
       relay.syncOffers();
       askGrants(server);
       if (server.canAdmin) void listScheduled(connectionId);
@@ -500,25 +509,34 @@ function askGrants(server: ServerState) {
   void send(server.connectionId, { type: "list_forward_grants", data: {} });
 }
 
-/** Lets `borrower` use the `via:` provider `providerName` on the server that lends it. Resolves once the
- * lender has been told (at once when it already knows). Call this ONLY from the model picker's own pick
- * handler, where the person chose that row. Never from an automatic path (resuming a chat, seeding a new
- * one, anything driven by a server event): the borrowing server controls those names, and a grant sent
- * there would hand it the person's provider, or quietly undo a Revoke. */
-export async function grantForwarding(borrower: ServerState, providerName: string): Promise<void> {
+/** Lets `borrower` use the `via:` provider `providerName` on the server that lends it, once the person says
+ * yes: a grant lasts until revoked. True when it is lent (already, or the lender has been told), false when
+ * the person said no or it can't be. Call this ONLY from the model picker's own pick handler, where the
+ * person chose that row. Never from an automatic path (resuming a chat, seeding a new one, anything driven
+ * by a server event): the borrowing server controls those names, and a grant sent there would hand it the
+ * person's provider, or quietly undo a Revoke. The lender answers with the whole list, refusals included,
+ * so the list shown is only ever the lender's. */
+export async function grantForwarding(borrower: ServerState, providerName: string): Promise<boolean> {
   const via = parseVia(providerName);
   const lender = via && Object.values(app.servers).find((s) => s.serverId === via.serverId && canRelay(s));
-  if (!via || !lender || !borrower.serverId) return;
-  if (lender.forwardGrants.some((g) => g.serverId === borrower.serverId && g.providerName === via.name)) return;
-  lender.forwardGrants = [...lender.forwardGrants, { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name }];
-  await send(lender.connectionId, { type: "forward_grant", data: { serverId: borrower.serverId, serverName: borrower.label, providerName: via.name } });
+  if (!via || !lender || !canRelay(borrower)) return false;
+  if (isLent(lender, borrower, via.name)) return true;
+  const label = describeProvider(app, borrower, providerName).label;
+  const ok = await askConfirm(
+    `Let ${borrower.label} use ${label} from ${lender.label}? Its requests run there as you, on your account, until you revoke it in that provider's settings on ${lender.label}.`,
+  );
+  if (!ok) return false;
+  await send(lender.connectionId, {
+    type: "forward_grant",
+    data: { serverId: borrower.serverId, serverKey: borrower.relayKey, serverName: borrower.label, providerName: via.name },
+  });
+  return true;
 }
 
-/** Withdraws a borrowing server's use of a provider (`providerName` is the lender's own name for it). */
+/** Withdraws a borrowing server's use of a provider (`providerName` is the lender's own name for it). The
+ * lender's reply updates the list. */
 export function revokeForwardGrant(lenderConnectionId: ConnectionId, serverId: string, providerName: string) {
   void send(lenderConnectionId, { type: "forward_revoke", data: { serverId, providerName } });
-  const lender = app.servers[lenderConnectionId];
-  if (lender) lender.forwardGrants = lender.forwardGrants.filter((g) => !(g.serverId === serverId && g.providerName === providerName));
 }
 
 const seededProfile = new Set<string>();

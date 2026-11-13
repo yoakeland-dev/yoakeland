@@ -1,6 +1,7 @@
 import type { Envelope } from "./types";
-import { app, type ConnectionId } from "./state.svelte";
-import { canRelay } from "./forwarding";
+import { relayable, type RelayCandidate } from "./serverKey.ts";
+
+type ConnectionId = string;
 
 type Send = (connectionId: ConnectionId, envelope: Envelope) => unknown;
 interface Hop {
@@ -14,7 +15,8 @@ interface Hop {
 /** Model forwarding's device side: relays `forward_*` frames between two connected servers and tells
  * each server which others this device reaches. Plain Maps, no reactive state, and `data` and `chunk`
  * are never read: one chunk costs one small envelope. */
-export function createRelay(send: Send) {
+export function createRelay(send: Send, servers: () => Record<ConnectionId, RelayCandidate>) {
+  const canRelay = (s: RelayCandidate) => relayable(s, Object.values(servers()));
   const hops = new Map<string, Hop>(); // requestId -> who talks to whom
   const offered = new Map<ConnectionId, string>(); // what each server was last told
 
@@ -29,9 +31,11 @@ export function createRelay(send: Send) {
     switch (env.type) {
       case "forward_request": {
         if (!d?.requestId) return true;
-        // The lending server decides on who is asking, so the one field written here is the sender's
-        // own serverId, over anything the frame already said. Every piece, since A reassembles by id.
-        const mine = app.servers[connectionId]?.serverId;
+        // The lending server decides on who is asking, so the fields written here are the sender's own
+        // serverId and what this device verified about it, over anything the frame already said. Every
+        // piece, since A reassembles by id. A sender that can't relay (no key yet, a clashing id) gets none.
+        const b = servers()[connectionId];
+        const mine = b && canRelay(b) ? b.serverId : null;
         let h = hops.get(d.requestId);
         if (h) {
           // A second request under a live id, or one from someone else: not the same stream, drop it.
@@ -39,7 +43,7 @@ export function createRelay(send: Send) {
         } else {
           // A later piece of a request that already ended: B has been told.
           if (d.seq !== 0) return true;
-          const a = Object.values(app.servers).find((s) => s.serverId === d.serverId && s.connectionId !== connectionId && canRelay(s));
+          const a = Object.values(servers()).find((s) => s.serverId === d.serverId && s.connectionId !== connectionId && canRelay(s));
           h = { from: connectionId, to: a?.connectionId ?? "", sessionId: env.sessionId, turnId: env.turnId };
           if (!mine || !a) {
             void fail(h, d.requestId, mine ? "this device is not connected to the server that has that provider" : "this device does not know this server's id yet");
@@ -48,7 +52,7 @@ export function createRelay(send: Send) {
           hops.set(d.requestId, h);
         }
         if (!mine) return true;
-        void pass(h.to, env, undefined, { ...env.data, from: mine });
+        void pass(h.to, env, undefined, { ...env.data, from: mine, fromKey: b!.relayKey });
         return true;
       }
       case "forward_cancel": {
@@ -86,7 +90,7 @@ export function createRelay(send: Send) {
 
   /** Tells each forwarding-capable server which others this device reaches; only when that changed. */
   function syncOffers() {
-    const capable = Object.values(app.servers).filter(canRelay);
+    const capable = Object.values(servers()).filter(canRelay);
     for (const id of offered.keys()) if (!capable.some((s) => s.connectionId === id)) offered.delete(id);
     for (const s of capable) {
       const servers = [...new Set(capable.filter((o) => o.serverId !== s.serverId).map((o) => o.serverId!))].sort();

@@ -595,6 +595,12 @@ export class ServerState {
 
   /** Null until server_identity's first reply lands on this connection. */
   serverId = $state<string | null>(null);
+  /** What this device verified about the connection (serverKey.ts), set once serverId is known. Model
+   * forwarding stamps it on what this server asks of another, and grants are made for it. */
+  relayKey = $state<string | null>(null);
+  /** The server said a second, different serverId on this connection. A server's id never changes, so this
+   * one isn't trusted to relay or lend (forwarding.ts canRelay) and keeps the id it first gave. */
+  idConflict = $state(false);
   /** What the server says it is (server_identity); null from one that predates reporting it. */
   version = $state<string | null>(null);
   /** The latest version this connection already toasted about, so a newer release toasts again. */
@@ -2848,7 +2854,10 @@ export class ServerState {
           this.aheadToasted = true;
           this.app.toastAction(this.connectionId, "Server is newer than this app");
         }
-        if (data.serverId && this.serverId !== data.serverId) {
+        if (data.serverId && this.serverId && this.serverId !== data.serverId) {
+          if (!this.idConflict) this.app.toastAction(this.connectionId, "This server changed its id. It won't lend or borrow models until you reconnect it.");
+          this.idConflict = true;
+        } else if (data.serverId && !this.serverId) {
           this.serverId = data.serverId;
           this.hydrateFromServerId(data.serverId);
         }

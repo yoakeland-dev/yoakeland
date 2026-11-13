@@ -1,6 +1,7 @@
-import { loadKnownServers, type ServerState, type app } from "./state.svelte";
+import { app as appState, loadKnownServers, type ServerState, type app } from "./state.svelte";
 import type { ModelInfo, ProviderInfo } from "./types";
 import { isCli, providerLabel } from "./modelVendor";
+import { relayable } from "./serverKey";
 
 type App = typeof app;
 
@@ -18,8 +19,12 @@ export function parseVia(name?: string | null): { serverId: string; name: string
   return i > 4 ? { serverId: name.slice(4, i), name: name.slice(i + 1) } : null;
 }
 
-/** Connected, identified, and listing the `forwarding` feature: may offer, relay and lend. */
-export const canRelay = (s: ServerState) => s.connectionStatus === "connected" && !!s.serverId && s.features.includes("forwarding");
+/** May offer, relay and lend (serverKey.ts `relayable`). */
+export const canRelay = (s: ServerState) => relayable(s, Object.values(appState.servers));
+
+/** Whether `lender` lets `borrower`, as this device reaches it, use its provider `name`. */
+export const isLent = (lender: ServerState, borrower: ServerState, name: string) =>
+  !!borrower.relayKey && lender.forwardGrants.some((g) => g.serverId === borrower.serverId && g.providerName === name && !!g.serverKeys?.includes(borrower.relayKey!));
 
 const lenderOf = (app: App, serverId: string) => Object.values(app.servers).find((s) => s.serverId === serverId && canRelay(s));
 
@@ -90,7 +95,7 @@ export function describeProvider(
     serverName: serverNameOf(app, via.serverId),
     offline: !lender,
     // Whether the lending server lets this server use it: false once revoked, or if never allowed.
-    granted: lender?.forwardGrantsLoaded && !!server?.serverId ? lender.forwardGrants.some((g) => g.serverId === server.serverId && g.providerName === via.name) : undefined,
+    granted: lender?.forwardGrantsLoaded && !!server?.serverId ? isLent(lender, server, via.name) : undefined,
     lender,
     info,
     models: lender?.modelsByProvider[via.name] ?? [],

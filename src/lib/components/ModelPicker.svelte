@@ -294,7 +294,7 @@
     if (cid && server) {
       const bind = () => setProvider(cid, sessionId, entry.provider.name, entry.model.id);
       // The one place a grant is sent: the person chose this row.
-      if (via) void grantForwarding(server, entry.provider.name).then(bind);
+      if (via) void grantForwarding(server, entry.provider.name).then((ok) => ok && bind());
       else bind();
     }
     open = false;
