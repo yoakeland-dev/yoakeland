@@ -1663,6 +1663,7 @@ export class ServerState {
         }
         // "Retry" on a merged bubble targets its *last* round-trip's id, matching alternateIds.
         cur.id = m.id || cur.id;
+        if (m.id) cur.roundIds = [...(cur.roundIds ?? []), m.id];
         cur.alternateIds = m.alternateIds ?? cur.alternateIds;
         cur.summary = m.summary;
         cur.ask = m.ask;

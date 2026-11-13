@@ -2123,7 +2123,7 @@
               </div>
               <div class="setting-row stacked">
                 {@render rowText(
-                  "Summary instructions",
+                  "Compaction instructions",
                   "Steers every summary and chapter brief on an API provider.",
                   "Automatic or from /compact. It narrows the focus and never replaces the base prompt. A summary these make implausibly short is redone without them. Claude Code doesn't take it; give its /compact instructions after the command.",
                 )}

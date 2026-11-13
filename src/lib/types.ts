@@ -802,6 +802,8 @@ export interface ChatMessage {
   id: string;
   /** Other edits/retries at this point in the conversation (§3.2 `alternateIds`), addressable via `switchBranch`. */
   alternateIds?: string[];
+  /** Every stored message a merged assistant bubble was built from (its `id` is the last one's), so a chapter that starts mid-turn can find its bubble. */
+  roundIds?: string[];
   role: "user" | "assistant" | "compaction";
   turnId?: string;
   /** For a `compaction` row, the summary the model now sees (empty for a "clear"). */

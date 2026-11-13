@@ -21,8 +21,9 @@
   let open = $state(false);
   let root: HTMLElement | undefined = $state();
 
-  // A chapter's first message, when the chat has it loaded; the title is only a link then.
-  const rowFor = (id: string) => root?.closest(".list")?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"]`);
+  // A chapter's first message (a user message, or one round of a merged assistant bubble), looked
+  // up when the title is clicked: the chat may load more of itself while the list stays open.
+  const rowFor = (id: string) => root?.closest(".list")?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(id)}"], [data-msg-ids~="${CSS.escape(id)}"]`);
 </script>
 
 {#if c}
@@ -46,15 +47,10 @@
         {#if open && chapters.length}
           <ol class="chapters selectable">
             {#each chapters as ch (ch.n)}
-              {@const row = rowFor(ch.from)}
               <li>
                 <div class="chapter-head">
                   <span class="num">{ch.n}</span>
-                  {#if row}
-                    <button class="chapter-title" onclick={() => row.scrollIntoView({ block: "start", behavior: "smooth" })}>{ch.title}</button>
-                  {:else}
-                    <span class="chapter-title">{ch.title}</span>
-                  {/if}
+                  <button class="chapter-title" onclick={() => rowFor(ch.from)?.scrollIntoView({ block: "start", behavior: "smooth" })}>{ch.title}</button>
                   <span class="size">{shortNum(ch.tokens)} tokens</span>
                 </div>
                 {#if ch.n > (c?.titlesOnly ?? 0)}
