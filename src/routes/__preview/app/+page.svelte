@@ -349,8 +349,9 @@
       createdAt: now - 50_000,
     },
   ];
-  msgs[4].text += " Renamed — one more place in the hint text below.";
-  msgs[4].toolCalls[2].textOffset = msgs[4].text.length;
+  const m4 = msgs.find((m) => m.id === "m4")!;
+  m4.text += " Renamed — one more place in the hint text below.";
+  m4.toolCalls[2].textOffset = m4.text.length;
   // s2 (?chat=s2): an API-provider turn using the new tools: two subagents working in parallel
   // (one still going, one reported back), a dev server in an agent terminal, and a browser check.
   const call = (toolCallId: string, name: string, args: Record<string, unknown>, extra: Partial<ChatMessage["toolCalls"][number]> = {}) =>

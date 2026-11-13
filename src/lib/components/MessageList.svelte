@@ -18,7 +18,10 @@
 
   let container: HTMLDivElement;
   let rows: HTMLDivElement;
-  const messages = $derived(app.active?.messagesBySession[sessionId] ?? []);
+  // One compaction divider style at a time: chapters or summary, whichever the setting is on.
+  // "clear" dividers always show.
+  const style = $derived(app.active?.runtime?.compactionStyle === "summary" ? "summary" : "chapters");
+  const messages = $derived((app.active?.messagesBySession[sessionId] ?? []).filter((m) => !(m.role === "compaction" && m.compaction && m.compaction.kind !== "clear" && m.compaction.kind !== style)));
   const handedOff = $derived(handoffs(messages));
   const queued = $derived(app.active?.queuedBySession[sessionId] ?? []);
   const steering = $derived(app.active?.steeringBySession[sessionId] ?? []);
