@@ -18,6 +18,19 @@ test("the app itself never allows inline scripts", () => {
   assert.deepEqual(CSP["script-src"], ["'self'"]);
 });
 
-test("the frame only takes its page from its own parent", () => {
-  assert.match(frame, /e\.source !== parent/);
+test("the frame only takes its page from the app", () => {
+  assert.match(frame, /e\.source !== top/);
+});
+
+// A sandboxed page can still navigate itself, and the app's frame-src lets a frame go anywhere on the
+// web. The shell between them is what keeps a page from carrying its contents to another host.
+const shell = readFileSync(new URL("../static/artifact-shell.html", import.meta.url), "utf8");
+const shellCsp = shell.match(/http-equiv="Content-Security-Policy" content="([^"]*)"/)?.[1] ?? "";
+
+test("the shell lets the page's frame load only the app's own files, and runs no script", () => {
+  assert.match(shellCsp, /frame-src 'self'(;|$)/);
+  assert.match(shellCsp, /default-src 'none'/);
+  assert.doesNotMatch(shellCsp, /script-src|https?:/);
+  assert.doesNotMatch(shell, /<script/);
+  assert.match(shell, /<iframe sandbox="allow-scripts"[^>]* src="\/artifact-frame\.html"/);
 });
