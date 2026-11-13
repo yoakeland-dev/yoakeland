@@ -243,6 +243,7 @@
         class:replaced={editingIndex >= 0 && i > editingIndex}
         class:replaces={i === editingIndex && i < messages.length - 1}
         use:observeRow={{ id: message.id, eager }}
+        data-msg-ids={message.roundIds?.join(" ")}
       >
         {#if message.streaming || eager || hydrated.has(message.id)}
           {#if message.role === "user"}

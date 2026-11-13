@@ -1666,6 +1666,7 @@ export class ServerState {
         }
         // "Retry" on a merged bubble targets its *last* round-trip's id, matching alternateIds.
         cur.id = m.id || cur.id;
+        if (m.id) cur.roundIds = [...(cur.roundIds ?? []), m.id];
         cur.alternateIds = m.alternateIds ?? cur.alternateIds;
         cur.summary = m.summary;
         cur.ask = m.ask;
@@ -2083,7 +2084,7 @@ export class ServerState {
       toolCalls: [],
       streaming: false,
       createdAt: Date.now(),
-      compaction: { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter, manual: data.manual },
+      compaction: { kind: data.kind, tokensBefore: data.tokensBefore, tokensAfter: data.tokensAfter, manual: data.manual, chapters: data.chapters, titlesOnly: data.titlesOnly },
     };
     const cur = this.findAssistantMessage(sessionId, turnId);
     if (!cur) {

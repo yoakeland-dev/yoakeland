@@ -2098,8 +2098,8 @@
               <div class="setting-row">
                 {@render rowText(
                   "Compact chats at",
-                  "Summarized once context passes this. 0 uses 64,000.",
-                  "Never above 90% of the model's window. Claude Code is told this as its context window and compacts about 33,000 tokens below that; other agents compact on their own. Change one chat with /autocompact. /compact summarizes now.",
+                  "Older messages are folded once context passes this. 0 uses 64,000.",
+                  "Never above 90% of the model's window. Claude Code is told this as its context window and compacts about 33,000 tokens below that; other agents compact on their own. Change one chat with /autocompact. /compact folds now.",
                 )}
                 <span class="num-unit">
                   <NumberField
@@ -2113,10 +2113,18 @@
                   <span class="hint">tokens</span>
                 </span>
               </div>
+              <div class="setting-row">
+                {@render rowText(
+                  "Smart compaction",
+                  "Older messages become titled chapters the model can reopen with recall, instead of one summary.",
+                  "Nothing is deleted: the full messages stay stored. Off goes back to a single summary. Claude Code compacts on its own.",
+                )}
+                {@render toggle(runtime?.compactionStyle !== "summary", (v) => patchRuntime({ compactionStyle: v ? "chapters" : "summary" }), !connected || !runtime)}
+              </div>
               <div class="setting-row stacked">
                 {@render rowText(
-                  "Summary instructions",
-                  "Steers every summary on an API provider.",
+                  "Compaction instructions",
+                  "Steers every summary and chapter brief on an API provider.",
                   "Automatic or from /compact. It narrows the focus and never replaces the base prompt. A summary these make implausibly short is redone without them. Claude Code doesn't take it; give its /compact instructions after the command.",
                 )}
                 <TextArea

@@ -315,6 +315,24 @@
       createdAt: now - 120_000,
       compaction: { kind: "summary", tokensBefore: 402_000, tokensAfter: 3_100 },
     },
+    {
+      id: "mc2",
+      role: "compaction",
+      text: "",
+      toolCalls: [],
+      streaming: false,
+      createdAt: now - 90_000,
+      compaction: {
+        kind: "chapters",
+        tokensBefore: 402_000,
+        tokensAfter: 21_000,
+        titlesOnly: 1,
+        chapters: [
+          { n: 1, title: "Settings layout audit", brief: "Read `SettingsPanel.svelte` and listed rows that break the recipe.", from: "m1", to: "m2", tokens: 38_000 },
+          { n: 2, title: "Row helper and first conversions", brief: "Agreed on a `row(label, hint)` helper.\n\n- Converted General and Context\n- Left Providers for later", from: "m2", to: "m3", tokens: 54_000 },
+        ],
+      },
+    },
     { id: "m3", role: "user", text: "Rename the Subscriptions heading too, like we did in #[Fix login](chat:s2).", toolCalls: [], streaming: false, createdAt: now - 60_000 },
     // A native (cli_claude) turn: text, then Read, then Edit (with its diff),
     // then text, the same shape a reload rebuilds from session history.

@@ -11,7 +11,7 @@ export type SlashCommand =
   | { kind: "invalid"; message: string };
 
 export const SLASH_COMMANDS = [
-  { name: "compact", argumentHint: "[what to keep]", description: "Summarize the conversation now" },
+  { name: "compact", argumentHint: "[what to keep]", description: "Compact the conversation now" },
   { name: "btw", argumentHint: "<question>", description: "Ask a side question without interrupting or adding to the chat" },
   { name: "autocompact", argumentHint: "on | off | 400k | default", description: "Change when this chat compacts itself" },
 ] as const;

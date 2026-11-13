@@ -492,6 +492,8 @@ export interface RuntimeSettings {
   autoCompactTokens: number;
   /** Added to every summary compaction's prompt; it narrows what the summary stresses, it can't replace the base prompt. */
   compactInstructions: string;
+  /** "summary" = one summary instead of chapters; "" or "chapters" = chapters (the default). */
+  compactionStyle?: string;
 }
 
 export interface SnapshotInfo {
@@ -800,6 +802,8 @@ export interface ChatMessage {
   id: string;
   /** Other edits/retries at this point in the conversation (§3.2 `alternateIds`), addressable via `switchBranch`. */
   alternateIds?: string[];
+  /** Every stored message a merged assistant bubble was built from (its `id` is the last one's), so a chapter that starts mid-turn can find its bubble. */
+  roundIds?: string[];
   role: "user" | "assistant" | "compaction";
   turnId?: string;
   /** For a `compaction` row, the summary the model now sees (empty for a "clear"). */
@@ -839,12 +843,26 @@ export interface ChatMessage {
 }
 
 export interface Compaction {
-  /** "clear" stubbed old tool results, "summary" summarized everything before. */
-  kind: "clear" | "summary";
+  /** "clear" stubbed old tool results, "summary" summarized everything before, "chapters" folded it into titled chapters. */
+  kind: "clear" | "summary" | "chapters";
   tokensBefore: number;
   tokensAfter: number;
   /** Asked for with /compact rather than the chat compacting itself. */
   manual?: boolean;
+  /** kind "chapters": the chapters this compaction made. */
+  chapters?: Chapter[];
+  /** Chapters 1..titlesOnly show only their title to the model. */
+  titlesOnly?: number;
+}
+
+export interface Chapter {
+  n: number;
+  title: string;
+  brief: string;
+  /** First and last message id of the chapter, inclusive. */
+  from: string;
+  to: string;
+  tokens: number;
 }
 
 /** A prompt sent while its chat was mid-turn: waits server-side until that turn ends (§3.1). */
